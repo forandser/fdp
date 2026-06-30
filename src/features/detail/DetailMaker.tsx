@@ -560,6 +560,14 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
           onChange={setPresetKeywords}
           customKeywords={customKeywords}
           onCustomChange={setCustomKeywords}
+          category={category}
+          productName={productName}
+          variety={variety}
+          origin={origin}
+          weight={weight}
+          brix={brix.trim() ? Number(brix) : undefined}
+          price={price.trim() ? Number(price) : undefined}
+          tone={tone}
         />
       </Step>
 

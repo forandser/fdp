@@ -19,6 +19,7 @@ import {
   type ModelId,
   type SuggestPointsInput,
   type SuggestPointsResult,
+  type SuggestKeywordsResult,
 } from "./types"
 import { getKeySource } from "./key-source"
 import { buildFruitCopyMessages, FRUIT_COPY_SYSTEM_PROMPT } from "./prompts/fruit-copy"
@@ -26,6 +27,10 @@ import {
   buildSuggestPointsMessages,
   SUGGEST_POINTS_SYSTEM_PROMPT,
 } from "./prompts/suggest-points"
+import {
+  buildSuggestKeywordsMessages,
+  SUGGEST_KEYWORDS_SYSTEM_PROMPT,
+} from "./prompts/suggest-keywords"
 import { estimateInputCostKRW, estimateOutputCostKRW } from "./pricing"
 import { extractJson, validateCopyOutput } from "./validate"
 import { t } from "@/lib/i18n"
@@ -34,6 +39,7 @@ const DIAGNOSTIC_MAX_TOKENS = 8
 const COPY_BASE_MAX_TOKENS = 2000
 const COPY_MAX_TOKENS_CAP = 4000
 const SUGGEST_MAX_TOKENS = 800
+const SUGGEST_KEYWORDS_MAX_TOKENS = 400
 
 interface AnthropicErrorShape {
   status?: number
@@ -214,6 +220,61 @@ export class AnthropicAdapter implements AIProvider {
 
     return {
       points,
+      inputTokens,
+      outputTokens,
+      estimatedCostKRW: Number.isFinite(estimatedCostKRW) ? estimatedCostKRW : 0,
+    }
+  }
+
+  async suggestKeywords(
+    input: SuggestPointsInput,
+  ): Promise<SuggestKeywordsResult> {
+    const client = await this.createClient()
+    const messages = buildSuggestKeywordsMessages(input)
+
+    const res = await client.messages.create({
+      model: this.modelId,
+      system: SUGGEST_KEYWORDS_SYSTEM_PROMPT,
+      max_tokens: SUGGEST_KEYWORDS_MAX_TOKENS,
+      messages,
+    })
+
+    const textBlock = res.content.find((c) => c.type === "text")
+    if (!textBlock || textBlock.type !== "text") {
+      throw new Error("EMPTY_RESPONSE")
+    }
+    const parsed = extractJson(textBlock.text) as unknown
+    const keywords: string[] = []
+    if (parsed && typeof parsed === "object" && "keywords" in parsed) {
+      const raw = (parsed as { keywords: unknown }).keywords
+      if (Array.isArray(raw)) {
+        for (const item of raw) {
+          if (typeof item === "string") {
+            // # 해시태그 prefix 제거 + 공백 정리
+            const trimmed = item.trim().replace(/^#+/, "").trim()
+            // 2~10자 (한글/영문 모두 허용) + 중복 제거
+            if (
+              trimmed &&
+              trimmed.length >= 2 &&
+              trimmed.length <= 10 &&
+              !keywords.includes(trimmed)
+            ) {
+              keywords.push(trimmed)
+            }
+          }
+          if (keywords.length >= 8) break
+        }
+      }
+    }
+
+    const inputTokens = res.usage?.input_tokens ?? 0
+    const outputTokens = res.usage?.output_tokens ?? 0
+    const estimatedCostKRW =
+      estimateInputCostKRW(this.modelId, inputTokens) +
+      estimateOutputCostKRW(this.modelId, outputTokens)
+
+    return {
+      keywords,
       inputTokens,
       outputTokens,
       estimatedCostKRW: Number.isFinite(estimatedCostKRW) ? estimatedCostKRW : 0,

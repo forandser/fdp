@@ -40,10 +40,24 @@ const MUTE = "#868E96"
 const BG_SOFT = "#F8F9FA"
 const LINE = "#E9ECEF"
 const PLACEHOLDER = "#ADB5BD"
+const WARM_BEIGE = "#FFF8E7"
+const SOFT_GREEN = "#E8F5E9"
 
-/** 손글씨 폰트 체인. KoHandwriting 우선, 없으면 시스템 풀백. */
+/** 헤드라인 폰트 체인. 산스 굵은 헤드용 (G마켓산스/본고딕 대체로 BlackHanSans). */
+const HEAD_FONT =
+  '"BlackHanSans", "NotoSansKR", "DoHyeon", Pretendard, -apple-system, sans-serif'
+/** 산뜻한 산스 (G마켓산스/SCoreDream 대체로 DoHyeon/Jua). */
+const HEAD_SANS =
+  '"DoHyeon", "Jua", "NotoSansKR", Pretendard, -apple-system, sans-serif'
+/** 본문 폰트. */
+const BODY_FONT =
+  'Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif'
+/** 손글씨 강조 폰트 (카페24단정해/KoHandwriting 대체로 NanumPenScript/Jua). */
 const HANDWRITING_FONT =
-  'KoHandwriting, "Nanum Pen Script", "Cafe24 Ssurround", Pretendard, sans-serif'
+  '"NanumPenScript", "Jua", "GowunDodum", Pretendard, cursive'
+/** 명조 폰트 (본고딕 Heavy 대체로 GowunBatang). */
+const SERIF_FONT =
+  '"GowunBatang", "NotoSansKR", "Apple SD Gothic Neo", serif'
 
 /** 빈 CopyOutput — 미리보기 placeholder/초기값용. */
 export function emptyCopy(): CopyOutput {
@@ -72,7 +86,7 @@ function Placeholder({ text }: { text: string }) {
   )
 }
 
-/** 섹션 사이 빨강 점 3개 미세 구분자. */
+/** 섹션 사이 빨강 점 + 작은 사과 구분자. */
 function DotDivider() {
   return (
     <div
@@ -81,8 +95,8 @@ function DotDivider() {
         display: "flex",
         justifyContent: "center",
         alignItems: "center",
-        gap: 8,
-        padding: "10px 0",
+        gap: 10,
+        padding: "14px 0",
         background: "#FFFFFF",
         color: RED,
         fontSize: 12,
@@ -91,7 +105,7 @@ function DotDivider() {
     >
       <span>•</span>
       <span>•</span>
-      <span style={{ fontSize: 10, opacity: 0.85 }}>✕</span>
+      <span style={{ fontSize: 14, opacity: 0.9 }}>🍎</span>
     </div>
   )
 }
@@ -100,7 +114,7 @@ export function ResultView({
   copy,
   images,
   productName,
-  price,
+  price: _price,
   origin,
   weight,
   trust,
@@ -188,15 +202,32 @@ export function ResultView({
                 'Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif',
             }}
           >
-            {/* 0. Top red dashed divider */}
+            {/* 0. Top thick red bar with center dot */}
             <div
               aria-hidden
               style={{
-                margin: "24px 20px",
-                borderTop: `1px dashed ${RED}`,
-                height: 0,
+                margin: "28px 20px 24px",
+                position: "relative",
+                height: 6,
+                background: RED,
+                borderRadius: 3,
               }}
-            />
+            >
+              <div
+                style={{
+                  position: "absolute",
+                  top: -5,
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  width: 16,
+                  height: 16,
+                  borderRadius: "50%",
+                  background: RED,
+                  border: "3px solid #FFFFFF",
+                  boxShadow: `0 0 0 1px ${RED}`,
+                }}
+              />
+            </div>
 
             {/* 1. WHY HEADER + Compact POINT cards */}
             <WhyHeader
@@ -255,7 +286,6 @@ export function ResultView({
               copy={copy}
               onCopyChange={onCopyChange}
               onRegen={renderRegen("spec")}
-              price={price}
               isMobile={isMobile}
             />
 
@@ -431,33 +461,32 @@ function WhyHeader({
         borderBottom: `1px solid ${LINE}`,
       }}
     >
-      <div style={{ textAlign: "center", marginBottom: 24 }}>
+      <div style={{ textAlign: "center", marginBottom: 26 }}>
         <div
           style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 34,
-            height: 32,
-            borderRadius: "50% 48% 50% 52%",
+            display: "inline-block",
+            padding: "4px 12px",
             background: RED,
             color: "#FFF",
-            fontSize: 18,
+            fontSize: 11,
             fontWeight: 700,
-            marginBottom: 16,
-            transform: "rotate(-3deg)",
+            letterSpacing: 3,
+            marginBottom: 14,
+            fontFamily: HEAD_SANS,
           }}
           aria-hidden
         >
-          ✓
+          WHY FRUIT
         </div>
         <h2
           style={{
-            fontSize: isMobile ? 22 : 28,
-            fontWeight: 800,
+            fontSize: isMobile ? 26 : 32,
+            fontWeight: 900,
             margin: 0,
-            lineHeight: 1.35,
+            lineHeight: 1.3,
             color: INK,
+            fontFamily: HEAD_FONT,
+            letterSpacing: -0.5,
           }}
         >
           {productName || <Placeholder text="상품명" />}{" "}
@@ -467,8 +496,9 @@ function WhyHeader({
           style={{
             fontSize: isMobile ? 13 : 15,
             color: SUB,
-            marginTop: 8,
+            marginTop: 10,
             margin: 0,
+            fontFamily: BODY_FONT,
           }}
         >
           {t.detail.result.whatsDifferentHint}
@@ -476,17 +506,19 @@ function WhyHeader({
       </div>
 
       {keyPoints.length > 0 ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {keyPoints.map((p, i) => (
             <div
               key={`kp-compact-${i}`}
               style={{
                 display: "flex",
-                alignItems: "center",
-                gap: 12,
-                padding: isMobile ? "12px 14px" : "14px 20px",
-                background: BG_SOFT,
-                borderRadius: 999,
+                alignItems: "stretch",
+                gap: 0,
+                background: "#FFFFFF",
+                border: `1px solid ${LINE}`,
+                borderLeft: `4px solid ${RED}`,
+                borderRadius: 4,
+                overflow: "hidden",
               }}
             >
               <span
@@ -495,24 +527,34 @@ function WhyHeader({
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  minWidth: 56,
-                  padding: "6px 10px",
+                  minWidth: 72,
+                  padding: isMobile ? "10px 8px" : "12px 10px",
                   background: RED,
                   color: "#FFF",
-                  borderRadius: 999,
-                  fontSize: isMobile ? 11 : 12,
-                  fontWeight: 700,
-                  letterSpacing: 0.5,
+                  fontSize: isMobile ? 10 : 11,
+                  fontWeight: 800,
+                  letterSpacing: 1.5,
+                  fontFamily: HEAD_SANS,
+                  flexDirection: "column",
+                  gap: 2,
                 }}
               >
-                Point {p.num}
+                <span style={{ fontSize: 9, opacity: 0.85 }}>POINT</span>
+                <span style={{ fontSize: isMobile ? 18 : 22, fontWeight: 900 }}>
+                  {p.num}
+                </span>
               </span>
               <span
                 style={{
-                  fontSize: isMobile ? 14 : 16,
-                  fontWeight: 600,
+                  display: "flex",
+                  alignItems: "center",
+                  padding: isMobile ? "12px 16px" : "14px 22px",
+                  fontSize: isMobile ? 15 : 17,
+                  fontWeight: 700,
                   color: INK,
                   lineHeight: 1.4,
+                  fontFamily: BODY_FONT,
+                  flex: 1,
                 }}
               >
                 {p.title ? (
@@ -565,61 +607,88 @@ function HeroBlock({
 }) {
   return (
     <div style={{ background: "#FFFFFF" }}>
-      {heroImage ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={heroImage.url}
-          alt=""
+      <div style={{ position: "relative" }}>
+        {heroImage ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={heroImage.url}
+            alt=""
+            style={{
+              width: "100%",
+              aspectRatio: "1",
+              objectFit: "cover",
+              display: "block",
+            }}
+          />
+        ) : (
+          <div
+            style={{
+              width: "100%",
+              aspectRatio: "1",
+              background: BG_SOFT,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: PLACEHOLDER,
+              fontSize: 14,
+              fontStyle: "italic",
+            }}
+          >
+            여기에 대표 이미지가 들어갑니다
+          </div>
+        )}
+        {/* 하단 흰색 그라데이션 오버레이 — 텍스트와 자연스럽게 연결 */}
+        <div
+          aria-hidden
           style={{
-            width: "100%",
-            aspectRatio: "1",
-            objectFit: "cover",
-            display: "block",
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: "35%",
+            background:
+              "linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 70%, #FFFFFF 100%)",
+            pointerEvents: "none",
           }}
         />
-      ) : (
+        {/* 이미지 위 좌측 상단 작은 라벨 */}
         <div
           style={{
-            width: "100%",
-            aspectRatio: "1",
-            background: BG_SOFT,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: PLACEHOLDER,
-            fontSize: 14,
-            fontStyle: "italic",
-          }}
-        >
-          여기에 대표 이미지가 들어갑니다
-        </div>
-      )}
-      <div
-        style={{
-          padding: isMobile ? "36px 20px" : "44px 40px",
-          textAlign: "center",
-        }}
-      >
-        {/* 작은 빨강 라벨 */}
-        <div
-          style={{
+            position: "absolute",
+            top: 16,
+            left: 16,
+            padding: "5px 11px",
+            background: "rgba(224, 49, 49, 0.92)",
+            color: "#FFFFFF",
             fontSize: 10,
             fontWeight: 800,
             letterSpacing: 2,
-            color: RED,
-            marginBottom: 10,
+            borderRadius: 2,
+            fontFamily: HEAD_SANS,
           }}
           aria-hidden
         >
-          FRUIT DETAIL
+          FRESH PICK
         </div>
+      </div>
+
+      <div
+        style={{
+          padding: isMobile ? "16px 20px 40px" : "20px 40px 48px",
+          textAlign: "center",
+          marginTop: -40,
+          position: "relative",
+        }}
+      >
         <p
           style={{
-            fontSize: isMobile ? 14 : 17,
+            fontSize: isMobile ? 17 : 20,
             color: SUB,
             margin: 0,
-            marginBottom: 10,
+            marginBottom: 14,
             lineHeight: 1.5,
+            fontFamily: SERIF_FONT,
+            fontStyle: "italic",
           }}
         >
           {copy.subheadline ? (
@@ -635,12 +704,13 @@ function HeroBlock({
         </p>
         <h1
           style={{
-            fontSize: isMobile ? 34 : 48,
-            fontWeight: 800,
+            fontSize: isMobile ? 42 : 58,
+            fontWeight: 900,
             margin: 0,
             color: INK,
-            lineHeight: 1.2,
-            letterSpacing: -0.5,
+            lineHeight: 1.15,
+            letterSpacing: -1,
+            fontFamily: HEAD_FONT,
           }}
         >
           {copy.headline ? (
@@ -674,24 +744,46 @@ function HeroBlock({
             style={{
               display: "flex",
               flexWrap: "wrap",
-              gap: 6,
+              gap: 8,
               justifyContent: "center",
-              marginTop: 18,
+              marginTop: 22,
             }}
           >
             {copy.highlightBadges.slice(0, 4).map((b, i) => (
               <span
                 key={`b-${i}`}
                 style={{
-                  padding: "5px 12px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 5,
+                  padding: "7px 14px",
                   borderRadius: 999,
-                  background: RED_TINT,
-                  color: RED_DARK,
-                  fontSize: isMobile ? 11 : 12,
+                  background: RED,
+                  color: "#FFFFFF",
+                  fontSize: isMobile ? 12 : 13,
                   fontWeight: 700,
+                  fontFamily: BODY_FONT,
+                  boxShadow: "0 2px 6px rgba(224,49,49,0.25)",
                 }}
               >
-                #{b}
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 16,
+                    height: 16,
+                    borderRadius: "50%",
+                    background: "#FFFFFF",
+                    color: RED,
+                    fontSize: 10,
+                    fontWeight: 900,
+                  }}
+                  aria-hidden
+                >
+                  ✓
+                </span>
+                {b}
               </span>
             ))}
           </div>
@@ -714,34 +806,88 @@ function StoryBlock({
 }) {
   const hasStory = !!copy.story
   const hasHighlight = !!copy.highlightBox
+  // 드롭캡용 첫 글자 추출
+  const storyText = copy.story ?? ""
+  const firstChar = storyText.trim().charAt(0)
   return (
     <div
       style={{
-        padding: isMobile ? "36px 20px" : "48px 40px",
+        padding: isMobile ? "44px 24px" : "56px 56px",
         background: "#FFFFFF",
         position: "relative",
       }}
     >
-      {hasStory ? (
-        <p
+      {/* 양쪽 큰따옴표 — 상단 가운데 */}
+      {hasStory && (
+        <div
+          aria-hidden
           style={{
-            fontSize: isMobile ? 15 : 17,
-            color: INK,
-            lineHeight: 1.75,
-            whiteSpace: "pre-line",
-            margin: 0,
             textAlign: "center",
+            fontSize: isMobile ? 56 : 72,
+            color: RED,
+            lineHeight: 0.4,
+            fontFamily: SERIF_FONT,
+            fontWeight: 900,
+            marginBottom: 18,
+            opacity: 0.6,
           }}
         >
-          <EditableResultText
-            copy={copy}
-            onChange={onCopyChange}
-            path={["story"]}
-            multiline
-            maxLength={1000}
-            preserveWhitespace
-          />
-        </p>
+          “
+        </div>
+      )}
+
+      {hasStory ? (
+        <div
+          style={{
+            position: "relative",
+            textAlign: "center",
+            maxWidth: 640,
+            margin: "0 auto",
+          }}
+        >
+          {firstChar && (
+            <span
+              aria-hidden
+              style={{
+                position: "absolute",
+                left: isMobile ? 0 : -20,
+                top: -8,
+                fontSize: isMobile ? 56 : 72,
+                color: RED,
+                fontFamily: HEAD_FONT,
+                fontWeight: 900,
+                lineHeight: 1,
+                opacity: 0.12,
+                pointerEvents: "none",
+                userSelect: "none",
+              }}
+            >
+              {firstChar}
+            </span>
+          )}
+          <p
+            style={{
+              fontSize: isMobile ? 16 : 18,
+              color: INK,
+              lineHeight: 1.85,
+              whiteSpace: "pre-line",
+              margin: 0,
+              textAlign: "center",
+              fontFamily: SERIF_FONT,
+              position: "relative",
+              zIndex: 1,
+            }}
+          >
+            <EditableResultText
+              copy={copy}
+              onChange={onCopyChange}
+              path={["story"]}
+              multiline
+              maxLength={1000}
+              preserveWhitespace
+            />
+          </p>
+        </div>
       ) : (
         <p
           style={{
@@ -751,20 +897,39 @@ function StoryBlock({
             textAlign: "center",
             color: PLACEHOLDER,
             fontStyle: "italic",
+            fontFamily: BODY_FONT,
           }}
         >
           여기에 상품 스토리가 들어갑니다
         </p>
       )}
 
+      {hasStory && (
+        <div
+          aria-hidden
+          style={{
+            textAlign: "center",
+            fontSize: isMobile ? 56 : 72,
+            color: RED,
+            lineHeight: 0.4,
+            fontFamily: SERIF_FONT,
+            fontWeight: 900,
+            marginTop: 24,
+            opacity: 0.6,
+          }}
+        >
+          ”
+        </div>
+      )}
+
       {hasHighlight && (
         <div
           style={{
-            marginTop: 28,
-            padding: isMobile ? "18px 16px" : "24px 24px",
-            background: RED_TINT,
-            border: `2px solid ${RED}`,
-            borderRadius: 12,
+            marginTop: 32,
+            padding: isMobile ? "26px 20px" : "32px 28px",
+            background: WARM_BEIGE,
+            border: `1px dashed ${RED}`,
+            borderRadius: 4,
             textAlign: "center",
             position: "relative",
           }}
@@ -774,10 +939,10 @@ function StoryBlock({
             aria-hidden
             style={{
               position: "absolute",
-              top: -14,
+              top: -16,
               right: -10,
-              width: 52,
-              height: 52,
+              width: 56,
+              height: 56,
               borderRadius: "50%",
               border: `2px solid ${RED}`,
               background: "#FFFFFF",
@@ -789,23 +954,21 @@ function StoryBlock({
               fontWeight: 800,
               letterSpacing: 1,
               transform: "rotate(-9deg)",
-              marginLeft: -8,
+              fontFamily: HEAD_SANS,
             }}
           >
             FRESH
           </div>
           <p
             style={{
-              fontSize: isMobile ? 26 : 32,
-              fontWeight: 800,
+              fontSize: isMobile ? 32 : 38,
+              fontWeight: 700,
               color: RED_DARK,
               margin: 0,
               lineHeight: 1.4,
               fontFamily: HANDWRITING_FONT,
-              transform: "rotate(-1deg)",
+              transform: "rotate(-1.5deg)",
               display: "inline-block",
-              borderBottom: `4px solid ${RED}`,
-              paddingBottom: 2,
             }}
           >
             <EditableResultText
@@ -874,19 +1037,35 @@ function GalleryBlock({
   )
 }
 
+/** spec label 기반 아이콘 매핑. 라벨 부분 일치(포함)로 결정. */
+function iconForSpecLabel(label: string): string {
+  const l = label.trim()
+  if (/(산지|원산지|지역)/.test(l)) return "🏠"
+  if (/(품종|종류|품목)/.test(l)) return "🍑"
+  if (/(중량|용량|수량|박스|개수|과수)/.test(l)) return "⚖️"
+  if (/(당도|Brix|brix|맛)/.test(l)) return "🌡"
+  if (/(등급|선별|규격)/.test(l)) return "⭐"
+  if (/(보관|냉장|냉동)/.test(l)) return "❄️"
+  if (/(수확|출하)/.test(l)) return "📅"
+  if (/(인증|GAP|친환경|유기|무농약)/.test(l)) return "✅"
+  if (/(배송|발송|택배)/.test(l)) return "📦"
+  return "🍃"
+}
+
 function SpecBlock({
   copy,
   onCopyChange,
   onRegen,
-  price,
   isMobile,
 }: {
   copy: CopyOutput
   onCopyChange: (next: CopyOutput) => void
   onRegen: React.ReactNode
-  price: number
   isMobile: boolean
 }) {
+  const specCount = copy.spec.length
+  // 4개 이상이면 2열, 3개면 1열(좁은 모바일)/2열(데스크탑) 자동 — 항상 2열로 통일하되 홀수 시 마지막 카드가 가득 차도록 grid auto-fit 흉내
+  const columns = specCount <= 1 ? "1fr" : "repeat(2, minmax(0, 1fr))"
   return (
     <div
       style={{
@@ -896,120 +1075,68 @@ function SpecBlock({
     >
       <SectionTitle title={t.detail.result.spec} regen={onRegen} />
 
-      {/* Price card */}
-      <div
-        style={{
-          padding: "16px 20px",
-          background: "#FFFFFF",
-          borderRadius: 10,
-          marginBottom: 14,
-          border: `1px solid ${LINE}`,
-        }}
-      >
+      {specCount > 0 ? (
         <div
           style={{
-            display: "flex",
-            alignItems: "center",
+            display: "grid",
+            gridTemplateColumns: columns,
             gap: 8,
-            marginBottom: 6,
           }}
         >
-          <span
-            style={{
-              fontSize: 10,
-              fontWeight: 800,
-              letterSpacing: 1,
-              color: MUTE,
-              padding: "2px 6px",
-              border: `1px solid ${LINE}`,
-              borderRadius: 4,
-            }}
-          >
-            정상가
-          </span>
-          <span
-            style={{
-              fontSize: 10,
-              fontWeight: 800,
-              letterSpacing: 1,
-              color: RED,
-              padding: "2px 6px",
-              border: `1px solid ${RED}`,
-              borderRadius: 4,
-              background: RED_TINT,
-            }}
-          >
-            할인가
-          </span>
-        </div>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
-          <span style={{ fontSize: 14, color: SUB }}>
-            {t.detail.result.priceLabel}
-          </span>
-          <span
-            style={{ fontSize: isMobile ? 22 : 26, fontWeight: 800, color: RED }}
-          >
-            ₩{price.toLocaleString("ko-KR")}
-          </span>
-        </div>
-      </div>
-
-      {copy.spec.length > 0 ? (
-        <div
-          style={{
-            background: "#FFFFFF",
-            borderRadius: 10,
-            overflow: "hidden",
-            border: `1px solid ${LINE}`,
-          }}
-        >
-          {copy.spec.map((s, i) => (
-            <div
-              key={`spec-${i}`}
-              style={{
-                display: "grid",
-                gridTemplateColumns: isMobile ? "90px 1fr" : "120px 1fr",
-                borderBottom:
-                  i < copy.spec.length - 1 ? `1px solid ${LINE}` : "none",
-              }}
-            >
+          {copy.spec.map((s, i) => {
+            const icon = iconForSpecLabel(s.label)
+            return (
               <div
+                key={`spec-${i}`}
                 style={{
-                  padding: "14px 16px",
-                  background: BG_SOFT,
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: SUB,
+                  background: "#FFFFFF",
+                  border: `1px solid ${RED}`,
+                  borderRadius: 10,
+                  padding: 16,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                  minWidth: 0,
                 }}
               >
-                {s.label}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 13,
+                    color: SUB,
+                    fontWeight: 600,
+                  }}
+                >
+                  <span aria-hidden style={{ fontSize: 14, lineHeight: 1 }}>
+                    {icon}
+                  </span>
+                  <span>{s.label}</span>
+                </div>
+                <div
+                  style={{
+                    fontSize: 17,
+                    fontWeight: 700,
+                    color: INK,
+                    lineHeight: 1.4,
+                    wordBreak: "keep-all",
+                  }}
+                >
+                  {s.value ? (
+                    <EditableResultText
+                      copy={copy}
+                      onChange={onCopyChange}
+                      path={["spec", i, "value"]}
+                      maxLength={100}
+                    />
+                  ) : (
+                    <Placeholder text={s.label} />
+                  )}
+                </div>
               </div>
-              <div
-                style={{
-                  padding: "14px 16px",
-                  fontSize: 14,
-                  color: INK,
-                }}
-              >
-                {s.value ? (
-                  <EditableResultText
-                    copy={copy}
-                    onChange={onCopyChange}
-                    path={["spec", i, "value"]}
-                    maxLength={100}
-                  />
-                ) : (
-                  <Placeholder text={s.label} />
-                )}
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       ) : (
         <div
@@ -1024,7 +1151,7 @@ function SpecBlock({
             fontStyle: "italic",
           }}
         >
-          여기에 상품 정보 표가 들어갑니다
+          여기에 상품 정보 카드가 들어갑니다
         </div>
       )}
     </div>
@@ -1048,29 +1175,32 @@ function KeyPointsBig({
     <div style={{ background: "#FFFFFF" }}>
       <div
         style={{
-          padding: isMobile ? "44px 20px 24px" : "60px 40px 32px",
+          padding: isMobile ? "48px 20px 28px" : "64px 40px 36px",
           textAlign: "center",
         }}
       >
         <div
           style={{
             display: "inline-block",
-            fontSize: isMobile ? 13 : 14,
-            fontWeight: 700,
-            letterSpacing: 2,
-            color: MUTE,
-            marginBottom: 8,
+            fontSize: isMobile ? 12 : 13,
+            fontWeight: 800,
+            letterSpacing: 4,
+            color: RED,
+            marginBottom: 10,
+            fontFamily: HEAD_SANS,
           }}
         >
-          WHY
+          KEY POINTS
         </div>
         <h2
           style={{
-            fontSize: isMobile ? 26 : 36,
-            fontWeight: 800,
+            fontSize: isMobile ? 30 : 42,
+            fontWeight: 900,
             margin: 0,
             color: INK,
-            lineHeight: 1.3,
+            lineHeight: 1.25,
+            fontFamily: HEAD_FONT,
+            letterSpacing: -0.5,
           }}
         >
           {t.detail.result.keyPointsSectionTitle}
@@ -1079,100 +1209,152 @@ function KeyPointsBig({
 
       {points.map((p, i) => {
         const img = pointImageFor(i)
+        const polaroidRot = i % 2 === 0 ? "-1.4deg" : "1.6deg"
         return (
           <div
             key={`kp-big-${i}`}
             style={{
-              padding: isMobile ? "20px 20px 40px" : "32px 40px 56px",
+              position: "relative",
+              padding: isMobile ? "32px 24px 48px" : "44px 48px 64px",
             }}
           >
-            {/* 가로 두꺼운 빨강 선 */}
+            {/* 좌측 세로 6px 빨강 바 */}
             <div
               aria-hidden
               style={{
-                width: 48,
-                height: 4,
+                position: "absolute",
+                left: isMobile ? 12 : 24,
+                top: isMobile ? 32 : 44,
+                bottom: isMobile ? 48 : 64,
+                width: 6,
                 background: RED,
-                marginBottom: 14,
-                borderRadius: 2,
+                borderRadius: 3,
               }}
             />
-            <div
-              style={{
-                display: "inline-flex",
-                alignItems: "baseline",
-                gap: 8,
-                padding: "6px 14px",
-                background: RED,
-                color: "#FFF",
-                borderRadius: 999,
-                fontSize: isMobile ? 12 : 13,
-                fontWeight: 700,
-                letterSpacing: 1,
-                marginBottom: 14,
-              }}
-            >
-              POINT {p.num}
-            </div>
-            <h3
-              style={{
-                fontSize: isMobile ? 28 : 36,
-                fontWeight: 800,
-                margin: 0,
-                marginBottom: 14,
-                color: INK,
-                lineHeight: 1.3,
-                fontFamily: HANDWRITING_FONT,
-              }}
-            >
-              {p.title ? (
-                <EditableResultText
-                  copy={copy}
-                  onChange={onCopyChange}
-                  path={["keyPoints", i, "title"]}
-                  maxLength={40}
-                />
-              ) : (
-                <Placeholder text="포인트 제목" />
-              )}
-            </h3>
-            <p
-              style={{
-                fontSize: isMobile ? 14 : 16,
-                color: SUB,
-                lineHeight: 1.75,
-                margin: 0,
-                marginBottom: 20,
-                whiteSpace: "pre-line",
-              }}
-            >
-              {p.body ? (
-                <EditableResultText
-                  copy={copy}
-                  onChange={onCopyChange}
-                  path={["keyPoints", i, "body"]}
-                  multiline
-                  maxLength={300}
-                  preserveWhitespace
-                />
-              ) : (
-                <Placeholder text="포인트 본문" />
-              )}
-            </p>
-            {img && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={img.url}
-                alt=""
+            <div style={{ paddingLeft: isMobile ? 12 : 24, position: "relative" }}>
+              {/* 흐릿한 회색 큰 영문 숫자 배경 */}
+              <span
+                aria-hidden
                 style={{
-                  width: "100%",
-                  aspectRatio: "4/3",
-                  objectFit: "cover",
-                  borderRadius: 10,
-                  display: "block",
+                  position: "absolute",
+                  right: 0,
+                  top: -28,
+                  fontSize: isMobile ? 110 : 140,
+                  fontWeight: 900,
+                  color: "#F1F3F5",
+                  fontFamily: HEAD_FONT,
+                  lineHeight: 1,
+                  letterSpacing: -4,
+                  userSelect: "none",
+                  pointerEvents: "none",
+                  zIndex: 0,
                 }}
-              />
-            )}
+              >
+                0{p.num}
+              </span>
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "5px 12px",
+                  background: RED,
+                  color: "#FFF",
+                  fontSize: isMobile ? 11 : 12,
+                  fontWeight: 800,
+                  letterSpacing: 2,
+                  marginBottom: 14,
+                  fontFamily: HEAD_SANS,
+                  position: "relative",
+                  zIndex: 1,
+                }}
+              >
+                POINT {p.num}
+              </div>
+              <h3
+                style={{
+                  fontSize: isMobile ? 30 : 38,
+                  fontWeight: 900,
+                  margin: 0,
+                  marginBottom: 16,
+                  color: INK,
+                  lineHeight: 1.3,
+                  fontFamily: HEAD_FONT,
+                  letterSpacing: -0.5,
+                  position: "relative",
+                  zIndex: 1,
+                }}
+              >
+                {p.title ? (
+                  <EditableResultText
+                    copy={copy}
+                    onChange={onCopyChange}
+                    path={["keyPoints", i, "title"]}
+                    maxLength={40}
+                  />
+                ) : (
+                  <Placeholder text="포인트 제목" />
+                )}
+              </h3>
+              <p
+                style={{
+                  fontSize: isMobile ? 15 : 17,
+                  color: SUB,
+                  lineHeight: 1.8,
+                  margin: 0,
+                  marginBottom: 28,
+                  whiteSpace: "pre-line",
+                  fontFamily: BODY_FONT,
+                  position: "relative",
+                  zIndex: 1,
+                }}
+              >
+                {p.body ? (
+                  <EditableResultText
+                    copy={copy}
+                    onChange={onCopyChange}
+                    path={["keyPoints", i, "body"]}
+                    multiline
+                    maxLength={300}
+                    preserveWhitespace
+                  />
+                ) : (
+                  <Placeholder text="포인트 본문" />
+                )}
+              </p>
+              {img && (
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "center",
+                    margin: "8px 0",
+                  }}
+                >
+                  <div
+                    style={{
+                      background: "#FFFFFF",
+                      padding: "10px 10px 32px",
+                      boxShadow: "0 6px 18px rgba(0,0,0,0.12)",
+                      transform: `rotate(${polaroidRot})`,
+                      maxWidth: "85%",
+                      width: "85%",
+                    }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={img.url}
+                      alt=""
+                      style={{
+                        width: "100%",
+                        aspectRatio: "4/3",
+                        objectFit: "cover",
+                        display: "block",
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )
       })}
@@ -1195,26 +1377,27 @@ function StorageBlock({
     <div
       style={{
         padding: isMobile ? "36px 20px" : "48px 40px",
-        background: BG_SOFT,
+        background: WARM_BEIGE,
       }}
     >
       <SectionTitle title={t.detail.result.storage} regen={onRegen} />
       <div
         style={{
-          padding: isMobile ? "18px 18px" : "24px 28px",
+          padding: isMobile ? "20px 20px" : "26px 30px",
           background: "#FFFFFF",
-          borderRadius: 10,
+          borderRadius: 4,
           border: `1px solid ${LINE}`,
         }}
       >
         {copy.storage ? (
           <p
             style={{
-              fontSize: isMobile ? 14 : 15,
+              fontSize: isMobile ? 15 : 16,
               color: INK,
-              lineHeight: 1.75,
+              lineHeight: 1.85,
               whiteSpace: "pre-line",
               margin: 0,
+              fontFamily: BODY_FONT,
             }}
           >
             <EditableResultText
@@ -1334,7 +1517,7 @@ function DeliveryBlock({ isMobile }: { isMobile: boolean }) {
     <div
       style={{
         padding: isMobile ? "36px 20px" : "48px 40px",
-        background: BG_SOFT,
+        background: SOFT_GREEN,
       }}
     >
       <SectionTitle title={t.detail.result.deliveryTitle} />
@@ -1442,23 +1625,25 @@ function RecommendForBlock({
   items: string[]
   isMobile: boolean
 }) {
+  // 항목별 좌측 컬러 점
+  const DOT_COLORS = [RED, "#F59F00", "#37B24D", "#1C7ED6", "#AE3EC9", "#F76707"]
   return (
     <div
       style={{
-        padding: isMobile ? "36px 20px" : "48px 40px",
-        background: BG_SOFT,
+        padding: isMobile ? "40px 20px" : "52px 40px",
+        background: SOFT_GREEN,
       }}
     >
       <SectionTitle title={t.detail.result.recommendForTitle} />
       <div
         style={{
           background: "#FFFFFF",
-          borderRadius: 10,
+          borderRadius: 4,
           border: `1px solid ${LINE}`,
-          padding: isMobile ? "16px 18px" : "22px 26px",
+          padding: isMobile ? "20px 22px" : "28px 32px",
           display: "flex",
           flexDirection: "column",
-          gap: 10,
+          gap: 14,
         }}
       >
         {items.slice(0, 6).map((it, i) => (
@@ -1466,33 +1651,46 @@ function RecommendForBlock({
             key={`r-${i}`}
             style={{
               display: "flex",
-              alignItems: "flex-start",
-              gap: 10,
-              fontSize: isMobile ? 14 : 15,
+              alignItems: "center",
+              gap: 14,
+              fontSize: isMobile ? 15 : 17,
               color: INK,
               lineHeight: 1.5,
+              fontFamily: BODY_FONT,
+              paddingBottom: i < Math.min(items.length, 6) - 1 ? 12 : 0,
+              borderBottom:
+                i < Math.min(items.length, 6) - 1
+                  ? `1px dashed ${LINE}`
+                  : "none",
             }}
           >
+            {/* 좌측 컬러 점 */}
+            <span
+              aria-hidden
+              style={{
+                flexShrink: 0,
+                width: 10,
+                height: 10,
+                borderRadius: "50%",
+                background: DOT_COLORS[i % DOT_COLORS.length],
+                boxShadow: `0 0 0 3px ${DOT_COLORS[i % DOT_COLORS.length]}22`,
+              }}
+            />
+            {/* 손글씨 풍 ★ */}
             <span
               style={{
                 flexShrink: 0,
-                width: 20,
-                height: 20,
-                borderRadius: "50%",
-                background: RED,
-                color: "#FFF",
-                fontSize: 11,
+                color: RED,
+                fontSize: isMobile ? 22 : 26,
+                lineHeight: 1,
+                fontFamily: HANDWRITING_FONT,
                 fontWeight: 700,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                marginTop: 1,
               }}
               aria-hidden
             >
-              ✓
+              ★
             </span>
-            <span>{it}</span>
+            <span style={{ fontWeight: 600 }}>{it}</span>
           </div>
         ))}
       </div>
@@ -1510,68 +1708,99 @@ function FarmStoryBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "36px 20px" : "48px 40px",
+        padding: isMobile ? "40px 20px" : "56px 40px",
         background: "#FFFFFF",
       }}
     >
       <SectionTitle title={t.detail.result.farmStoryTitle} />
       <div
         style={{
-          padding: isMobile ? "20px 18px" : "28px 32px",
-          background: `linear-gradient(135deg, ${RED_TINT} 0%, ${BG_SOFT} 100%)`,
-          borderRadius: 12,
-          borderLeft: `4px solid ${RED}`,
+          padding: isMobile ? "28px 22px" : "36px 36px",
+          background: `linear-gradient(135deg, ${WARM_BEIGE} 0%, ${SOFT_GREEN} 100%)`,
+          borderRadius: 4,
+          border: `1px dashed ${RED}`,
+          position: "relative",
         }}
       >
         <div
           style={{
             display: "flex",
-            alignItems: "flex-start",
-            gap: 12,
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 18,
           }}
         >
-          <span style={{ fontSize: 28, lineHeight: 1, flexShrink: 0 }} aria-hidden>
-            🧑‍🌾
-          </span>
-          <p
+          {/* 농부 사진 placeholder — 회색 원 */}
+          <div
+            aria-hidden
             style={{
-              fontSize: isMobile ? 20 : 24,
-              color: INK,
-              lineHeight: 1.65,
-              margin: 0,
-              whiteSpace: "pre-line",
-              fontFamily: HANDWRITING_FONT,
+              width: isMobile ? 76 : 92,
+              height: isMobile ? 76 : 92,
+              borderRadius: "50%",
+              background: "#E9ECEF",
+              border: "4px solid #FFFFFF",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: isMobile ? 36 : 44,
+            }}
+          >
+            🧑‍🌾
+          </div>
+          <div
+            style={{
               position: "relative",
+              textAlign: "center",
+              maxWidth: 540,
             }}
           >
             <span
               aria-hidden
               style={{
+                position: "absolute",
+                left: -8,
+                top: -22,
                 color: RED,
-                fontSize: isMobile ? 34 : 42,
-                fontWeight: 800,
-                lineHeight: 0,
-                marginRight: 4,
-                verticalAlign: "-0.2em",
+                fontSize: isMobile ? 52 : 64,
+                fontFamily: SERIF_FONT,
+                fontWeight: 900,
+                lineHeight: 1,
+                opacity: 0.5,
               }}
             >
               “
             </span>
-            {farmStory}
+            <p
+              style={{
+                fontSize: isMobile ? 22 : 28,
+                color: INK,
+                lineHeight: 1.7,
+                margin: 0,
+                whiteSpace: "pre-line",
+                fontFamily: HANDWRITING_FONT,
+                padding: isMobile ? "0 14px" : "0 24px",
+              }}
+            >
+              {farmStory}
+            </p>
             <span
               aria-hidden
               style={{
+                position: "absolute",
+                right: -8,
+                bottom: -42,
                 color: RED,
-                fontSize: isMobile ? 34 : 42,
-                fontWeight: 800,
-                lineHeight: 0,
-                marginLeft: 4,
-                verticalAlign: "-0.4em",
+                fontSize: isMobile ? 52 : 64,
+                fontFamily: SERIF_FONT,
+                fontWeight: 900,
+                lineHeight: 1,
+                opacity: 0.5,
               }}
             >
               ”
             </span>
-          </p>
+          </div>
         </div>
       </div>
     </div>
@@ -1652,14 +1881,16 @@ function CautionsBlock({
       >
         <h3
           style={{
-            fontSize: isMobile ? 15 : 17,
-            fontWeight: 800,
+            fontSize: isMobile ? 17 : 19,
+            fontWeight: 900,
             color: "#92400E",
             margin: 0,
-            marginBottom: 12,
+            marginBottom: 14,
             display: "flex",
             alignItems: "center",
-            gap: 6,
+            gap: 8,
+            fontFamily: HEAD_SANS,
+            letterSpacing: -0.3,
           }}
         >
           <span aria-hidden>⚠️</span>
@@ -1671,16 +1902,17 @@ function CautionsBlock({
             paddingLeft: 18,
             display: "flex",
             flexDirection: "column",
-            gap: 6,
+            gap: 8,
           }}
         >
           {cautions.map((c, i) => (
             <li
               key={`c-${i}`}
               style={{
-                fontSize: isMobile ? 13 : 14,
+                fontSize: isMobile ? 14 : 15,
                 color: "#78350F",
-                lineHeight: 1.6,
+                lineHeight: 1.65,
+                fontFamily: BODY_FONT,
               }}
             >
               {c}
@@ -1714,13 +1946,15 @@ function SectionTitle({
     >
       <h2
         style={{
-          fontSize: 22,
-          fontWeight: 800,
+          fontSize: 24,
+          fontWeight: 900,
           color: INK,
           margin: 0,
           paddingLeft: 14,
-          borderLeft: `4px solid ${RED}`,
-          lineHeight: 1,
+          borderLeft: `5px solid ${RED}`,
+          lineHeight: 1.05,
+          fontFamily: HEAD_FONT,
+          letterSpacing: -0.5,
         }}
       >
         {title}

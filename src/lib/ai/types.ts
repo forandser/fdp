@@ -158,6 +158,19 @@ export interface SuggestPointsResult {
   estimatedCostKRW: number
 }
 
+/**
+ * 핵심 키워드 추천 결과.
+ * 상품명/카테고리/산지 등 기본 정보로 한국 셀러가 자주 쓰는 짧은 키워드(2~6자) 5~8개.
+ * 사용자는 받은 후보를 customKeywords로 추가할 수 있다.
+ */
+export interface SuggestKeywordsResult {
+  /** 추천 핵심 키워드 5~8개. 2~6자 짧은 명사/명사구. */
+  keywords: string[]
+  inputTokens: number
+  outputTokens: number
+  estimatedCostKRW: number
+}
+
 /* ───────────────── 이미지 생성/합성 어댑터 (v1.5 인터페이스) ───────────────── */
 
 /** 이미지 생성 모델 — 향후 Gemini, gpt-image-1, Firefly 등으로 확장. */
@@ -209,4 +222,7 @@ export interface AIProvider {
 
   /** 입력 폼 기본 정보로 소구점(체크박스 추천 후보) 자동 생성 */
   suggestSellingPoints(input: SuggestPointsInput): Promise<SuggestPointsResult>
+
+  /** 입력 폼 기본 정보로 핵심 키워드(2~6자) 5~8개 추천 — SEO·해시태그·검색노출용 */
+  suggestKeywords(input: SuggestPointsInput): Promise<SuggestKeywordsResult>
 }
