@@ -12,7 +12,7 @@
 import { idbGetEncryptedKey, idbSetEncryptedKey, idbClearEncryptedKey } from "@/lib/storage/idb-key"
 import { decryptKey, encryptKey, StorageCorruptedError } from "@/lib/storage/crypto"
 
-export type KeyStoragePolicy = "session" | "days_7" | "days_30"
+export type KeyStoragePolicy = "session" | "days_7" | "days_30" | "forever"
 export type KeyLoadIssue = "none" | "corrupted" | "expired"
 
 export interface KeyLoadStatus {
@@ -47,6 +47,7 @@ function getDaysExpiry(policy: KeyStoragePolicy): number | null {
   if (policy === "session") return null
   if (policy === "days_7") return 7
   if (policy === "days_30") return 30
+  if (policy === "forever") return null
   return null
 }
 
@@ -122,8 +123,14 @@ class BrowserKeySource implements KeySource {
       await idbClearEncryptedKey()
       return
     }
+    // forever 는 expiresAt=null로 저장 → 만료 검사 통과 → 영구
     const days = getDaysExpiry(policy)
-    const expiresAt = days != null ? Date.now() + days * 24 * 60 * 60 * 1000 : null
+    const expiresAt =
+      policy === "forever"
+        ? null
+        : days != null
+          ? Date.now() + days * 24 * 60 * 60 * 1000
+          : null
     const { cipher, iv } = await encryptKey(key)
     await idbSetEncryptedKey({ cipher, iv, expiresAt })
   }

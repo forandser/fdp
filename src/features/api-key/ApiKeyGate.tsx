@@ -17,7 +17,7 @@ const API_KEY_MIN_LEN = 80
 
 export function ApiKeyGate({ onSuccess }: ApiKeyGateProps) {
   const [key, setKey] = useState("")
-  const [policy, setPolicy] = useState<KeyStoragePolicy>("session")
+  const [policy, setPolicy] = useState<KeyStoragePolicy>("forever")
   const [spendLimitAck, setSpendLimitAck] = useState(false)
   const [step, setStep] = useState<DiagnosticStep>("idle")
   const [diagnostic, setDiagnostic] = useState<DiagnosticResult | null>(null)
@@ -191,7 +191,7 @@ export function ApiKeyGate({ onSuccess }: ApiKeyGateProps) {
         >
           {t.apiKey.storage.title}
         </legend>
-        {(["session", "days_7", "days_30"] as KeyStoragePolicy[]).map((p) => (
+        {(["forever", "days_30", "days_7", "session"] as KeyStoragePolicy[]).map((p) => (
           <label
             key={p}
             style={{
@@ -212,6 +212,7 @@ export function ApiKeyGate({ onSuccess }: ApiKeyGateProps) {
               onChange={() => setPolicy(p)}
               disabled={step === "running"}
             />
+            {p === "forever" && t.apiKey.storage.forever}
             {p === "session" && t.apiKey.storage.session}
             {p === "days_7" && t.apiKey.storage.days7}
             {p === "days_30" && t.apiKey.storage.days30}

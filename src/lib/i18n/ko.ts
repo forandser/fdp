@@ -229,6 +229,7 @@ export const ko = {
     spendLimitGuide: "한도 설정 가이드",
     storage: {
       title: "저장 방식",
+      forever: "이 브라우저에 영구 저장 (권장 — 사이트 업데이트해도 유지)",
       session: "이번 세션만 (가장 안전, 새로고침 시 재입력)",
       days7: "7일 (이 브라우저에 암호화 저장)",
       days30: "30일 (이 브라우저에 암호화 저장)",
