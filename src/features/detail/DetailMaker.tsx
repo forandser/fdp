@@ -29,6 +29,8 @@ import {
 } from "@/lib/storage/works-db"
 import { PRESET_KEYWORDS } from "@/domain/keywords"
 import { t } from "@/lib/i18n"
+import { validateProductNameSeo } from "@/lib/ai/validate"
+import { detectFruitFactKey, FRUIT_FACTS } from "@/domain/fruit-facts"
 
 type Stage = "restoring" | "input" | "generating" | "result" | "error"
 
@@ -124,6 +126,30 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
     if (farmerYears.trim()) out.farmerYears = Number(farmerYears) || undefined
     return out
   }, [producerName, producerRegion, farmerYears])
+
+  /** 상품명 실시간 SEO 검증 — v1.9. */
+  const seoCheck = useMemo(() => {
+    if (!productName.trim()) return null
+    return validateProductNameSeo(productName)
+  }, [productName])
+
+  /** 상품명에서 fruit-facts 매칭 — placeholder/힌트 풍부화. */
+  const factHint = useMemo(() => {
+    const key = detectFruitFactKey(productName)
+    if (!key) return null
+    const fact = FRUIT_FACTS[key]
+    return {
+      name: fact.name,
+      goodBrix: fact.goodBrix,
+      regions: fact.regions.slice(0, 3).join(", "),
+      varieties: fact.varieties.slice(0, 3).map((v) => v.name).join(", "),
+      storage: fact.storage.mode === "ripen-then-fridge"
+        ? "후숙형 — 받자마자 냉장 X"
+        : fact.storage.mode === "fridge"
+          ? "도착 즉시 냉장"
+          : "실온 보관",
+    }
+  }, [productName])
   const [generationStep, setGenerationStep] = useState(0)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [result, setResult] = useState<CopyOutput | null>(null)
@@ -543,6 +569,54 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
               placeholder={t.detail.field.productNamePh}
               style={inputStyle}
             />
+            {/* v1.9: SEO 실시간 검증 */}
+            {seoCheck && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  marginTop: 4,
+                  fontSize: 11,
+                  color: seoCheck.ok
+                    ? "var(--color-success, #047857)"
+                    : "var(--color-danger)",
+                }}
+              >
+                <span aria-hidden>{seoCheck.ok ? "✅" : "⚠️"}</span>
+                <span>{seoCheck.length}자 / 49자</span>
+                {seoCheck.warnings.length > 0 && (
+                  <span style={{ color: "var(--color-neutral-500)" }}>
+                    — {seoCheck.warnings.map((w) => w.detail).join(" · ")}
+                  </span>
+                )}
+              </div>
+            )}
+            {/* v1.9: fruit-facts 자동 힌트 */}
+            {factHint && (
+              <div
+                style={{
+                  marginTop: 6,
+                  padding: "6px 10px",
+                  background: "#FFF8E7",
+                  borderLeft: "3px solid #FFB186",
+                  borderRadius: 4,
+                  fontSize: 11.5,
+                  color: "var(--color-neutral-700)",
+                  lineHeight: 1.6,
+                }}
+              >
+                💡 <strong>{factHint.name}</strong> 사전 매칭:
+                <br />
+                · 추천 산지: {factHint.regions}
+                <br />
+                · 추천 품종: {factHint.varieties}
+                <br />
+                · &quot;달다/꿀맛&quot; 표현은 <strong>{factHint.goodBrix} Brix 이상</strong>에서만 허용
+                <br />
+                · 보관: {factHint.storage}
+              </div>
+            )}
           </Field>
           <Field label={t.detail.field.priceRequired}>
             <input

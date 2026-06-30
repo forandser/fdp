@@ -14,7 +14,11 @@ import { FreshnessTimeline } from "./FreshnessTimeline"
 import { ProducerCard } from "./ProducerCard"
 import { DisclosureBlock } from "./DisclosureBlock"
 import { StickyMobileCta } from "./StickyMobileCta"
+import { QualityScoreCard } from "./QualityScoreCard"
+import { WidthPresetSwitcher, WIDTH_PRESETS, type WidthPresetKey } from "./WidthPresetSwitcher"
+import { WorkJsonExporter } from "./WorkJsonExporter"
 import { checkComplianceReport } from "@/lib/ai/compliance-report"
+import { scoreCopyQuality } from "@/lib/ai/copy-quality-score"
 import { detectFruitFactKey, FRUIT_FACTS } from "@/domain/fruit-facts"
 
 /** CopyOutput을 사람 친화적 텍스트로 평탄화 (전체 복사용). */
@@ -191,8 +195,14 @@ export function ResultView({
 }: ResultViewProps) {
   const [enhance, setEnhance] = useState(true)
   const captureRef = useRef<HTMLDivElement>(null)
-  const previewWidth = 860
-  const isMobile = true
+  /** v1.9: 폭 프리셋 토글 — 셀러 플랫폼 폭에 맞게 캡처. */
+  const [widthPreset, setWidthPreset] = useState<WidthPresetKey>("smartstore-860")
+  const previewWidth = useMemo(() => {
+    const p = WIDTH_PRESETS.find((x) => x.key === widthPreset)
+    return p?.width ?? 860
+  }, [widthPreset])
+  // 모바일 폭(360/414/780)일 때는 모바일 레이아웃 — 패딩·폰트 크기 축소
+  const isMobile = previewWidth < 900
 
   const heroImage = images[0]
   const galleryImages = images.slice(1)
@@ -216,6 +226,12 @@ export function ResultView({
   const complianceReport = useMemo(
     () => checkComplianceReport(copy, trust),
     [copy, trust],
+  )
+
+  /** 카피 품질 점수 — v1.9. */
+  const qualityScore = useMemo(
+    () => scoreCopyQuality({ copy, productName, trust }),
+    [copy, productName, trust],
   )
 
   /** 신선도 타임라인 — harvestDateLabel + fruit-facts.storage.days로 계산. */
@@ -248,6 +264,18 @@ export function ResultView({
     if (images.length === 0) return undefined
     return images[(idx + 1) % images.length] || heroImage
   }
+
+  /** v1.9: fact 기반 카피 placeholder — 빈 상태일 때 그 과일의 예시 카피를 옅게 노출. */
+  const factPlaceholder = useMemo(() => {
+    const key = detectFruitFactKey(productName)
+    if (!key) return null
+    const fact = FRUIT_FACTS[key]
+    return {
+      headline: fact.hookHeadlines[0] ?? "",
+      sub: fact.hookHeadlines[1] ?? "",
+      highlightBox: fact.sensoryWords.slice(0, 2).join(" · "),
+    }
+  }, [productName])
 
   return (
     <div
@@ -412,6 +440,7 @@ export function ResultView({
               onRegenHeadline={renderRegen("headline")}
               onRegenSub={renderRegen("subheadline")}
               isMobile={isMobile}
+              factPlaceholder={factPlaceholder}
             />
 
             {/* 2a. FreshnessTimeline — 수확일 + fruit-facts 보관 일수 (v1.8) */}
@@ -573,6 +602,12 @@ export function ResultView({
           {t.detail.result.title}
         </h3>
 
+        {/* WidthPresetSwitcher — 셀러 플랫폼 폭에 맞춰 캡처 (v1.9) */}
+        <WidthPresetSwitcher value={widthPreset} onChange={setWidthPreset} />
+
+        {/* QualityScoreCard — 카피 종합 점수 (v1.9) */}
+        <QualityScoreCard score={qualityScore} />
+
         {/* DisclosureBlock — 식약처 자동 검수 + 면책 (v1.8) */}
         <DisclosureBlock report={complianceReport} />
 
@@ -621,6 +656,17 @@ export function ResultView({
         </label>
 
         <ExportPanel targetRef={captureRef} baseName={sanitizedName} />
+
+        {/* v1.9: JSON 내보내기/임포트 — 작업 백업·공유 */}
+        <WorkJsonExporter
+          copy={copy}
+          productName={productName}
+          price={_price}
+          origin={origin}
+          weight={weight}
+          trust={trust}
+          onImport={onCopyChange}
+        />
 
         <ActionButton onClick={onRetry}>{t.detail.result.retry}</ActionButton>
 
@@ -827,6 +873,7 @@ function HeroBlock({
   onRegenHeadline,
   onRegenSub,
   isMobile,
+  factPlaceholder,
 }: {
   heroImage?: UploadedImage
   copy: CopyOutput
@@ -834,6 +881,7 @@ function HeroBlock({
   onRegenHeadline: React.ReactNode
   onRegenSub: React.ReactNode
   isMobile: boolean
+  factPlaceholder?: { headline: string; sub: string; highlightBox: string } | null
 }) {
   return (
     <div style={{ background: "#FFFFFF" }}>
@@ -928,6 +976,10 @@ function HeroBlock({
               path={["subheadline"]}
               maxLength={60}
             />
+          ) : factPlaceholder?.sub ? (
+            <span style={{ color: PLACEHOLDER, fontStyle: "italic", fontWeight: 400 }}>
+              {factPlaceholder.sub}
+            </span>
           ) : (
             <Placeholder text="서브 카피" />
           )}
@@ -950,6 +1002,10 @@ function HeroBlock({
               path={["headline"]}
               maxLength={40}
             />
+          ) : factPlaceholder?.headline ? (
+            <span style={{ color: PLACEHOLDER, fontStyle: "italic", fontWeight: 400 }}>
+              {factPlaceholder.headline}
+            </span>
           ) : (
             <Placeholder text="메인 헤드라인" />
           )}

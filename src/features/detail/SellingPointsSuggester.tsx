@@ -11,7 +11,7 @@
  * 클라이언트에서도 차단 단어 정규식 가드로 한 번 더 거른다.
  */
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { getAIProvider } from "@/lib/ai/provider"
 import type {
   SuggestPointsInput,
@@ -20,6 +20,7 @@ import type {
   TrustInfo,
 } from "@/lib/ai/types"
 import { filterForbiddenPoints, type CertHeld } from "@/lib/ai/forbidden-words"
+import { detectFruitFactKey, FRUIT_FACTS } from "@/domain/fruit-facts"
 import { t } from "@/lib/i18n"
 
 interface Props {
@@ -56,6 +57,15 @@ export function SellingPointsSuggester({
   const [error, setError] = useState<string | null>(null)
 
   const canSuggest = !!productName.trim()
+
+  /** fruit-facts 기반 즉시 추천 (AI 호출 X) — v1.9. */
+  const baselineSuggestions = useMemo<string[]>(() => {
+    const key = detectFruitFactKey(productName)
+    if (!key) return []
+    const fact = FRUIT_FACTS[key]
+    if (!fact) return []
+    return fact.hookHeadlines.slice(0, 6)
+  }, [productName])
 
   const runSuggest = async () => {
     if (!canSuggest) {
@@ -177,45 +187,108 @@ export function SellingPointsSuggester({
         </p>
       )}
 
+      {/* v1.9: fruit-facts 즉시 추천 (AI 호출 X — 무료) */}
+      {baselineSuggestions.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <p
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: "var(--color-neutral-700)",
+              margin: "0 0 4px",
+              letterSpacing: 0.3,
+            }}
+          >
+            ⚡ 즉시 추천 (사전 기반 · API 호출 없음)
+          </p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {baselineSuggestions.map((p) => {
+              const on = selectedSet.has(p)
+              return (
+                <button
+                  key={`base-${p}`}
+                  type="button"
+                  onClick={() => onToggle(p)}
+                  aria-pressed={on}
+                  aria-label={`${p} ${on ? t.detail.suggest.added : t.detail.suggest.addLabel}`}
+                  style={{
+                    padding: "5px 11px",
+                    borderRadius: 999,
+                    border: on
+                      ? "1px solid var(--color-primary-600)"
+                      : "1px solid #FFB186",
+                    background: on
+                      ? "var(--color-primary-600)"
+                      : "#FFF8F1",
+                    color: on
+                      ? "var(--color-text-on-primary)"
+                      : "#7A2E12",
+                    fontSize: 12.5,
+                    cursor: "pointer",
+                    transition: "all 0.1s",
+                    textAlign: "left",
+                  }}
+                >
+                  {on ? "✓ " : "+ "}
+                  {p}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {points && points.length > 0 && (
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 6,
-            marginTop: 10,
-          }}
-        >
-          {points.map((p) => {
-            const on = selectedSet.has(p)
-            return (
-              <button
-                key={p}
-                type="button"
-                onClick={() => onToggle(p)}
-                aria-pressed={on}
-                aria-label={`${p} ${on ? t.detail.suggest.added : t.detail.suggest.addLabel}`}
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: 999,
-                  border: on
-                    ? "1px solid var(--color-primary-600)"
-                    : "1px solid var(--color-neutral-300)",
-                  background: on ? "var(--color-primary-600)" : "var(--color-bg-surface)",
-                  color: on
-                    ? "var(--color-text-on-primary)"
-                    : "var(--color-neutral-900)",
-                  fontSize: "var(--font-size-sm)",
-                  cursor: "pointer",
-                  transition: "all 0.1s",
-                  textAlign: "left",
-                }}
-              >
-                {on ? "✓ " : "+ "}
-                {p}
-              </button>
-            )
-          })}
+        <div style={{ marginTop: 12 }}>
+          <p
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: "var(--color-neutral-700)",
+              margin: "0 0 4px",
+              letterSpacing: 0.3,
+            }}
+          >
+            ✨ AI 추천 (이번 입력 맞춤)
+          </p>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 6,
+            }}
+          >
+            {points.map((p) => {
+              const on = selectedSet.has(p)
+              return (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => onToggle(p)}
+                  aria-pressed={on}
+                  aria-label={`${p} ${on ? t.detail.suggest.added : t.detail.suggest.addLabel}`}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 999,
+                    border: on
+                      ? "1px solid var(--color-primary-600)"
+                      : "1px solid var(--color-neutral-300)",
+                    background: on ? "var(--color-primary-600)" : "var(--color-bg-surface)",
+                    color: on
+                      ? "var(--color-text-on-primary)"
+                      : "var(--color-neutral-900)",
+                    fontSize: "var(--font-size-sm)",
+                    cursor: "pointer",
+                    transition: "all 0.1s",
+                    textAlign: "left",
+                  }}
+                >
+                  {on ? "✓ " : "+ "}
+                  {p}
+                </button>
+              )
+            })}
+          </div>
         </div>
       )}
     </div>
