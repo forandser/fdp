@@ -104,12 +104,26 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   const [origin, setOrigin] = useState("")
   const [weight, setWeight] = useState("")
   const [brix, setBrix] = useState("")
+  const [avgWeightG, setAvgWeightG] = useState("")
+  const [sizeGrade, setSizeGrade] = useState("")
   const [extraDescription, setExtraDescription] = useState("")
   const [farmIntro, setFarmIntro] = useState("")
+  const [producerName, setProducerName] = useState("")
+  const [producerRegion, setProducerRegion] = useState("")
+  const [farmerYears, setFarmerYears] = useState("")
   const [presetKeywords, setPresetKeywords] = useState<string[]>([])
   const [customKeywords, setCustomKeywords] = useState<string[]>([])
   const tone: CopyTone = "sincere"
-  const trust: TrustInfo = {}
+  /** 일반 농산물 확인 게이트 — 건강기능식품/숙취해소 표시 상품 차단 (식약처 §10). */
+  const [isOrdinaryProduce, setIsOrdinaryProduce] = useState(true)
+  /** 현재 입력에서 합성한 trust 객체 — 미리보기/SellingPointsSuggester에 인입. */
+  const trustForPreview: TrustInfo = useMemo(() => {
+    const out: TrustInfo = {}
+    if (producerName.trim()) out.producerName = producerName.trim()
+    if (producerRegion.trim()) out.producerRegion = producerRegion.trim()
+    if (farmerYears.trim()) out.farmerYears = Number(farmerYears) || undefined
+    return out
+  }, [producerName, producerRegion, farmerYears])
   const [generationStep, setGenerationStep] = useState(0)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [result, setResult] = useState<CopyOutput | null>(null)
@@ -227,7 +241,8 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
     }
   }, [])
 
-  const hasMin = images.length >= 1 && productName.trim() && price.trim()
+  const hasMin =
+    images.length >= 1 && productName.trim() && price.trim() && isOrdinaryProduce
 
   /** 우측 미리보기에 전달할 카피 — 실제 result가 있으면 그것, 없으면 emptyCopy + 임시 spec. */
   const liveCopy = useMemo<CopyOutput>(() => {
@@ -271,6 +286,15 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
 
     const priceNum = Number(price.replace(/[^\d]/g, ""))
 
+    const trustData: TrustInfo | undefined =
+      producerName.trim() || producerRegion.trim() || farmerYears.trim()
+        ? {
+            producerName: producerName.trim() || undefined,
+            producerRegion: producerRegion.trim() || undefined,
+            farmerYears: farmerYears.trim() ? Number(farmerYears) : undefined,
+          }
+        : undefined
+
     const input: CopyInput = {
       category,
       productType: productName.trim(),
@@ -279,11 +303,14 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       weight: weight.trim(),
       price: priceNum,
       brix: brix.trim() ? Number(brix) : undefined,
+      avgWeightG: avgWeightG.trim() ? Number(avgWeightG) : undefined,
+      sizeGrade: sizeGrade.trim() || undefined,
       farmIntro: farmIntro.trim() || undefined,
-      trust: undefined,
+      trust: trustData,
       highlightKeywords: allKeywords,
       recommendBadge: undefined,
       tone: "sincere",
+      isOrdinaryProduce,
     }
 
     try {
@@ -429,6 +456,50 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         </div>
       )}
 
+      {/* 일반 농산물 게이트 — 식약처 §10 자율심의 대상 차단 (v1.8) */}
+      <section
+        style={{
+          padding: "12px 14px",
+          marginBottom: 20,
+          background: isOrdinaryProduce
+            ? "var(--color-bg-subtle)"
+            : "var(--color-danger-tint)",
+          border: `1px solid ${isOrdinaryProduce ? "var(--color-neutral-300)" : "var(--color-danger)"}`,
+          borderRadius: "var(--radius-xs)",
+          fontSize: "var(--font-size-sm)",
+        }}
+      >
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={isOrdinaryProduce}
+            onChange={(e) => setIsOrdinaryProduce(e.target.checked)}
+            style={{ marginTop: 3 }}
+          />
+          <span style={{ color: "var(--color-neutral-900)", lineHeight: 1.6 }}>
+            <strong>이 상품은 일반 농산물입니다.</strong>
+            <br />
+            <span style={{ color: "var(--color-neutral-700)" }}>
+              (건강기능식품·기능성표시식품·숙취해소 표시 상품 아님)
+            </span>
+          </span>
+        </label>
+        {!isOrdinaryProduce && (
+          <p
+            style={{
+              marginTop: 8,
+              padding: 8,
+              background: "var(--color-bg-surface)",
+              borderRadius: "var(--radius-xs)",
+              color: "var(--color-danger)",
+              fontSize: "var(--font-size-sm)",
+            }}
+          >
+            ⚠️ 건강기능식품·숙취해소 표시 상품은 식약처 §10 자율심의가 필요합니다. 본 사이트는 일반 농산물 카피만 안전하게 지원합니다.
+          </p>
+        )}
+      </section>
+
       <Step number={1} title={t.detail.step1Image} hint={t.detail.step1Hint}>
         <ImageUploader images={images} onChange={setImages} />
       </Step>
@@ -519,6 +590,25 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
               style={inputStyle}
             />
           </Field>
+          <Field label="개당 평균 g (선택)">
+            <input
+              type="text"
+              inputMode="numeric"
+              value={avgWeightG}
+              onChange={(e) => setAvgWeightG(e.target.value.replace(/[^\d]/g, ""))}
+              placeholder="예) 300"
+              style={inputStyle}
+            />
+          </Field>
+          <Field label="등급 표기 (선택)">
+            <input
+              type="text"
+              value={sizeGrade}
+              onChange={(e) => setSizeGrade(e.target.value.slice(0, 20))}
+              placeholder="예) 특 / 상 / 흠집 등급"
+              style={inputStyle}
+            />
+          </Field>
         </FormGrid>
       </Step>
 
@@ -559,6 +649,53 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
           </p>
         </Field>
         <div style={{ height: 12 }} />
+
+        {/* 농부 정식 정보 (선택) — 신뢰 카드용. v1.8 */}
+        <details style={{ marginBottom: 12 }}>
+          <summary
+            style={{
+              cursor: "pointer",
+              fontSize: "var(--font-size-sm)",
+              fontWeight: 600,
+              color: "var(--color-neutral-900)",
+              marginBottom: 8,
+            }}
+          >
+            👨‍🌾 농부 정보 추가 (선택 — 신뢰 카드 노출용)
+          </summary>
+          <FormGrid>
+            <Field label="농부 이름 (예: 김 농부)">
+              <input
+                type="text"
+                value={producerName}
+                onChange={(e) => setProducerName(e.target.value.slice(0, 20))}
+                placeholder="예) 김 농부"
+                style={inputStyle}
+              />
+            </Field>
+            <Field label="농가 산지 (시·군)">
+              <input
+                type="text"
+                value={producerRegion}
+                onChange={(e) => setProducerRegion(e.target.value.slice(0, 30))}
+                placeholder="예) 경북 청송"
+                style={inputStyle}
+              />
+            </Field>
+            <Field label="재배 연차 (년)">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={farmerYears}
+                onChange={(e) => setFarmerYears(e.target.value.replace(/[^\d]/g, "").slice(0, 2))}
+                placeholder="예) 20"
+                style={inputStyle}
+              />
+            </Field>
+          </FormGrid>
+        </details>
+        <div style={{ height: 12 }} />
+
         <SellingPointsSuggester
           category={category}
           productName={productName}
@@ -568,7 +705,7 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
           brix={brix.trim() ? Number(brix) : undefined}
           price={price.trim() ? Number(price) : undefined}
           tone={tone}
-          trust={trust}
+          trust={trustForPreview}
           customKeywords={customKeywords}
           onToggle={(p) => {
             setCustomKeywords((curr) =>

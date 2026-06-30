@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "../styles/pdp-tokens.css";
 
 /*
  * 디자인 토큰 — 발주오라 디자인시스템 v1.0 기준

@@ -1,0 +1,59 @@
+/**
+ * PDP 디자인 토큰 (v1.8).
+ *
+ * iOS Safari 입력 줌 방지: body 16px 미만 시 자동 줌. → 본문 16px 이상 강제.
+ * WCAG AA 색 대비 4.5:1 충족.
+ * 행간 1.5 (모바일 식품 PDP 표준).
+ */
+
+:root {
+  /* 폰트 크기 */
+  --pdp-font-body: 16px;
+  --pdp-font-caption: 14px;
+  --pdp-font-h1: 28px;
+  --pdp-font-h2: 22px;
+  --pdp-font-h3: 18px;
+  --pdp-font-small: 13px;
+
+  /* 행간 */
+  --pdp-line-body: 1.6;
+  --pdp-line-h1: 1.25;
+  --pdp-line-caption: 1.5;
+
+  /* 색 — WCAG AA 4.5:1 충족 */
+  --pdp-color-body: #424242; /* on #FFF = 9.0:1 */
+  --pdp-color-caption: #757575; /* on #FFF = 4.54:1 */
+  --pdp-color-h1: #212121;
+
+  /* 자연/신선식품 팔레트 */
+  --pdp-color-warm-beige: #F5E6D3;
+  --pdp-color-soft-green: #D4E4C4;
+  --pdp-color-fresh-green: #52C41A;
+  --pdp-color-fresh-yellow: #FAAD14;
+  --pdp-color-fresh-orange: #FA8C16;
+
+  /* 폭 프리셋 */
+  --pdp-width-coupang: 780px;
+  --pdp-width-smartstore: 860px;
+  --pdp-width-11st: 831px;
+  --pdp-width-self: 1000px;
+
+  /* 신뢰 톤 */
+  --pdp-color-trust-cert: #1C7ED6; /* 공식 인증 — 파랑 */
+  --pdp-color-trust-self: #E03131; /* 자가선언 — 빨강 */
+  --pdp-color-trust-fresh: #52C41A; /* 신선도 — 녹색 */
+}
+
+/* 본문 기본 — iOS 줌 방지 */
+.fdp-print p,
+.fdp-print li,
+.fdp-print span:not([class*="badge"]):not([class*="chip"]):not([class*="label"]) {
+  font-size: max(var(--pdp-font-body), 14px);
+}
+
+/* 인쇄 시 sticky CTA 숨김 */
+@media print {
+  .fdp-no-print {
+    display: none !important;
+  }
+}

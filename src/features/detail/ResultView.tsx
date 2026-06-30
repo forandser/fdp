@@ -8,6 +8,74 @@ import type { UploadedImage } from "./ImageUploader"
 import { ExportPanel } from "./ExportPanel"
 import { EditableResultText } from "./EditableResultText"
 import { RegenButton } from "./RegenButton"
+import { CertCaption } from "./CertCaption"
+import { CheckoutTrustStrip } from "./CheckoutTrustStrip"
+import { FreshnessTimeline } from "./FreshnessTimeline"
+import { ProducerCard } from "./ProducerCard"
+import { DisclosureBlock } from "./DisclosureBlock"
+import { StickyMobileCta } from "./StickyMobileCta"
+import { checkComplianceReport } from "@/lib/ai/compliance-report"
+import { detectFruitFactKey, FRUIT_FACTS } from "@/domain/fruit-facts"
+
+/** CopyOutput을 사람 친화적 텍스트로 평탄화 (전체 복사용). */
+function flattenCopyToText(copy: CopyOutput, productName: string): string {
+  const lines: string[] = []
+  lines.push(`【${productName || copy.headline}】`)
+  if (copy.headline) lines.push(copy.headline)
+  if (copy.subheadline) lines.push(copy.subheadline)
+  lines.push("")
+  if (copy.highlightBox) {
+    lines.push(`▶ ${copy.highlightBox}`)
+    lines.push("")
+  }
+  if (copy.story) {
+    lines.push(copy.story)
+    lines.push("")
+  }
+  if (copy.keyPoints.length > 0) {
+    lines.push("── 구매 포인트 ──")
+    for (const kp of copy.keyPoints) {
+      lines.push(`POINT ${kp.num}. ${kp.title}`)
+      lines.push(kp.body)
+      lines.push("")
+    }
+  }
+  if (copy.spec.length > 0) {
+    lines.push("── 상품 정보 ──")
+    for (const s of copy.spec) {
+      lines.push(`• ${s.label}: ${s.value}`)
+    }
+    lines.push("")
+  }
+  if (copy.storage) {
+    lines.push("── 보관·먹는 법 ──")
+    lines.push(copy.storage)
+    lines.push("")
+  }
+  if (copy.faq.length > 0) {
+    lines.push("── 자주 묻는 질문 ──")
+    for (const f of copy.faq) {
+      lines.push(`Q. ${f.q}`)
+      lines.push(`A. ${f.a}`)
+      lines.push("")
+    }
+  }
+  if (copy.recommendFor.length > 0) {
+    lines.push("── 이런 분께 추천 ──")
+    for (const r of copy.recommendFor) lines.push(`• ${r}`)
+    lines.push("")
+  }
+  if (copy.farmStory) {
+    lines.push("── 농가에서 한 마디 ──")
+    lines.push(copy.farmStory)
+    lines.push("")
+  }
+  if (copy.cautions.length > 0) {
+    lines.push("── 구매 전 확인 ──")
+    for (const c of copy.cautions) lines.push(`• ${c}`)
+  }
+  return lines.join("\n").trim()
+}
 
 /**
  * 결과 미리보기.
@@ -144,6 +212,25 @@ export function ResultView({
   const sanitizedName =
     productName.replace(/[^\p{L}\p{N}_-]+/gu, "_").slice(0, 60) || "detail"
 
+  /** 식약처 자동 검수 — 결과 카피 기준으로 매번 계산. */
+  const complianceReport = useMemo(
+    () => checkComplianceReport(copy, trust),
+    [copy, trust],
+  )
+
+  /** 신선도 타임라인 — harvestDateLabel + fruit-facts.storage.days로 계산. */
+  const freshnessProps = useMemo(() => {
+    const harvest = trust?.harvestDateLabel?.trim()
+    if (!harvest) return null
+    const key = detectFruitFactKey(productName)
+    if (!key) return null
+    const days = FRUIT_FACTS[key]?.storage?.days
+    if (!days || days < 1) return null
+    // ISO 변환 시도
+    const norm = harvest.replace(/[년월일\s]+/g, "-").replace(/-+$/, "")
+    return { harvestDate: norm, daysGood: days }
+  }, [trust?.harvestDateLabel, productName])
+
   const renderRegen = (sectionId: SectionId) => {
     if (!onSectionRegenerate) return null
     return (
@@ -276,6 +363,45 @@ export function ResultView({
             {/* 1a. TRUST BADGES */}
             {trust && <TrustBadgesRow trust={trust} />}
 
+            {/* 1b. CertCaption — 공식 인증 above-fold (v1.8) */}
+            {trust && (trust.gapNumber?.trim() || trust.organicNumber?.trim() || trust.pesticideFreeNumber?.trim()) && (
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 8,
+                  padding: "10px 20px 12px",
+                  justifyContent: "center",
+                  background: "#FFFFFF",
+                }}
+              >
+                {trust.gapNumber?.trim() && (
+                  <CertCaption
+                    certType="gap"
+                    certNumber={trust.gapNumber}
+                    producerName={trust.producerName}
+                    producerRegion={trust.producerRegion}
+                  />
+                )}
+                {trust.organicNumber?.trim() && (
+                  <CertCaption
+                    certType="organic"
+                    certNumber={trust.organicNumber}
+                    producerName={trust.producerName}
+                    producerRegion={trust.producerRegion}
+                  />
+                )}
+                {trust.pesticideFreeNumber?.trim() && (
+                  <CertCaption
+                    certType="pesticide-free"
+                    certNumber={trust.pesticideFreeNumber}
+                    producerName={trust.producerName}
+                    producerRegion={trust.producerRegion}
+                  />
+                )}
+              </div>
+            )}
+
             <DotDivider />
 
             {/* 2. HERO + HEADLINE BIG TITLE */}
@@ -287,6 +413,16 @@ export function ResultView({
               onRegenSub={renderRegen("subheadline")}
               isMobile={isMobile}
             />
+
+            {/* 2a. FreshnessTimeline — 수확일 + fruit-facts 보관 일수 (v1.8) */}
+            {freshnessProps && (
+              <div style={{ padding: "0 20px 16px" }}>
+                <FreshnessTimeline
+                  harvestDate={freshnessProps.harvestDate}
+                  daysGood={freshnessProps.daysGood}
+                />
+              </div>
+            )}
 
             <DotDivider />
 
@@ -342,7 +478,11 @@ export function ResultView({
             {copy.farmStory && (
               <>
                 <DotDivider />
-                <FarmStoryBlock farmStory={copy.farmStory} isMobile={isMobile} />
+                <FarmStoryBlock
+                  farmStory={copy.farmStory}
+                  isMobile={isMobile}
+                  trust={trust}
+                />
               </>
             )}
 
@@ -382,6 +522,24 @@ export function ResultView({
             {/* 9a. RETURNS (정형) */}
             <ReturnsBlock isMobile={isMobile} />
 
+            {/* 9b. CheckoutTrustStrip — 결제 인접 신뢰 줄 (v1.8) */}
+            {trust && (
+              <div style={{ padding: "0 20px" }}>
+                <CheckoutTrustStrip
+                  coldChain={trust.coldChain}
+                  sealed={trust.sealedPackage}
+                  refundCondition={
+                    typeof trust.refundGuarantee === "object"
+                      ? trust.refundGuarantee.condition
+                      : trust.refundGuarantee
+                        ? "맛 이상 시 환불 보장"
+                        : undefined
+                  }
+                  sameDayShipping={trust.sameDayHarvest}
+                />
+              </div>
+            )}
+
             {/* 10. CAUTIONS — 신선식품 면책 박스 자동 표시 (cautions 비어 있어도 노출) */}
             <DotDivider />
             <CautionsBlock cautions={copy.cautions ?? []} isMobile={isMobile} />
@@ -414,6 +572,9 @@ export function ResultView({
         >
           {t.detail.result.title}
         </h3>
+
+        {/* DisclosureBlock — 식약처 자동 검수 + 면책 (v1.8) */}
+        <DisclosureBlock report={complianceReport} />
 
         {missing.length > 0 && (
           <div
@@ -462,7 +623,45 @@ export function ResultView({
         <ExportPanel targetRef={captureRef} baseName={sanitizedName} />
 
         <ActionButton onClick={onRetry}>{t.detail.result.retry}</ActionButton>
+
+        {/* 전체 카피 텍스트 복사 — v1.8 */}
+        <ActionButton
+          onClick={async () => {
+            try {
+              const text = flattenCopyToText(copy, productName)
+              if (navigator.clipboard && text) {
+                await navigator.clipboard.writeText(text)
+                alert("전체 카피를 클립보드에 복사했어요!")
+              }
+            } catch (e) {
+              console.error("[copy-to-clipboard]", e)
+              alert("복사에 실패했어요. 텍스트 영역을 직접 선택해주세요.")
+            }
+          }}
+        >
+          📋 전체 카피 텍스트 복사
+        </ActionButton>
       </aside>
+
+      {/* v1.8: 모바일 sticky CTA — 스크롤 30% 이상에서 표시 */}
+      <StickyMobileCta
+        onCopy={async () => {
+          try {
+            const text = flattenCopyToText(copy, productName)
+            if (navigator.clipboard && text) {
+              await navigator.clipboard.writeText(text)
+              alert("전체 카피를 복사했어요!")
+            }
+          } catch (e) {
+            console.error("[sticky-copy]", e)
+          }
+        }}
+        onDownload={() => {
+          // ExportPanel 영역으로 스크롤
+          const panel = document.querySelector('[data-fdp-export-panel="true"]') as HTMLElement | null
+          panel?.scrollIntoView({ behavior: "smooth", block: "center" })
+        }}
+      />
     </div>
   )
 }
@@ -1775,12 +1974,23 @@ function RecommendForBlock({
 function FarmStoryBlock({
   farmStory,
   isMobile,
+  trust,
 }: {
   farmStory: string
   isMobile: boolean
+  trust?: TrustInfo
 }) {
-  // 농부 이름·연차·산지 한 줄 placeholder — 추후 props 연동 가능
-  const farmerMeta = "20년차 청송 김 농부"
+  // trust에 농부 정보 있으면 ProducerCard로, 없으면 placeholder.
+  const hasProducer = !!(trust?.producerName || trust?.producerRegion || trust?.farmerYears)
+  const farmerMeta = hasProducer
+    ? [
+        trust!.farmerYears ? `${trust!.farmerYears}년차` : null,
+        trust!.producerRegion || null,
+        trust!.producerName ? `${trust!.producerName} 농가` : null,
+      ]
+        .filter(Boolean)
+        .join(" ")
+    : "20년차 청송 김 농부"
   const initial = (farmerMeta.match(/[가-힣A-Za-z]/)?.[0] ?? "농").toUpperCase()
   return (
     <div
@@ -1790,6 +2000,19 @@ function FarmStoryBlock({
       }}
     >
       <SectionTitle title={t.detail.result.farmStoryTitle} />
+
+      {/* v1.8: trust에 농부 정보 있으면 ProducerCard로 노출 */}
+      {hasProducer && (
+        <div style={{ marginBottom: 16 }}>
+          <ProducerCard
+            name={trust!.producerName ?? "농부"}
+            region={trust!.producerRegion ?? ""}
+            years={trust!.farmerYears ?? 0}
+            photoUrl={trust!.farmerPhotoUrl}
+          />
+        </div>
+      )}
+
       <div
         style={{
           padding: isMobile ? "24px 20px" : "32px 32px",

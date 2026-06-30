@@ -31,6 +31,12 @@ export interface CopyInput {
   weight: string
   price: number
   brix?: number
+  /** Brix 측정일 (선택, YYYY-MM-DD). 셀러 신뢰도 차별점. */
+  brixMeasuredOn?: string
+  /** 개당 평균 g — "대과/특대과" 추상어 대신 g 단위 강제용 (v8 규칙 43). */
+  avgWeightG?: number
+  /** 등급 표기 ("특/상/중" 등) — 셀러가 직접 입력. */
+  sizeGrade?: string
   harvestDate?: string
   storageHint?: string
   highlightKeywords: string[]
@@ -42,6 +48,8 @@ export interface CopyInput {
   recommendFor?: string[]
   /** 신뢰 옵션 — 셀러가 토글/입력한 사실만 반영. */
   trust?: TrustInfo
+  /** 일반 농산물 확인 게이트 (건강기능식품/숙취해소 표시 상품 제외). v1.8 식약처 §10 보호. */
+  isOrdinaryProduce?: boolean
 }
 
 /** 신뢰 옵션 — 셀러가 직접 체크/입력한 사실. AI가 임의로 추가 못 함. */
@@ -52,8 +60,8 @@ export interface TrustInfo {
   coldChain?: boolean
   /** 산지 직거래 (중간 유통 없음) */
   directFromFarm?: boolean
-  /** 손상/맛 이상 시 100% 환불 약속 */
-  refundGuarantee?: boolean
+  /** 손상/맛 이상 시 환불 약속 (객체화 — condition 미입력 시 "조건부 교환·환불"로 자동 다운그레이드). */
+  refundGuarantee?: boolean | RefundGuaranteeInfo
   /** GAP 인증번호 (입력 시 "GAP 인증" 표기 허용) */
   gapNumber?: string
   /** 친환경/유기농 인증번호 */
@@ -62,6 +70,24 @@ export interface TrustInfo {
   pesticideFreeNumber?: string
   /** 수확일 (YYYY-MM-DD) */
   harvestDateLabel?: string
+  /** v8: 농부 이름. */
+  producerName?: string
+  /** v8: 농부 산지 (시·군·구). */
+  producerRegion?: string
+  /** v8: 농부 연차. */
+  farmerYears?: number
+  /** v8: 농부 사진 URL (선택, 셀러 업로드). */
+  farmerPhotoUrl?: string
+  /** v8: 봉인 포장 여부 (콜드체인 봉인). */
+  sealedPackage?: boolean
+}
+
+export interface RefundGuaranteeInfo {
+  enabled: boolean
+  /** 조건 — "맛 이상 시 100% 환불" 같은 구체 조건. */
+  condition?: string
+  /** 신청 기한 (시간 단위). */
+  windowHours?: number
 }
 
 export interface CopySpec {

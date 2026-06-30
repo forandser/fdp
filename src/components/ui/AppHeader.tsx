@@ -76,9 +76,27 @@ export function AppHeader({
         </Link>
       </div>
       <div className="flex items-center gap-3">
-        <span style={{ fontSize: "var(--font-size-sm)", color: "var(--color-neutral-500)" }}>
-          {keyMask ?? ""}
-        </span>
+        {keyMask && (
+          <span
+            title="이 브라우저에 암호화 저장됨. 다시 방문해도 유지됩니다."
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "4px 10px",
+              borderRadius: 999,
+              background: "var(--color-success-tint, #ECFDF5)",
+              border: "1px solid var(--color-success, #10B981)",
+              color: "var(--color-success-dark, #047857)",
+              fontSize: "var(--font-size-sm)",
+              fontWeight: 600,
+              letterSpacing: 0.1,
+            }}
+          >
+            <span aria-hidden>🔐</span>
+            <span>{keyMask}</span>
+          </span>
+        )}
         <button
           type="button"
           onClick={() => void onClearKey()}
