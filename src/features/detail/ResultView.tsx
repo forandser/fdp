@@ -31,8 +31,6 @@ interface ResultViewProps {
   busySection?: SectionId | null
 }
 
-type PreviewMode = "desktop" | "mobile"
-
 const RED = "#E03131"
 const RED_DARK = "#C92A2A"
 const RED_TINT = "#FFF5F5"
@@ -55,12 +53,10 @@ export function ResultView({
   onSectionRegenerate,
   busySection,
 }: ResultViewProps) {
-  const [previewMode, setPreviewMode] = useState<PreviewMode>("desktop")
   const [enhance, setEnhance] = useState(true)
-  const [copiedToast, setCopiedToast] = useState(false)
   const captureRef = useRef<HTMLDivElement>(null)
-  const previewWidth = previewMode === "mobile" ? 420 : 860
-  const isMobile = previewMode === "mobile"
+  const previewWidth = 860
+  const isMobile = true
 
   const heroImage = images[0]
   const galleryImages = images.slice(1)
@@ -108,27 +104,6 @@ export function ResultView({
       }}
     >
       <div>
-        {/* Preview toggle */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            gap: 8,
-            marginBottom: 8,
-          }}
-        >
-          <PreviewToggle
-            active={previewMode === "desktop"}
-            label={t.detail.result.previewDesktop}
-            onClick={() => setPreviewMode("desktop")}
-          />
-          <PreviewToggle
-            active={previewMode === "mobile"}
-            label={t.detail.result.previewMobile}
-            onClick={() => setPreviewMode("mobile")}
-          />
-        </div>
-
         <p
           style={{
             textAlign: "center",
@@ -327,28 +302,6 @@ export function ResultView({
         </label>
 
         <ExportPanel targetRef={captureRef} baseName={sanitizedName} />
-
-        <ActionButton
-          onClick={() => {
-            const txt = buildPlainCopy(copy)
-            if (typeof navigator !== "undefined" && navigator.clipboard) {
-              void navigator.clipboard.writeText(txt).then(() => {
-                setCopiedToast(true)
-                setTimeout(() => setCopiedToast(false), 1800)
-              })
-            }
-          }}
-        >
-          📋 {copiedToast ? t.detail.result.copiedToast : t.detail.result.copyText}
-        </ActionButton>
-
-        <ActionButton
-          onClick={() => {
-            if (typeof window !== "undefined") window.print()
-          }}
-        >
-          🖨️ {t.detail.result.print}
-        </ActionButton>
 
         <ActionButton onClick={onRetry}>{t.detail.result.retry}</ActionButton>
       </aside>
@@ -1429,87 +1382,6 @@ function SectionTitle({
       {regen}
     </div>
   )
-}
-
-function PreviewToggle({
-  active,
-  label,
-  onClick,
-}: {
-  active: boolean
-  label: string
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        padding: "8px 16px",
-        borderRadius: 999,
-        border: active
-          ? "1px solid var(--color-primary-600)"
-          : "1px solid var(--color-neutral-300)",
-        background: active
-          ? "var(--color-primary-600)"
-          : "var(--color-bg-surface)",
-        color: active ? "var(--color-text-on-primary)" : "var(--color-neutral-700)",
-        fontSize: 13,
-        fontWeight: 600,
-        cursor: "pointer",
-      }}
-    >
-      {label}
-    </button>
-  )
-}
-
-function buildPlainCopy(copy: CopyOutput): string {
-  const lines: string[] = []
-  if (copy.headline) lines.push(`[${copy.headline}]`)
-  if (copy.subheadline) lines.push(copy.subheadline)
-  if (copy.highlightBox) lines.push("", copy.highlightBox)
-  if (copy.story) lines.push("", copy.story)
-
-  if (copy.keyPoints?.length) {
-    lines.push("")
-    copy.keyPoints.forEach((p) => {
-      lines.push(`POINT ${p.num} ${p.title}`)
-      if (p.body) lines.push(p.body)
-      lines.push("")
-    })
-  }
-
-  if (copy.recommendFor?.length) {
-    lines.push("[이런 분께 추천드려요]")
-    copy.recommendFor.forEach((r) => lines.push(`- ${r}`))
-    lines.push("")
-  }
-
-  if (copy.spec?.length) {
-    lines.push("[상품 정보]")
-    copy.spec.forEach((s) => lines.push(`${s.label}: ${s.value}`))
-    lines.push("")
-  }
-
-  if (copy.farmStory) lines.push("[농가에서]", copy.farmStory, "")
-  if (copy.storage) lines.push("[보관·먹는 법]", copy.storage, "")
-
-  if (copy.faq?.length) {
-    lines.push("[자주 묻는 질문]")
-    copy.faq.forEach((f) => {
-      lines.push(`Q. ${f.q}`)
-      lines.push(`A. ${f.a}`)
-      lines.push("")
-    })
-  }
-
-  if (copy.cautions?.length) {
-    lines.push("[구매 전 꼭 확인해주세요]")
-    copy.cautions.forEach((c) => lines.push(`- ${c}`))
-  }
-
-  return lines.join("\n").trim()
 }
 
 function ActionButton({

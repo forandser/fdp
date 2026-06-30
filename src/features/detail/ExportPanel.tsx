@@ -11,7 +11,7 @@ interface ExportPanelProps {
   baseName: string
 }
 
-type SliceMode = "auto" | "single"
+type SliceMode = "sections" | "single"
 type WidthPreset = 780 | 860 | 1000 | 831
 
 const WIDTH_PRESETS: { value: WidthPreset; label: string }[] = [
@@ -21,11 +21,9 @@ const WIDTH_PRESETS: { value: WidthPreset; label: string }[] = [
   { value: 1000, label: t.detail.result.exportPanel.platformSelf },
 ]
 
-const SLICE_HEIGHT = 3000
-
 export function ExportPanel({ targetRef, baseName }: ExportPanelProps) {
   const [width, setWidth] = useState<WidthPreset>(860)
-  const [slice, setSlice] = useState<SliceMode>("auto")
+  const [slice, setSlice] = useState<SliceMode>("sections")
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{ kind: "success" | "error"; text: string } | null>(
     null,
@@ -38,7 +36,7 @@ export function ExportPanel({ targetRef, baseName }: ExportPanelProps) {
     try {
       const result = await exportNodeAsSlicedJpg(targetRef.current, {
         width,
-        sliceHeight: slice === "auto" ? SLICE_HEIGHT : null,
+        mode: slice,
         quality: 0.92,
         pixelRatio: 2,
         baseName,
@@ -124,7 +122,7 @@ export function ExportPanel({ targetRef, baseName }: ExportPanelProps) {
           disabled={busy}
           style={selectStyle}
         >
-          <option value="auto">{t.detail.result.exportPanel.sliceAuto}</option>
+          <option value="sections">{t.detail.result.exportPanel.sliceAuto}</option>
           <option value="single">{t.detail.result.exportPanel.sliceSingle}</option>
         </select>
         {slice === "single" && (

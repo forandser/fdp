@@ -1,21 +1,27 @@
 /**
- * HTML 노드 → JPG 변환 + 자동 분할 다운로드.
+ * HTML 노드 → JPG 변환 + 분할 다운로드.
  *
  * 룰북 함의: 이건 1차 임시 출력기. 향후 react-konva 캔버스 에디터로 교체 시
  * 이 파일은 폐기되고 lib/exporters/coupang.ts로 대체된다.
  * 단, ExportOptions 인터페이스(types.ts)는 유지.
+ *
+ * 두 가지 모드:
+ *  - sliceHeight === null → 전체 한 장
+ *  - "sections"           → captureRef 직속 자식(섹션 블록) 하나씩 캡처
  */
 
 import { toCanvas } from "html-to-image"
 
+export type SliceMode = "single" | "sections"
+
 export interface ExportSliceOptions {
   /** 출력 가로 폭 (px) */
   width: number
-  /** 세로 분할 단위 (px). 한 장으로 출력하려면 null */
-  sliceHeight: number | null
+  /** "single" = 한 장, "sections" = 직속 자식 노드 단위 */
+  mode: SliceMode
   /** JPG 품질 0~1 */
   quality?: number
-  /** 픽셀 비율 (1 또는 2) */
+  /** 픽셀 비율 (1 또는 2). 메모리 부족 위험 있을 때 1 */
   pixelRatio?: number
   /** 다운로드 파일명 접두사 */
   baseName?: string
@@ -27,8 +33,8 @@ export interface ExportSliceResult {
 }
 
 /**
- * 원본 노드를 가로 width로 강제 렌더한 캔버스를 만든 뒤
- * sliceHeight 단위로 잘라 각각 JPG 다운로드.
+ * source(=captureRef div)를 가로 width로 강제 렌더한 클론을 hidden div에 그린 뒤
+ * mode에 따라 전체/섹션 단위로 캡처해 각각 JPG 다운로드.
  */
 export async function exportNodeAsSlicedJpg(
   source: HTMLElement,
@@ -38,17 +44,20 @@ export async function exportNodeAsSlicedJpg(
   const quality = opts.quality ?? 0.92
   const baseName = (opts.baseName ?? "detail").normalize("NFC")
 
-  // 1) 가로 폭을 width로 고정한 클론을 hidden div에 그려 캡처
+  // 1) 가로 폭을 width로 고정한 클론을 화면 밖에 마운트.
+  //    z-index:-1 은 일부 환경에서 toCanvas가 빈 캔버스를 만드는 원인이 되어 제거.
+  //    top:-99999px 대신 화면 우측 밖에 두어 폰트/이미지 로드는 정상 진행되게 함.
   const clone = source.cloneNode(true) as HTMLElement
   const wrapper = document.createElement("div")
   wrapper.style.position = "fixed"
-  wrapper.style.top = "-99999px"
+  wrapper.style.top = "0"
   wrapper.style.left = "0"
+  wrapper.style.transform = "translateX(-200vw)"
   wrapper.style.width = `${opts.width}px`
   wrapper.style.padding = "0"
   wrapper.style.margin = "0"
   wrapper.style.background = "#ffffff"
-  wrapper.style.zIndex = "-1"
+  wrapper.style.pointerEvents = "none"
   clone.style.width = "100%"
   clone.style.maxWidth = "100%"
   clone.style.boxShadow = "none"
@@ -57,58 +66,90 @@ export async function exportNodeAsSlicedJpg(
   document.body.appendChild(wrapper)
 
   try {
-    // 폰트 로드 대기
-    if (document.fonts?.ready) await document.fonts.ready
+    // 폰트 로드 대기 (한글 웹폰트가 늦으면 캡처가 빈 박스로 나옴)
+    if (document.fonts?.ready) {
+      await document.fonts.ready
+    }
+    // 이미지 로드 대기 (clone 내부의 img들이 디코딩될 때까지)
+    await waitForImages(clone)
+    // 레이아웃 안정화
+    await new Promise((r) => requestAnimationFrame(() => r(null)))
 
-    const fullCanvas = await toCanvas(wrapper, {
-      pixelRatio,
-      backgroundColor: "#ffffff",
-      cacheBust: true,
-    })
+    let totalBytes = 0
+    let fileCount = 0
 
-    const fullWidth = fullCanvas.width
-    const fullHeight = fullCanvas.height
-
-    // 2) 분할 처리
-    if (opts.sliceHeight == null) {
-      const blob = await canvasToJpegBlob(fullCanvas, quality)
+    if (opts.mode === "single") {
+      const canvas = await toCanvas(clone, {
+        pixelRatio,
+        backgroundColor: "#ffffff",
+        cacheBust: false,
+      })
+      const blob = await canvasToJpegBlob(canvas, quality)
       downloadBlob(`${baseName}.jpg`, blob)
       return { fileCount: 1, totalBytes: blob.size }
     }
 
-    const sliceCssHeight = opts.sliceHeight
-    const sliceCanvasHeight = sliceCssHeight * pixelRatio
-    const sliceCount = Math.max(1, Math.ceil(fullHeight / sliceCanvasHeight))
+    // "sections" 모드: clone 직속 자식들을 각각 캡처
+    const children = Array.from(
+      clone.querySelectorAll<HTMLElement>(":scope > *"),
+    ).filter((el) => {
+      // 빈 노드/높이 0인 노드는 스킵
+      const rect = el.getBoundingClientRect()
+      return rect.height > 0 && rect.width > 0
+    })
 
-    let totalBytes = 0
-    for (let i = 0; i < sliceCount; i++) {
-      const yStart = i * sliceCanvasHeight
-      const sliceH = Math.min(sliceCanvasHeight, fullHeight - yStart)
-      if (sliceH <= 0) break
+    if (children.length === 0) {
+      // fallback: 섹션을 못 찾으면 한 장으로
+      const canvas = await toCanvas(clone, {
+        pixelRatio,
+        backgroundColor: "#ffffff",
+        cacheBust: false,
+      })
+      const blob = await canvasToJpegBlob(canvas, quality)
+      downloadBlob(`${baseName}.jpg`, blob)
+      return { fileCount: 1, totalBytes: blob.size }
+    }
 
-      const sliceCanvas = document.createElement("canvas")
-      sliceCanvas.width = fullWidth
-      sliceCanvas.height = sliceH
-      const ctx = sliceCanvas.getContext("2d")
-      if (!ctx) continue
-      ctx.fillStyle = "#ffffff"
-      ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height)
-      ctx.drawImage(fullCanvas, 0, yStart, fullWidth, sliceH, 0, 0, fullWidth, sliceH)
-
-      const blob = await canvasToJpegBlob(sliceCanvas, quality)
-      const num = String(i + 1).padStart(2, "0")
+    const pad = children.length >= 100 ? 3 : 2
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i]
+      const canvas = await toCanvas(child, {
+        pixelRatio,
+        backgroundColor: "#ffffff",
+        cacheBust: false,
+      })
+      const blob = await canvasToJpegBlob(canvas, quality)
+      const num = String(i + 1).padStart(pad, "0")
       downloadBlob(`${baseName}_${num}.jpg`, blob)
       totalBytes += blob.size
+      fileCount += 1
 
-      // 다운로드 사이 약간의 텀 (브라우저가 모두 받게)
-      if (i < sliceCount - 1) {
+      // 브라우저가 다운로드를 모두 받도록 약간의 텀
+      if (i < children.length - 1) {
         await new Promise((r) => setTimeout(r, 250))
       }
     }
-    return { fileCount: sliceCount, totalBytes }
+
+    return { fileCount, totalBytes }
   } finally {
-    document.body.removeChild(wrapper)
+    if (wrapper.parentNode) {
+      document.body.removeChild(wrapper)
+    }
   }
+}
+
+function waitForImages(root: HTMLElement): Promise<void> {
+  const imgs = Array.from(root.querySelectorAll("img"))
+  if (imgs.length === 0) return Promise.resolve()
+  return Promise.all(
+    imgs.map((img) => {
+      if (img.complete && img.naturalWidth > 0) return Promise.resolve()
+      return new Promise<void>((resolve) => {
+        img.addEventListener("load", () => resolve(), { once: true })
+        img.addEventListener("error", () => resolve(), { once: true })
+      })
+    }),
+  ).then(() => undefined)
 }
 
 function canvasToJpegBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
@@ -132,5 +173,5 @@ function downloadBlob(fileName: string, blob: Blob): void {
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
-  setTimeout(() => URL.revokeObjectURL(url), 0)
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
