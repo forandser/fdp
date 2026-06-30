@@ -13,7 +13,7 @@ export const MODEL_IDS = {
 } as const
 
 export type ModelId = (typeof MODEL_IDS)[keyof typeof MODEL_IDS]
-export const DEFAULT_MODEL: ModelId = MODEL_IDS.SONNET
+export const DEFAULT_MODEL: ModelId = MODEL_IDS.OPUS
 
 export type CopyTone = "sincere" | "friendly" | "premium"
 export type RecommendBadge = "top" | "best" | "new"
