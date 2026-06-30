@@ -41,6 +41,10 @@ const BG_SOFT = "#F8F9FA"
 const LINE = "#E9ECEF"
 const PLACEHOLDER = "#ADB5BD"
 
+/** 손글씨 폰트 체인. KoHandwriting 우선, 없으면 시스템 풀백. */
+const HANDWRITING_FONT =
+  'KoHandwriting, "Nanum Pen Script", "Cafe24 Ssurround", Pretendard, sans-serif'
+
 /** 빈 CopyOutput — 미리보기 placeholder/초기값용. */
 export function emptyCopy(): CopyOutput {
   return {
@@ -87,7 +91,7 @@ function DotDivider() {
     >
       <span>•</span>
       <span>•</span>
-      <span>•</span>
+      <span style={{ fontSize: 10, opacity: 0.85 }}>✕</span>
     </div>
   )
 }
@@ -433,14 +437,15 @@ function WhyHeader({
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
-            width: 32,
+            width: 34,
             height: 32,
-            borderRadius: "50%",
+            borderRadius: "50% 48% 50% 52%",
             background: RED,
             color: "#FFF",
             fontSize: 18,
             fontWeight: 700,
             marginBottom: 16,
+            transform: "rotate(-3deg)",
           }}
           aria-hidden
         >
@@ -783,18 +788,24 @@ function StoryBlock({
               fontSize: 10,
               fontWeight: 800,
               letterSpacing: 1,
-              transform: "rotate(-12deg)",
+              transform: "rotate(-9deg)",
+              marginLeft: -8,
             }}
           >
             FRESH
           </div>
           <p
             style={{
-              fontSize: isMobile ? 17 : 22,
+              fontSize: isMobile ? 26 : 32,
               fontWeight: 800,
               color: RED_DARK,
               margin: 0,
               lineHeight: 1.4,
+              fontFamily: HANDWRITING_FONT,
+              transform: "rotate(-1deg)",
+              display: "inline-block",
+              borderBottom: `4px solid ${RED}`,
+              paddingBottom: 2,
             }}
           >
             <EditableResultText
@@ -828,23 +839,36 @@ function GalleryBlock({
       style={{
         display: "grid",
         gridTemplateColumns: images.length === 1 ? "1fr" : "repeat(2, 1fr)",
-        gap: 2,
-        background: LINE,
+        gap: 18,
+        background: "#FFFFFF",
+        padding: "20px 16px",
       }}
     >
       {images.slice(0, 4).map((img, i) => (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
+        <div
           key={img.id}
-          src={img.url}
-          alt={`${productName} ${i + 2}`}
           style={{
-            width: "100%",
-            aspectRatio: "1",
-            objectFit: "cover",
+            background: "#FFFFFF",
+            padding: 6,
+            border: "6px solid #FFFFFF",
+            borderRadius: 2,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.18)",
+            transform: `rotate(${i % 2 === 0 ? "-1.2deg" : "1deg"})`,
             display: "block",
           }}
-        />
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={img.url}
+            alt={`${productName} ${i + 2}`}
+            style={{
+              width: "100%",
+              aspectRatio: "1",
+              objectFit: "cover",
+              display: "block",
+            }}
+          />
+        </div>
       ))}
     </div>
   )
@@ -1092,12 +1116,13 @@ function KeyPointsBig({
             </div>
             <h3
               style={{
-                fontSize: isMobile ? 24 : 32,
+                fontSize: isMobile ? 28 : 36,
                 fontWeight: 800,
                 margin: 0,
                 marginBottom: 14,
                 color: INK,
                 lineHeight: 1.3,
+                fontFamily: HANDWRITING_FONT,
               }}
             >
               {p.title ? (
@@ -1510,15 +1535,42 @@ function FarmStoryBlock({
           </span>
           <p
             style={{
-              fontSize: isMobile ? 15 : 17,
+              fontSize: isMobile ? 20 : 24,
               color: INK,
-              lineHeight: 1.75,
+              lineHeight: 1.65,
               margin: 0,
-              fontStyle: "italic",
               whiteSpace: "pre-line",
+              fontFamily: HANDWRITING_FONT,
+              position: "relative",
             }}
           >
-            “{farmStory}”
+            <span
+              aria-hidden
+              style={{
+                color: RED,
+                fontSize: isMobile ? 34 : 42,
+                fontWeight: 800,
+                lineHeight: 0,
+                marginRight: 4,
+                verticalAlign: "-0.2em",
+              }}
+            >
+              “
+            </span>
+            {farmStory}
+            <span
+              aria-hidden
+              style={{
+                color: RED,
+                fontSize: isMobile ? 34 : 42,
+                fontWeight: 800,
+                lineHeight: 0,
+                marginLeft: 4,
+                verticalAlign: "-0.4em",
+              }}
+            >
+              ”
+            </span>
           </p>
         </div>
       </div>
