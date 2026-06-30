@@ -1,0 +1,193 @@
+@import "tailwindcss";
+
+/*
+ * 디자인 토큰 — 발주오라 디자인시스템 v1.0 기준
+ * 출처: d:/문서/Dropbox/#어드민개발/#클로드/발주오라-디자인시스템.md
+ * 본 프로젝트도 같은 토큰을 재사용하여 일관성 유지.
+ */
+:root {
+  /* Primary (Blue) */
+  --color-primary-700: #2062AC;
+  --color-primary-600: #266BB9;
+  --color-primary-100: #BED7ED;
+  --color-primary-50: rgba(190, 215, 237, 0.35);
+
+  /* Neutral */
+  --color-neutral-900: #292D32;
+  --color-neutral-800: #565A71;
+  --color-neutral-700: #626262;
+  --color-neutral-500: #878787;
+  --color-neutral-400: #979797;
+  --color-neutral-300: #B5B7C0;
+  --color-neutral-250: #B3BDC7;
+  --color-neutral-100: #EEEEEE;
+
+  /* Background */
+  --color-bg-page: #FAFBFF;
+  --color-bg-surface: #FFFFFF;
+  --color-bg-subtle: #F9F9FB;
+
+  /* Semantic */
+  --color-success: #01CF79;
+  --color-danger: #E74C3C;
+  --color-highlight: #5932EA;
+
+  /* Semantic tint (배경용 옅은 색) */
+  --color-success-tint: rgba(1, 207, 121, 0.1);
+  --color-danger-tint: rgba(231, 76, 60, 0.1);
+
+  /* Text on colored backgrounds */
+  --color-text-on-primary: #FFFFFF;
+  --color-text-on-dark: #FFFFFF;
+
+  /* 본 프로젝트 추가 (과일 카테고리) */
+  --color-fruit-apple: #E74C3C;
+  --color-fruit-peach: #FF8FA3;
+  --color-fruit-strawberry: #E63946;
+  --color-fruit-grape: #6A0DAD;
+  --color-fruit-orange: #FF8C00;
+  --color-fruit-veggie: #2D9F45;
+
+  /* Shadow */
+  --shadow-card: 0px 10px 60px rgba(226, 236, 249, 0.5);
+
+  /* Spacing Scale */
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 18px;
+  --space-7: 20px;
+  --space-8: 28px;
+  --space-9: 30px;
+  --space-10: 32px;
+
+  /* Border Radius */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-xl: 30px;
+
+  /* Typography */
+  --font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --font-size-caption: 10px;
+  --font-size-sm: 12px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
+}
+
+/* Pretendard 셀프호스트 (메인 폰트) */
+@font-face {
+  font-family: 'Pretendard';
+  src: url('/fonts/Pretendard-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Pretendard';
+  src: url('/fonts/Pretendard-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Pretendard';
+  src: url('/fonts/Pretendard-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Pretendard';
+  src: url('/fonts/Pretendard-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Pretendard';
+  src: url('/fonts/Pretendard-ExtraBold.woff2') format('woff2');
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Pretendard';
+  src: url('/fonts/Pretendard-Black.woff2') format('woff2');
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* 사진 자동 보정 — 농산물 사진의 채도/명도를 살짝 올려 신선해 보이게 */
+.fdp-photo-enhance img {
+  filter: saturate(1.15) contrast(1.04) brightness(1.02);
+}
+
+/* 인쇄 미리보기 — 사이드 패널/헤더 숨기고 결과 영역만 출력 */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .fdp-print, .fdp-print * {
+    visibility: visible;
+  }
+  .fdp-print {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100% !important;
+    box-shadow: none !important;
+  }
+  .fdp-no-print {
+    display: none !important;
+  }
+}
+
+@theme {
+  --font-sans: var(--font-family);
+
+  /* Tailwind 4 토큰 매핑 — primary/* */
+  --color-primary: var(--color-primary-600);
+  --color-primary-dark: var(--color-primary-700);
+  --color-primary-light: var(--color-primary-100);
+
+  /* Tailwind 4 — neutral */
+  --color-ink: var(--color-neutral-900);
+  --color-ink-secondary: var(--color-neutral-500);
+  --color-ink-tertiary: var(--color-neutral-400);
+  --color-line: var(--color-neutral-100);
+
+  /* Tailwind 4 — backgrounds */
+  --color-canvas: var(--color-bg-page);
+  --color-surface: var(--color-bg-surface);
+  --color-surface-subtle: var(--color-bg-subtle);
+}
+
+/* Base */
+html, body {
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  color: var(--color-neutral-900);
+  background: var(--color-bg-page);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}

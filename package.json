@@ -1,0 +1,33 @@
+{
+  "name": "fruit-detail-page-maker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "과일/야채 상세페이지 & 썸네일 자동 제작 사이트 (BYOK)",
+  "scripts": {
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "eslint",
+    "type-check": "node ./node_modules/typescript/bin/tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.88.0",
+    "html-to-image": "^1.11.13",
+    "idb-keyval": "^6.2.1",
+    "konva": "^9.3.20",
+    "next": "16.2.3",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "react-konva": "^19.0.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.3",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
