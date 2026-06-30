@@ -43,21 +43,19 @@ const PLACEHOLDER = "#ADB5BD"
 const WARM_BEIGE = "#FFF8E7"
 const SOFT_GREEN = "#E8F5E9"
 
-/** 헤드라인 폰트 체인. 산스 굵은 헤드용 (G마켓산스/본고딕 대체로 BlackHanSans). */
+/** 헤드라인 폰트 (HeroBlock, KeyPointsBig title, SectionTitle 헤더용). */
 const HEAD_FONT =
-  '"BlackHanSans", "NotoSansKR", "DoHyeon", Pretendard, -apple-system, sans-serif'
-/** 산뜻한 산스 (G마켓산스/SCoreDream 대체로 DoHyeon/Jua). */
+  '"BlackHanSans", "NotoSansKR", Pretendard, sans-serif'
+/** 라벨/도장 (FRESH 도장, POINT 라벨 등 작은 강조). */
 const HEAD_SANS =
-  '"DoHyeon", "Jua", "NotoSansKR", Pretendard, -apple-system, sans-serif'
+  '"Jua", "DoHyeon", sans-serif'
 /** 본문 폰트. */
-const BODY_FONT =
-  'Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif'
-/** 손글씨 강조 폰트 (카페24단정해/KoHandwriting 대체로 NanumPenScript/Jua). */
+const BODY_FONT = 'Pretendard, sans-serif'
+/** 손글씨 강조 폰트 (HighlightBox, FarmStoryBlock 인용). */
 const HANDWRITING_FONT =
-  '"NanumPenScript", "Jua", "GowunDodum", Pretendard, cursive'
-/** 명조 폰트 (본고딕 Heavy 대체로 GowunBatang). */
-const SERIF_FONT =
-  '"GowunBatang", "NotoSansKR", "Apple SD Gothic Neo", serif'
+  '"NanumPenScript", "Gugi", Pretendard, cursive'
+/** 명조 폰트 (StoryBlock, cautionsTitle). */
+const SERIF_FONT = '"GowunBatang", serif'
 
 /** 빈 CopyOutput — 미리보기 placeholder/초기값용. */
 export function emptyCopy(): CopyOutput {
@@ -202,6 +200,43 @@ export function ResultView({
                 'Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif',
             }}
           >
+            {/* 0a. Top hook label — 가는 빨강 가로 띠 + 시즌 표시 (7월 햇과일) */}
+            <div
+              aria-hidden
+              style={{
+                position: "relative",
+                height: 4,
+                background: RED,
+                margin: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <span
+                style={{
+                  position: "absolute",
+                  top: "50%",
+                  left: "50%",
+                  transform: "translate(-50%, -50%)",
+                  background: "#FFFFFF",
+                  color: RED,
+                  fontSize: 12,
+                  padding: "0 10px",
+                  fontFamily: HEAD_SANS,
+                  fontWeight: 700,
+                  letterSpacing: 1,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                <span style={{ fontSize: 13 }}>🍎</span>
+                <span>7월 햇과일</span>
+                <span style={{ fontSize: 13 }}>✿</span>
+              </span>
+            </div>
+
             {/* 0. Top thick red bar with center dot */}
             <div
               aria-hidden
@@ -347,13 +382,9 @@ export function ResultView({
             {/* 9a. RETURNS (정형) */}
             <ReturnsBlock isMobile={isMobile} />
 
-            {/* 10. CAUTIONS */}
-            {copy.cautions && copy.cautions.length > 0 && (
-              <>
-                <DotDivider />
-                <CautionsBlock cautions={copy.cautions} isMobile={isMobile} />
-              </>
-            )}
+            {/* 10. CAUTIONS — 신선식품 면책 박스 자동 표시 (cautions 비어 있어도 노출) */}
+            <DotDivider />
+            <CautionsBlock cautions={copy.cautions ?? []} isMobile={isMobile} />
           </div>
         </div>
       </div>
@@ -1085,6 +1116,11 @@ function SpecBlock({
         >
           {copy.spec.map((s, i) => {
             const icon = iconForSpecLabel(s.label)
+            const isSweetness = /(당도|Brix|brix)/.test(s.label)
+            // "13Brix" / "13 Brix" / "13brix" 같은 값에서 숫자/단위 분리
+            const sweetnessMatch = isSweetness && s.value
+              ? s.value.trim().match(/^(\d+(?:\.\d+)?)\s*([A-Za-z가-힣]+)?/)
+              : null
             return (
               <div
                 key={`spec-${i}`}
@@ -1107,6 +1143,7 @@ function SpecBlock({
                     fontSize: 13,
                     color: SUB,
                     fontWeight: 600,
+                    fontFamily: BODY_FONT,
                   }}
                 >
                   <span aria-hidden style={{ fontSize: 14, lineHeight: 1 }}>
@@ -1114,26 +1151,54 @@ function SpecBlock({
                   </span>
                   <span>{s.label}</span>
                 </div>
-                <div
-                  style={{
-                    fontSize: 17,
-                    fontWeight: 700,
-                    color: INK,
-                    lineHeight: 1.4,
-                    wordBreak: "keep-all",
-                  }}
-                >
-                  {s.value ? (
-                    <EditableResultText
-                      copy={copy}
-                      onChange={onCopyChange}
-                      path={["spec", i, "value"]}
-                      maxLength={100}
-                    />
-                  ) : (
-                    <Placeholder text={s.label} />
-                  )}
-                </div>
+                {isSweetness && sweetnessMatch ? (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "baseline",
+                      gap: 4,
+                      lineHeight: 1.1,
+                      color: RED,
+                      fontFamily: HEAD_FONT,
+                    }}
+                  >
+                    <span style={{ fontSize: 48, fontWeight: 900, letterSpacing: -1 }}>
+                      {sweetnessMatch[1]}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 14,
+                        fontWeight: 700,
+                        color: RED_DARK,
+                        fontFamily: HEAD_SANS,
+                      }}
+                    >
+                      {sweetnessMatch[2] ?? "Brix"}
+                    </span>
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      fontSize: 17,
+                      fontWeight: 700,
+                      color: INK,
+                      lineHeight: 1.4,
+                      wordBreak: "keep-all",
+                      fontFamily: BODY_FONT,
+                    }}
+                  >
+                    {s.value ? (
+                      <EditableResultText
+                        copy={copy}
+                        onChange={onCopyChange}
+                        path={["spec", i, "value"]}
+                        maxLength={100}
+                      />
+                    ) : (
+                      <Placeholder text={s.label} />
+                    )}
+                  </div>
+                )}
               </div>
             )
           })}
@@ -1583,13 +1648,18 @@ function TrustBadgesRow({ trust }: { trust: TrustInfo }) {
 
   if (items.length === 0) return null
 
+  // 칩별 약한 회전 (-2 ~ +2도, 결정론적)
+  const rotFor = (i: number) => {
+    const seq = [-1.6, 1.2, -2, 0.8, 1.8, -1, 2, -1.4]
+    return seq[i % seq.length]
+  }
   return (
     <div
       style={{
         display: "flex",
         flexWrap: "wrap",
-        gap: 6,
-        padding: "14px 20px 18px",
+        gap: 8,
+        padding: "16px 20px 20px",
         justifyContent: "center",
         borderBottom: `1px solid ${LINE}`,
       }}
@@ -1600,14 +1670,18 @@ function TrustBadgesRow({ trust }: { trust: TrustInfo }) {
           style={{
             display: "inline-flex",
             alignItems: "center",
-            gap: 4,
-            padding: "5px 10px",
+            gap: 5,
+            padding: "6px 12px",
             background: "#FFFFFF",
-            border: `1px solid ${RED}`,
+            border: `1.5px dashed ${RED}`,
             color: RED_DARK,
             borderRadius: 999,
             fontSize: 11,
             fontWeight: 700,
+            fontFamily: HEAD_SANS,
+            letterSpacing: 0.3,
+            boxShadow: "0 2px 4px rgba(0,0,0,0.08)",
+            transform: `rotate(${rotFor(i)}deg)`,
           }}
         >
           <span aria-hidden>{it.icon}</span>
@@ -1705,6 +1779,9 @@ function FarmStoryBlock({
   farmStory: string
   isMobile: boolean
 }) {
+  // 농부 이름·연차·산지 한 줄 placeholder — 추후 props 연동 가능
+  const farmerMeta = "20년차 청송 김 농부"
+  const initial = (farmerMeta.match(/[가-힣A-Za-z]/)?.[0] ?? "농").toUpperCase()
   return (
     <div
       style={{
@@ -1715,7 +1792,7 @@ function FarmStoryBlock({
       <SectionTitle title={t.detail.result.farmStoryTitle} />
       <div
         style={{
-          padding: isMobile ? "28px 22px" : "36px 36px",
+          padding: isMobile ? "24px 20px" : "32px 32px",
           background: `linear-gradient(135deg, ${WARM_BEIGE} 0%, ${SOFT_GREEN} 100%)`,
           borderRadius: 4,
           border: `1px dashed ${RED}`,
@@ -1725,81 +1802,91 @@ function FarmStoryBlock({
         <div
           style={{
             display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: 18,
+            flexDirection: "row",
+            alignItems: "flex-start",
+            gap: 14,
           }}
         >
-          {/* 농부 사진 placeholder — 회색 원 */}
+          {/* 좌측 농부 자리 — 40x40 원형, 회색 placeholder + 첫 글자 */}
           <div
             aria-hidden
             style={{
-              width: isMobile ? 76 : 92,
-              height: isMobile ? 76 : 92,
+              flexShrink: 0,
+              width: 40,
+              height: 40,
               borderRadius: "50%",
-              background: "#E9ECEF",
-              border: "4px solid #FFFFFF",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+              background: "#DEE2E6",
+              color: "#495057",
+              border: "2px solid #FFFFFF",
+              boxShadow: "0 2px 6px rgba(0,0,0,0.08)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              fontSize: isMobile ? 36 : 44,
+              fontSize: 16,
+              fontWeight: 800,
+              fontFamily: HEAD_SANS,
             }}
           >
-            🧑‍🌾
+            {initial}
           </div>
+          {/* 우측 — 손글씨 인용 + 농부 메타 한 줄 */}
           <div
             style={{
-              position: "relative",
-              textAlign: "center",
-              maxWidth: 540,
+              flex: 1,
+              minWidth: 0,
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
             }}
           >
-            <span
-              aria-hidden
-              style={{
-                position: "absolute",
-                left: -8,
-                top: -22,
-                color: RED,
-                fontSize: isMobile ? 52 : 64,
-                fontFamily: SERIF_FONT,
-                fontWeight: 900,
-                lineHeight: 1,
-                opacity: 0.5,
-              }}
-            >
-              “
-            </span>
             <p
               style={{
-                fontSize: isMobile ? 22 : 28,
+                fontSize: isMobile ? 26 : 30,
                 color: INK,
-                lineHeight: 1.7,
+                lineHeight: 1.55,
                 margin: 0,
                 whiteSpace: "pre-line",
                 fontFamily: HANDWRITING_FONT,
-                padding: isMobile ? "0 14px" : "0 24px",
               }}
             >
+              <span
+                aria-hidden
+                style={{
+                  color: RED,
+                  fontFamily: SERIF_FONT,
+                  fontWeight: 900,
+                  marginRight: 4,
+                  opacity: 0.6,
+                }}
+              >
+                “
+              </span>
               {farmStory}
+              <span
+                aria-hidden
+                style={{
+                  color: RED,
+                  fontFamily: SERIF_FONT,
+                  fontWeight: 900,
+                  marginLeft: 4,
+                  opacity: 0.6,
+                }}
+              >
+                ”
+              </span>
             </p>
-            <span
-              aria-hidden
+            <p
               style={{
-                position: "absolute",
-                right: -8,
-                bottom: -42,
-                color: RED,
-                fontSize: isMobile ? 52 : 64,
-                fontFamily: SERIF_FONT,
-                fontWeight: 900,
-                lineHeight: 1,
-                opacity: 0.5,
+                fontSize: isMobile ? 12 : 13,
+                color: SUB,
+                margin: 0,
+                fontFamily: BODY_FONT,
+                fontWeight: 600,
+                letterSpacing: 0.2,
               }}
             >
-              ”
-            </span>
+              — {farmerMeta}
+            </p>
           </div>
         </div>
       </div>
@@ -1871,55 +1958,96 @@ function CautionsBlock({
         background: "#FFFFFF",
       }}
     >
+      {/* 신선식품 면책 자동 박스 — cautions 유무와 관계없이 항상 노출 */}
       <div
         style={{
-          padding: isMobile ? "18px 18px" : "24px 28px",
-          background: "#FFFBEB",
-          borderRadius: 10,
-          border: "1px solid #FBBF24",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "10px 14px",
+          marginBottom: 14,
+          background: RED_TINT,
+          border: `1px solid ${RED}`,
+          borderRadius: 8,
+          color: RED_DARK,
+          fontSize: isMobile ? 13 : 14,
+          fontWeight: 600,
+          fontFamily: BODY_FONT,
         }}
       >
-        <h3
+        <span
+          aria-hidden
           style={{
-            fontSize: isMobile ? 17 : 19,
-            fontWeight: 900,
-            color: "#92400E",
-            margin: 0,
-            marginBottom: 14,
-            display: "flex",
+            display: "inline-flex",
             alignItems: "center",
-            gap: 8,
+            justifyContent: "center",
+            width: 18,
+            height: 18,
+            borderRadius: "50%",
+            background: RED,
+            color: "#FFFFFF",
+            fontSize: 11,
+            fontWeight: 900,
+            flexShrink: 0,
             fontFamily: HEAD_SANS,
-            letterSpacing: -0.3,
           }}
         >
-          <span aria-hidden>⚠️</span>
-          {t.detail.result.cautionsTitle}
-        </h3>
-        <ul
-          style={{
-            margin: 0,
-            paddingLeft: 18,
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
-          }}
-        >
-          {cautions.map((c, i) => (
-            <li
-              key={`c-${i}`}
-              style={{
-                fontSize: isMobile ? 14 : 15,
-                color: "#78350F",
-                lineHeight: 1.65,
-                fontFamily: BODY_FONT,
-              }}
-            >
-              {c}
-            </li>
-          ))}
-        </ul>
+          ⓘ
+        </span>
+        <span>농산물 특성상 색·크기·당도는 ±10% 차이가 있을 수 있습니다.</span>
       </div>
+
+      {cautions.length > 0 && (
+        <div
+          style={{
+            padding: isMobile ? "18px 18px" : "24px 28px",
+            background: "#FFFBEB",
+            borderRadius: 10,
+            border: "1px solid #FBBF24",
+          }}
+        >
+          <h3
+            style={{
+              fontSize: isMobile ? 17 : 19,
+              fontWeight: 900,
+              color: "#92400E",
+              margin: 0,
+              marginBottom: 14,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              fontFamily: SERIF_FONT,
+              letterSpacing: -0.3,
+            }}
+          >
+            <span aria-hidden>⚠️</span>
+            {t.detail.result.cautionsTitle}
+          </h3>
+          <ul
+            style={{
+              margin: 0,
+              paddingLeft: 18,
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+            }}
+          >
+            {cautions.map((c, i) => (
+              <li
+                key={`c-${i}`}
+                style={{
+                  fontSize: isMobile ? 14 : 15,
+                  color: "#78350F",
+                  lineHeight: 1.65,
+                  fontFamily: BODY_FONT,
+                }}
+              >
+                {c}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }

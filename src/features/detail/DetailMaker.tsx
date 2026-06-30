@@ -6,7 +6,6 @@ import { KeywordPicker } from "./KeywordPicker"
 import { ResultView, emptyCopy } from "./ResultView"
 import { SeasonHint } from "./SeasonHint"
 import { SellingPointsSuggester } from "./SellingPointsSuggester"
-import { TrustEditor } from "./TrustEditor"
 import { getAIProvider } from "@/lib/ai/provider"
 import type {
   CopyInput,
@@ -14,7 +13,6 @@ import type {
   CopySpec,
   CopyTone,
   ProductCategory,
-  RecommendBadge,
   TrustInfo,
 } from "@/lib/ai/types"
 import {
@@ -74,32 +72,6 @@ const CATEGORY_OPTIONS: { value: ProductCategory; label: string }[] = [
   { value: "other", label: "그 외" },
 ]
 
-const TONE_OPTIONS: { value: CopyTone; label: string }[] = [
-  { value: "sincere", label: t.detail.tone.sincere },
-  { value: "friendly", label: t.detail.tone.friendly },
-  { value: "premium", label: t.detail.tone.premium },
-]
-
-const BADGE_OPTIONS: { value: RecommendBadge | "none"; label: string }[] = [
-  { value: "none", label: t.detail.badge.none },
-  { value: "top", label: t.detail.badge.top },
-  { value: "best", label: t.detail.badge.best },
-  { value: "new", label: t.detail.badge.new },
-]
-
-function hasTrust(t: TrustInfo): boolean {
-  return !!(
-    t.sameDayHarvest ||
-    t.coldChain ||
-    t.directFromFarm ||
-    t.refundGuarantee ||
-    t.gapNumber?.trim() ||
-    t.organicNumber?.trim() ||
-    t.pesticideFreeNumber?.trim() ||
-    t.harvestDateLabel?.trim()
-  )
-}
-
 const GENERATION_STEPS = [
   "이미지를 분석하고 있어요",
   "한국 신선식품 카피라이팅 패턴 적용 중",
@@ -136,9 +108,8 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   const [farmIntro, setFarmIntro] = useState("")
   const [presetKeywords, setPresetKeywords] = useState<string[]>([])
   const [customKeywords, setCustomKeywords] = useState<string[]>([])
-  const [tone, setTone] = useState<CopyTone>("sincere")
-  const [badge, setBadge] = useState<RecommendBadge | "none">("none")
-  const [trust, setTrust] = useState<TrustInfo>({})
+  const tone: CopyTone = "sincere"
+  const trust: TrustInfo = {}
   const [generationStep, setGenerationStep] = useState(0)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [result, setResult] = useState<CopyOutput | null>(null)
@@ -223,9 +194,6 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         setExtraDescription(extra)
         setPresetKeywords(preset)
         setCustomKeywords(custom)
-        setTone(input.tone ?? "sincere")
-        setBadge(input.recommendBadge ?? "none")
-        setTrust(input.trust ?? {})
         setWorkId(work.id)
         setCurrentInput(input)
 
@@ -312,10 +280,10 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       price: priceNum,
       brix: brix.trim() ? Number(brix) : undefined,
       farmIntro: farmIntro.trim() || undefined,
-      trust: hasTrust(trust) ? trust : undefined,
+      trust: undefined,
       highlightKeywords: allKeywords,
-      recommendBadge: badge === "none" ? undefined : badge,
-      tone,
+      recommendBadge: undefined,
+      tone: "sincere",
     }
 
     try {
@@ -622,41 +590,6 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         />
       </Step>
 
-      <Step number={5} title={t.detail.step5Trust} hint={t.detail.step5TrustHint}>
-        <TrustEditor value={trust} onChange={setTrust} />
-      </Step>
-
-      <Step number={6} title={t.detail.step5Tone}>
-        <FormGrid>
-          <Field label={t.detail.badgeLabel}>
-            <select
-              value={badge}
-              onChange={(e) => setBadge(e.target.value as RecommendBadge | "none")}
-              style={inputStyle}
-            >
-              {BADGE_OPTIONS.map((b) => (
-                <option key={b.value} value={b.value}>
-                  {b.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label={t.detail.toneLabel}>
-            <select
-              value={tone}
-              onChange={(e) => setTone(e.target.value as CopyTone)}
-              style={inputStyle}
-            >
-              {TONE_OPTIONS.map((to) => (
-                <option key={to.value} value={to.value}>
-                  {to.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-        </FormGrid>
-      </Step>
-
       <button
         type="button"
         onClick={() => void handleSubmit()}
@@ -708,7 +641,7 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         price={liveResultMeta.priceNum}
         origin={liveResultMeta.origin}
         weight={liveResultMeta.weight}
-        trust={currentInput?.trust ?? (hasTrust(trust) ? trust : undefined)}
+        trust={currentInput?.trust ?? undefined}
         onCopyChange={handleCopyChange}
         onSectionRegenerate={result ? handleSectionRegenerate : undefined}
         busySection={busySection}
