@@ -1,9 +1,9 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { ImageUploader, type UploadedImage } from "./ImageUploader"
 import { KeywordPicker } from "./KeywordPicker"
-import { ResultView } from "./ResultView"
+import { ResultView, emptyCopy } from "./ResultView"
 import { SeasonHint } from "./SeasonHint"
 import { SellingPointsSuggester } from "./SellingPointsSuggester"
 import { TrustEditor } from "./TrustEditor"
@@ -11,6 +11,7 @@ import { getAIProvider } from "@/lib/ai/provider"
 import type {
   CopyInput,
   CopyOutput,
+  CopySpec,
   CopyTone,
   ProductCategory,
   RecommendBadge,
@@ -36,6 +37,9 @@ type Stage = "restoring" | "input" | "generating" | "result" | "error"
 const EXTRA_DESC_PREFIX = "상품 추가 설명: "
 
 const PRESET_LABEL_SET = new Set(PRESET_KEYWORDS.map((k) => k.label))
+
+/** 좌/우 분할 분기점 (px). 이 아래는 적층 레이아웃. */
+const SPLIT_BREAKPOINT = 1280
 
 async function blobToUploadedImage(blob: Blob, idx: number): Promise<UploadedImage | null> {
   if (typeof window === "undefined") return null
@@ -103,6 +107,21 @@ const GENERATION_STEPS = [
   "마무리 검토 중",
 ]
 
+/** 입력값으로 임시 spec 배열 구성 — 실제 AI 결과가 없을 때 미리보기용. */
+function buildLiveSpec(args: {
+  origin: string
+  variety: string
+  weight: string
+  brix: string
+}): CopySpec[] {
+  const spec: CopySpec[] = []
+  if (args.origin.trim()) spec.push({ label: "산지", value: args.origin.trim() })
+  if (args.variety.trim()) spec.push({ label: "품종", value: args.variety.trim() })
+  if (args.weight.trim()) spec.push({ label: "중량", value: args.weight.trim() })
+  if (args.brix.trim()) spec.push({ label: "당도", value: `${args.brix.trim()} Brix` })
+  return spec
+}
+
 export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   const [stage, setStage] = useState<Stage>(initialWorkId ? "restoring" : "input")
   const [images, setImages] = useState<UploadedImage[]>([])
@@ -137,6 +156,20 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   const [workId, setWorkId] = useState<string | null>(null)
   /** 복원 시 생성된 objectURL — 언마운트 시 일괄 해제 */
   const restoredUrlsRef = useRef<string[]>([])
+
+  /** 데스크탑(>=1280) 좌우 분할 여부 */
+  const [isWide, setIsWide] = useState(() => {
+    if (typeof window === "undefined") return true
+    return window.innerWidth >= SPLIT_BREAKPOINT
+  })
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const onResize = () => setIsWide(window.innerWidth >= SPLIT_BREAKPOINT)
+    onResize()
+    window.addEventListener("resize", onResize)
+    return () => window.removeEventListener("resize", onResize)
+  }, [])
 
   useEffect(() => {
     if (!initialWorkId) return
@@ -227,6 +260,26 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   }, [])
 
   const hasMin = images.length >= 1 && productName.trim() && price.trim()
+
+  /** 우측 미리보기에 전달할 카피 — 실제 result가 있으면 그것, 없으면 emptyCopy + 임시 spec. */
+  const liveCopy = useMemo<CopyOutput>(() => {
+    if (result) return result
+    const base = emptyCopy()
+    base.spec = buildLiveSpec({ origin, variety, weight, brix })
+    return base
+  }, [result, origin, variety, weight, brix])
+
+  /** 우측 미리보기에 전달할 메타 — 실제 result가 있으면 그 시점의 값, 없으면 현재 입력. */
+  const liveResultMeta = useMemo(() => {
+    if (result && resultMeta) return resultMeta
+    const priceNum = Number(price.replace(/[^\d]/g, "")) || 0
+    return {
+      priceNum,
+      productName: productName.trim(),
+      origin: origin.trim(),
+      weight: weight.trim(),
+    }
+  }, [result, resultMeta, price, productName, origin, weight])
 
   const handleSubmit = async () => {
     if (!hasMin) {
@@ -345,29 +398,12 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
     }
   }
 
-  if (stage === "result" && result && resultMeta) {
-    return (
-      <div style={{ padding: "var(--space-7)", maxWidth: 1320, margin: "0 auto" }}>
-        <ResultView
-          copy={result}
-          images={images}
-          productName={resultMeta.productName}
-          price={resultMeta.priceNum}
-          origin={resultMeta.origin}
-          weight={resultMeta.weight}
-          trust={currentInput?.trust}
-          onCopyChange={handleCopyChange}
-          onSectionRegenerate={handleSectionRegenerate}
-          busySection={busySection}
-          onRetry={() => {
-            setStage("input")
-            setResult(null)
-            setCurrentInput(null)
-            setWorkId(null)
-          }}
-        />
-      </div>
-    )
+  const handleRetry = () => {
+    setStage("input")
+    setResult(null)
+    setResultMeta(null)
+    setCurrentInput(null)
+    setWorkId(null)
   }
 
   if (stage === "restoring") {
@@ -387,18 +423,15 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
     )
   }
 
-  if (stage === "generating") {
-    return (
-      <GeneratingView step={generationStep} totalSteps={GENERATION_STEPS.length} />
-    )
-  }
+  const isGenerating = stage === "generating"
 
-  return (
+  // ---------- 좌측 폼 ----------
+  const formColumn = (
     <div
       style={{
-        maxWidth: 720,
-        margin: "0 auto",
-        padding: "var(--space-10) var(--space-5)",
+        maxWidth: 540,
+        width: "100%",
+        margin: isWide ? "0" : "0 auto",
       }}
     >
       <h1
@@ -411,6 +444,22 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       >
         {t.detail.pageTitle}
       </h1>
+
+      {errorMsg && (
+        <div
+          style={{
+            padding: 14,
+            background: "var(--color-danger-tint)",
+            border: "1px solid var(--color-danger)",
+            borderRadius: "var(--radius-xs)",
+            color: "var(--color-danger)",
+            fontSize: "var(--font-size-md)",
+            marginBottom: 16,
+          }}
+        >
+          ⚠️ {errorMsg}
+        </div>
+      )}
 
       <Step number={1} title={t.detail.step1Image} hint={t.detail.step1Hint}>
         <ImageUploader images={images} onChange={setImages} />
@@ -600,63 +649,131 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         </FormGrid>
       </Step>
 
-      {errorMsg && (
-        <div
-          style={{
-            padding: 14,
-            background: "var(--color-danger-tint)",
-            border: "1px solid var(--color-danger)",
-            borderRadius: "var(--radius-xs)",
-            color: "var(--color-danger)",
-            fontSize: "var(--font-size-md)",
-            marginBottom: 16,
-          }}
-        >
-          ⚠️ {errorMsg}
-        </div>
-      )}
-
       <button
         type="button"
         onClick={() => void handleSubmit()}
-        disabled={!hasMin}
+        disabled={!hasMin || isGenerating}
         style={{
           width: "100%",
           padding: "16px 18px",
-          background: hasMin
-            ? "var(--color-primary-600)"
-            : "var(--color-neutral-300)",
+          background:
+            hasMin && !isGenerating
+              ? "var(--color-primary-600)"
+              : "var(--color-neutral-300)",
           color: "var(--color-text-on-primary)",
           border: "none",
           borderRadius: "var(--radius-xs)",
           fontSize: 18,
           fontWeight: 700,
-          cursor: hasMin ? "pointer" : "not-allowed",
+          cursor: hasMin && !isGenerating ? "pointer" : "not-allowed",
         }}
       >
-        ✨ {t.detail.submit}
+        ✨ {isGenerating ? t.detail.submitting : t.detail.submit}
       </button>
     </div>
   )
-}
 
-function GeneratingView({ step, totalSteps }: { step: number; totalSteps: number }) {
+  // ---------- 우측 미리보기 ----------
+  const previewColumn = (
+    <div style={{ position: "relative", width: "100%" }}>
+      {!isWide && (
+        <div
+          style={{
+            padding: "10px 14px",
+            marginBottom: 12,
+            background: "var(--color-primary-50)",
+            border: "1px dashed var(--color-primary-600)",
+            borderRadius: "var(--radius-xs)",
+            color: "var(--color-neutral-900)",
+            fontSize: "var(--font-size-sm)",
+            textAlign: "center",
+          }}
+        >
+          👆 위 폼에서 입력하면 여기에 반영됩니다
+        </div>
+      )}
+
+      <ResultView
+        copy={liveCopy}
+        images={images}
+        productName={liveResultMeta.productName}
+        price={liveResultMeta.priceNum}
+        origin={liveResultMeta.origin}
+        weight={liveResultMeta.weight}
+        trust={currentInput?.trust ?? (hasTrust(trust) ? trust : undefined)}
+        onCopyChange={handleCopyChange}
+        onSectionRegenerate={result ? handleSectionRegenerate : undefined}
+        busySection={busySection}
+        onRetry={handleRetry}
+      />
+
+      {isGenerating && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "rgba(255, 255, 255, 0.85)",
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "center",
+            paddingTop: 80,
+            borderRadius: "var(--radius-md)",
+            zIndex: 10,
+          }}
+        >
+          <GeneratingOverlay step={generationStep} totalSteps={GENERATION_STEPS.length} />
+        </div>
+      )}
+    </div>
+  )
+
   return (
     <div
       style={{
-        minHeight: "70vh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 24,
-        padding: 32,
+        maxWidth: 1480,
+        margin: "0 auto",
+        padding: isWide ? "var(--space-7) var(--space-5)" : "var(--space-10) var(--space-5)",
+        display: "grid",
+        gridTemplateColumns: isWide ? "minmax(440px, 540px) minmax(0, 1fr)" : "1fr",
+        gap: isWide ? 32 : 24,
+        alignItems: "start",
       }}
     >
       <div
         style={{
-          width: 64,
-          height: 64,
+          position: isWide ? "sticky" : "static",
+          top: isWide ? 16 : undefined,
+          maxHeight: isWide ? "calc(100vh - 32px)" : undefined,
+          overflowY: isWide ? "auto" : undefined,
+        }}
+      >
+        {formColumn}
+      </div>
+      {previewColumn}
+    </div>
+  )
+}
+
+function GeneratingOverlay({ step, totalSteps }: { step: number; totalSteps: number }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 20,
+        padding: 28,
+        background: "var(--color-bg-surface)",
+        border: "1px solid var(--color-neutral-100)",
+        borderRadius: "var(--radius-md)",
+        boxShadow: "0 6px 24px rgba(0,0,0,0.08)",
+        minWidth: 320,
+      }}
+    >
+      <div
+        style={{
+          width: 52,
+          height: 52,
           borderRadius: "50%",
           border: "4px solid var(--color-primary-100)",
           borderTopColor: "var(--color-primary-600)",
@@ -670,7 +787,7 @@ function GeneratingView({ step, totalSteps }: { step: number; totalSteps: number
       `}</style>
       <h2
         style={{
-          fontSize: "var(--font-size-xl)",
+          fontSize: "var(--font-size-lg)",
           fontWeight: 700,
           color: "var(--color-neutral-900)",
         }}
@@ -682,9 +799,9 @@ function GeneratingView({ step, totalSteps }: { step: number; totalSteps: number
           display: "flex",
           flexDirection: "column",
           gap: 8,
-          fontSize: "var(--font-size-md)",
+          fontSize: "var(--font-size-sm)",
           color: "var(--color-neutral-500)",
-          minWidth: 280,
+          minWidth: 260,
         }}
       >
         {GENERATION_STEPS.map((s, i) => {
@@ -770,7 +887,7 @@ function FormGrid({ children }: { children: React.ReactNode }) {
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+        gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
         gap: 14,
       }}
     >

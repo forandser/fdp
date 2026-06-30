@@ -39,6 +39,58 @@ const SUB = "#495057"
 const MUTE = "#868E96"
 const BG_SOFT = "#F8F9FA"
 const LINE = "#E9ECEF"
+const PLACEHOLDER = "#ADB5BD"
+
+/** 빈 CopyOutput — 미리보기 placeholder/초기값용. */
+export function emptyCopy(): CopyOutput {
+  return {
+    headline: "",
+    subheadline: "",
+    story: "",
+    spec: [],
+    storage: "",
+    faq: [],
+    highlightBadges: [],
+    keyPoints: [],
+    highlightBox: "",
+    cautions: [],
+    recommendFor: [],
+    farmStory: "",
+  }
+}
+
+/** 빈 문자열이면 placeholder 회색 텍스트를 렌더. */
+function Placeholder({ text }: { text: string }) {
+  return (
+    <span style={{ color: PLACEHOLDER, fontWeight: 400, fontStyle: "italic" }}>
+      여기에 {text}가 들어갑니다
+    </span>
+  )
+}
+
+/** 섹션 사이 빨강 점 3개 미세 구분자. */
+function DotDivider() {
+  return (
+    <div
+      aria-hidden
+      style={{
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        gap: 8,
+        padding: "10px 0",
+        background: "#FFFFFF",
+        color: RED,
+        fontSize: 12,
+        letterSpacing: 2,
+      }}
+    >
+      <span>•</span>
+      <span>•</span>
+      <span>•</span>
+    </div>
+  )
+}
 
 export function ResultView({
   copy,
@@ -132,6 +184,16 @@ export function ResultView({
                 'Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif',
             }}
           >
+            {/* 0. Top red dashed divider */}
+            <div
+              aria-hidden
+              style={{
+                margin: "24px 20px",
+                borderTop: `1px dashed ${RED}`,
+                height: 0,
+              }}
+            />
+
             {/* 1. WHY HEADER + Compact POINT cards */}
             <WhyHeader
               productName={productName}
@@ -144,6 +206,8 @@ export function ResultView({
             {/* 1a. TRUST BADGES */}
             {trust && <TrustBadgesRow trust={trust} />}
 
+            <DotDivider />
+
             {/* 2. HERO + HEADLINE BIG TITLE */}
             <HeroBlock
               heroImage={heroImage}
@@ -153,6 +217,8 @@ export function ResultView({
               onRegenSub={renderRegen("subheadline")}
               isMobile={isMobile}
             />
+
+            <DotDivider />
 
             {/* 3. STORY + HIGHLIGHT BOX */}
             <StoryBlock
@@ -164,13 +230,21 @@ export function ResultView({
 
             {/* 3a. RECOMMEND FOR */}
             {copy.recommendFor && copy.recommendFor.length > 0 && (
-              <RecommendForBlock items={copy.recommendFor} isMobile={isMobile} />
+              <>
+                <DotDivider />
+                <RecommendForBlock items={copy.recommendFor} isMobile={isMobile} />
+              </>
             )}
 
             {/* 4. GALLERY (2x2) */}
             {galleryImages.length > 0 && (
-              <GalleryBlock images={galleryImages} productName={productName} />
+              <>
+                <DotDivider />
+                <GalleryBlock images={galleryImages} productName={productName} />
+              </>
             )}
+
+            <DotDivider />
 
             {/* 5. SPEC + PRICE */}
             <SpecBlock
@@ -183,49 +257,68 @@ export function ResultView({
 
             {/* 6. POINT BIG CARDS */}
             {keyPoints.length > 0 && (
-              <KeyPointsBig
-                points={keyPoints}
-                copy={copy}
-                onCopyChange={onCopyChange}
-                pointImageFor={pointImageFor}
-                isMobile={isMobile}
-              />
+              <>
+                <DotDivider />
+                <KeyPointsBig
+                  points={keyPoints}
+                  copy={copy}
+                  onCopyChange={onCopyChange}
+                  pointImageFor={pointImageFor}
+                  isMobile={isMobile}
+                />
+              </>
             )}
 
             {/* 6a. FARM STORY */}
             {copy.farmStory && (
-              <FarmStoryBlock farmStory={copy.farmStory} isMobile={isMobile} />
+              <>
+                <DotDivider />
+                <FarmStoryBlock farmStory={copy.farmStory} isMobile={isMobile} />
+              </>
             )}
 
             {/* 7. STORAGE */}
             {copy.storage && (
-              <StorageBlock
-                copy={copy}
-                onCopyChange={onCopyChange}
-                onRegen={renderRegen("storage")}
-                isMobile={isMobile}
-              />
+              <>
+                <DotDivider />
+                <StorageBlock
+                  copy={copy}
+                  onCopyChange={onCopyChange}
+                  onRegen={renderRegen("storage")}
+                  isMobile={isMobile}
+                />
+              </>
             )}
 
             {/* 8. FAQ */}
             {copy.faq.length > 0 && (
-              <FaqBlock
-                copy={copy}
-                onCopyChange={onCopyChange}
-                onRegen={renderRegen("faq")}
-                isMobile={isMobile}
-              />
+              <>
+                <DotDivider />
+                <FaqBlock
+                  copy={copy}
+                  onCopyChange={onCopyChange}
+                  onRegen={renderRegen("faq")}
+                  isMobile={isMobile}
+                />
+              </>
             )}
+
+            <DotDivider />
 
             {/* 9. DELIVERY (정형) */}
             <DeliveryBlock isMobile={isMobile} />
+
+            <DotDivider />
 
             {/* 9a. RETURNS (정형) */}
             <ReturnsBlock isMobile={isMobile} />
 
             {/* 10. CAUTIONS */}
             {copy.cautions && copy.cautions.length > 0 && (
-              <CautionsBlock cautions={copy.cautions} isMobile={isMobile} />
+              <>
+                <DotDivider />
+                <CautionsBlock cautions={copy.cautions} isMobile={isMobile} />
+              </>
             )}
           </div>
         </div>
@@ -329,7 +422,7 @@ function WhyHeader({
   return (
     <div
       style={{
-        padding: isMobile ? "32px 20px 24px" : "44px 40px 32px",
+        padding: isMobile ? "36px 20px" : "44px 40px",
         background: "#FFFFFF",
         borderBottom: `1px solid ${LINE}`,
       }}
@@ -362,7 +455,8 @@ function WhyHeader({
             color: INK,
           }}
         >
-          {productName} <span style={{ color: RED }}>{t.detail.result.whatsDifferentTitle}</span>
+          {productName || <Placeholder text="상품명" />}{" "}
+          <span style={{ color: RED }}>{t.detail.result.whatsDifferentTitle}</span>
         </h2>
         <p
           style={{
@@ -376,7 +470,7 @@ function WhyHeader({
         </p>
       </div>
 
-      {keyPoints.length > 0 && (
+      {keyPoints.length > 0 ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {keyPoints.map((p, i) => (
             <div
@@ -416,15 +510,33 @@ function WhyHeader({
                   lineHeight: 1.4,
                 }}
               >
-                <EditableResultText
-                  copy={copy}
-                  onChange={onCopyChange}
-                  path={["keyPoints", i, "title"]}
-                  maxLength={40}
-                />
+                {p.title ? (
+                  <EditableResultText
+                    copy={copy}
+                    onChange={onCopyChange}
+                    path={["keyPoints", i, "title"]}
+                    maxLength={40}
+                  />
+                ) : (
+                  <Placeholder text="핵심 포인트" />
+                )}
               </span>
             </div>
           ))}
+        </div>
+      ) : (
+        <div
+          style={{
+            padding: "16px 18px",
+            background: BG_SOFT,
+            borderRadius: 12,
+            textAlign: "center",
+            color: PLACEHOLDER,
+            fontSize: 13,
+            fontStyle: "italic",
+          }}
+        >
+          여기에 핵심 포인트 3가지가 들어갑니다
         </div>
       )}
     </div>
@@ -448,7 +560,7 @@ function HeroBlock({
 }) {
   return (
     <div style={{ background: "#FFFFFF" }}>
-      {heroImage && (
+      {heroImage ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={heroImage.url}
@@ -460,13 +572,42 @@ function HeroBlock({
             display: "block",
           }}
         />
+      ) : (
+        <div
+          style={{
+            width: "100%",
+            aspectRatio: "1",
+            background: BG_SOFT,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: PLACEHOLDER,
+            fontSize: 14,
+            fontStyle: "italic",
+          }}
+        >
+          여기에 대표 이미지가 들어갑니다
+        </div>
       )}
       <div
         style={{
-          padding: isMobile ? "28px 20px" : "44px 40px",
+          padding: isMobile ? "36px 20px" : "44px 40px",
           textAlign: "center",
         }}
       >
+        {/* 작은 빨강 라벨 */}
+        <div
+          style={{
+            fontSize: 10,
+            fontWeight: 800,
+            letterSpacing: 2,
+            color: RED,
+            marginBottom: 10,
+          }}
+          aria-hidden
+        >
+          FRUIT DETAIL
+        </div>
         <p
           style={{
             fontSize: isMobile ? 14 : 17,
@@ -476,12 +617,16 @@ function HeroBlock({
             lineHeight: 1.5,
           }}
         >
-          <EditableResultText
-            copy={copy}
-            onChange={onCopyChange}
-            path={["subheadline"]}
-            maxLength={60}
-          />
+          {copy.subheadline ? (
+            <EditableResultText
+              copy={copy}
+              onChange={onCopyChange}
+              path={["subheadline"]}
+              maxLength={60}
+            />
+          ) : (
+            <Placeholder text="서브 카피" />
+          )}
         </p>
         <h1
           style={{
@@ -493,12 +638,16 @@ function HeroBlock({
             letterSpacing: -0.5,
           }}
         >
-          <EditableResultText
-            copy={copy}
-            onChange={onCopyChange}
-            path={["headline"]}
-            maxLength={40}
-          />
+          {copy.headline ? (
+            <EditableResultText
+              copy={copy}
+              onChange={onCopyChange}
+              path={["headline"]}
+              maxLength={40}
+            />
+          ) : (
+            <Placeholder text="메인 헤드라인" />
+          )}
         </h1>
 
         {(onRegenHeadline || onRegenSub) && (
@@ -558,20 +707,22 @@ function StoryBlock({
   onRegen: React.ReactNode
   isMobile: boolean
 }) {
-  if (!copy.story && !copy.highlightBox) return null
+  const hasStory = !!copy.story
+  const hasHighlight = !!copy.highlightBox
   return (
     <div
       style={{
-        padding: isMobile ? "32px 20px" : "48px 40px",
+        padding: isMobile ? "36px 20px" : "48px 40px",
         background: "#FFFFFF",
+        position: "relative",
       }}
     >
-      {copy.story && (
+      {hasStory ? (
         <p
           style={{
             fontSize: isMobile ? 15 : 17,
             color: INK,
-            lineHeight: 1.85,
+            lineHeight: 1.75,
             whiteSpace: "pre-line",
             margin: 0,
             textAlign: "center",
@@ -586,9 +737,22 @@ function StoryBlock({
             preserveWhitespace
           />
         </p>
+      ) : (
+        <p
+          style={{
+            fontSize: isMobile ? 15 : 17,
+            lineHeight: 1.75,
+            margin: 0,
+            textAlign: "center",
+            color: PLACEHOLDER,
+            fontStyle: "italic",
+          }}
+        >
+          여기에 상품 스토리가 들어갑니다
+        </p>
       )}
 
-      {copy.highlightBox && (
+      {hasHighlight && (
         <div
           style={{
             marginTop: 28,
@@ -597,8 +761,33 @@ function StoryBlock({
             border: `2px solid ${RED}`,
             borderRadius: 12,
             textAlign: "center",
+            position: "relative",
           }}
         >
+          {/* 도장 마크 */}
+          <div
+            aria-hidden
+            style={{
+              position: "absolute",
+              top: -14,
+              right: -10,
+              width: 52,
+              height: 52,
+              borderRadius: "50%",
+              border: `2px solid ${RED}`,
+              background: "#FFFFFF",
+              color: RED,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 10,
+              fontWeight: 800,
+              letterSpacing: 1,
+              transform: "rotate(-12deg)",
+            }}
+          >
+            FRESH
+          </div>
           <p
             style={{
               fontSize: isMobile ? 17 : 22,
@@ -677,7 +866,7 @@ function SpecBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "32px 20px" : "48px 40px",
+        padding: isMobile ? "36px 20px" : "48px 40px",
         background: BG_SOFT,
       }}
     >
@@ -686,9 +875,6 @@ function SpecBlock({
       {/* Price card */}
       <div
         style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
           padding: "16px 20px",
           background: "#FFFFFF",
           borderRadius: 10,
@@ -696,13 +882,61 @@ function SpecBlock({
           border: `1px solid ${LINE}`,
         }}
       >
-        <span style={{ fontSize: 14, color: SUB }}>{t.detail.result.priceLabel}</span>
-        <span style={{ fontSize: isMobile ? 22 : 26, fontWeight: 800, color: RED }}>
-          ₩{price.toLocaleString("ko-KR")}
-        </span>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 6,
+          }}
+        >
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 800,
+              letterSpacing: 1,
+              color: MUTE,
+              padding: "2px 6px",
+              border: `1px solid ${LINE}`,
+              borderRadius: 4,
+            }}
+          >
+            정상가
+          </span>
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 800,
+              letterSpacing: 1,
+              color: RED,
+              padding: "2px 6px",
+              border: `1px solid ${RED}`,
+              borderRadius: 4,
+              background: RED_TINT,
+            }}
+          >
+            할인가
+          </span>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <span style={{ fontSize: 14, color: SUB }}>
+            {t.detail.result.priceLabel}
+          </span>
+          <span
+            style={{ fontSize: isMobile ? 22 : 26, fontWeight: 800, color: RED }}
+          >
+            ₩{price.toLocaleString("ko-KR")}
+          </span>
+        </div>
       </div>
 
-      {copy.spec.length > 0 && (
+      {copy.spec.length > 0 ? (
         <div
           style={{
             background: "#FFFFFF",
@@ -717,7 +951,8 @@ function SpecBlock({
               style={{
                 display: "grid",
                 gridTemplateColumns: isMobile ? "90px 1fr" : "120px 1fr",
-                borderBottom: i < copy.spec.length - 1 ? `1px solid ${LINE}` : "none",
+                borderBottom:
+                  i < copy.spec.length - 1 ? `1px solid ${LINE}` : "none",
               }}
             >
               <div
@@ -738,15 +973,34 @@ function SpecBlock({
                   color: INK,
                 }}
               >
-                <EditableResultText
-                  copy={copy}
-                  onChange={onCopyChange}
-                  path={["spec", i, "value"]}
-                  maxLength={100}
-                />
+                {s.value ? (
+                  <EditableResultText
+                    copy={copy}
+                    onChange={onCopyChange}
+                    path={["spec", i, "value"]}
+                    maxLength={100}
+                  />
+                ) : (
+                  <Placeholder text={s.label} />
+                )}
               </div>
             </div>
           ))}
+        </div>
+      ) : (
+        <div
+          style={{
+            background: "#FFFFFF",
+            borderRadius: 10,
+            border: `1px solid ${LINE}`,
+            padding: "20px",
+            textAlign: "center",
+            color: PLACEHOLDER,
+            fontSize: 13,
+            fontStyle: "italic",
+          }}
+        >
+          여기에 상품 정보 표가 들어갑니다
         </div>
       )}
     </div>
@@ -808,6 +1062,17 @@ function KeyPointsBig({
               padding: isMobile ? "20px 20px 40px" : "32px 40px 56px",
             }}
           >
+            {/* 가로 두꺼운 빨강 선 */}
+            <div
+              aria-hidden
+              style={{
+                width: 48,
+                height: 4,
+                background: RED,
+                marginBottom: 14,
+                borderRadius: 2,
+              }}
+            />
             <div
               style={{
                 display: "inline-flex",
@@ -835,31 +1100,39 @@ function KeyPointsBig({
                 lineHeight: 1.3,
               }}
             >
-              <EditableResultText
-                copy={copy}
-                onChange={onCopyChange}
-                path={["keyPoints", i, "title"]}
-                maxLength={40}
-              />
+              {p.title ? (
+                <EditableResultText
+                  copy={copy}
+                  onChange={onCopyChange}
+                  path={["keyPoints", i, "title"]}
+                  maxLength={40}
+                />
+              ) : (
+                <Placeholder text="포인트 제목" />
+              )}
             </h3>
             <p
               style={{
                 fontSize: isMobile ? 14 : 16,
                 color: SUB,
-                lineHeight: 1.8,
+                lineHeight: 1.75,
                 margin: 0,
                 marginBottom: 20,
                 whiteSpace: "pre-line",
               }}
             >
-              <EditableResultText
-                copy={copy}
-                onChange={onCopyChange}
-                path={["keyPoints", i, "body"]}
-                multiline
-                maxLength={300}
-                preserveWhitespace
-              />
+              {p.body ? (
+                <EditableResultText
+                  copy={copy}
+                  onChange={onCopyChange}
+                  path={["keyPoints", i, "body"]}
+                  multiline
+                  maxLength={300}
+                  preserveWhitespace
+                />
+              ) : (
+                <Placeholder text="포인트 본문" />
+              )}
             </p>
             {img && (
               // eslint-disable-next-line @next/next/no-img-element
@@ -896,7 +1169,7 @@ function StorageBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "32px 20px" : "48px 40px",
+        padding: isMobile ? "36px 20px" : "48px 40px",
         background: BG_SOFT,
       }}
     >
@@ -909,24 +1182,38 @@ function StorageBlock({
           border: `1px solid ${LINE}`,
         }}
       >
-        <p
-          style={{
-            fontSize: isMobile ? 14 : 15,
-            color: INK,
-            lineHeight: 1.8,
-            whiteSpace: "pre-line",
-            margin: 0,
-          }}
-        >
-          <EditableResultText
-            copy={copy}
-            onChange={onCopyChange}
-            path={["storage"]}
-            multiline
-            maxLength={500}
-            preserveWhitespace
-          />
-        </p>
+        {copy.storage ? (
+          <p
+            style={{
+              fontSize: isMobile ? 14 : 15,
+              color: INK,
+              lineHeight: 1.75,
+              whiteSpace: "pre-line",
+              margin: 0,
+            }}
+          >
+            <EditableResultText
+              copy={copy}
+              onChange={onCopyChange}
+              path={["storage"]}
+              multiline
+              maxLength={500}
+              preserveWhitespace
+            />
+          </p>
+        ) : (
+          <p
+            style={{
+              fontSize: isMobile ? 14 : 15,
+              lineHeight: 1.75,
+              margin: 0,
+              color: PLACEHOLDER,
+              fontStyle: "italic",
+            }}
+          >
+            여기에 보관·먹는 법이 들어갑니다
+          </p>
+        )}
       </div>
     </div>
   )
@@ -946,7 +1233,7 @@ function FaqBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "32px 20px" : "48px 40px",
+        padding: isMobile ? "36px 20px" : "48px 40px",
         background: "#FFFFFF",
       }}
     >
@@ -964,7 +1251,8 @@ function FaqBlock({
             key={`faq-${i}`}
             style={{
               padding: isMobile ? "16px 18px" : "20px 24px",
-              borderBottom: i < copy.faq.length - 1 ? `1px solid ${LINE}` : "none",
+              borderBottom:
+                i < copy.faq.length - 1 ? `1px solid ${LINE}` : "none",
             }}
           >
             <p
@@ -977,6 +1265,9 @@ function FaqBlock({
                 lineHeight: 1.5,
               }}
             >
+              <span style={{ color: RED, marginRight: 4, fontSize: 10 }} aria-hidden>
+                ▼
+              </span>
               <span style={{ color: RED, marginRight: 6 }}>Q.</span>
               <EditableResultText
                 copy={copy}
@@ -989,10 +1280,13 @@ function FaqBlock({
               style={{
                 fontSize: isMobile ? 13 : 14,
                 color: SUB,
-                lineHeight: 1.7,
+                lineHeight: 1.75,
                 margin: 0,
               }}
             >
+              <span style={{ color: RED, marginRight: 4, fontSize: 10 }} aria-hidden>
+                ▼
+              </span>
               <span style={{ color: MUTE, marginRight: 6, fontWeight: 700 }}>A.</span>
               <EditableResultText
                 copy={copy}
@@ -1014,7 +1308,7 @@ function DeliveryBlock({ isMobile }: { isMobile: boolean }) {
   return (
     <div
       style={{
-        padding: isMobile ? "32px 20px" : "48px 40px",
+        padding: isMobile ? "36px 20px" : "48px 40px",
         background: BG_SOFT,
       }}
     >
@@ -1055,7 +1349,7 @@ function DeliveryBlock({ isMobile }: { isMobile: boolean }) {
             style={{
               fontSize: isMobile ? 14 : 15,
               color: INK,
-              lineHeight: 1.7,
+              lineHeight: 1.75,
               margin: 0,
             }}
           >
@@ -1126,7 +1420,7 @@ function RecommendForBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "32px 20px" : "48px 40px",
+        padding: isMobile ? "36px 20px" : "48px 40px",
         background: BG_SOFT,
       }}
     >
@@ -1191,7 +1485,7 @@ function FarmStoryBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "32px 20px" : "48px 40px",
+        padding: isMobile ? "36px 20px" : "48px 40px",
         background: "#FFFFFF",
       }}
     >
@@ -1218,7 +1512,7 @@ function FarmStoryBlock({
             style={{
               fontSize: isMobile ? 15 : 17,
               color: INK,
-              lineHeight: 1.7,
+              lineHeight: 1.75,
               margin: 0,
               fontStyle: "italic",
               whiteSpace: "pre-line",
@@ -1236,7 +1530,7 @@ function ReturnsBlock({ isMobile }: { isMobile: boolean }) {
   return (
     <div
       style={{
-        padding: isMobile ? "32px 20px" : "48px 40px",
+        padding: isMobile ? "36px 20px" : "48px 40px",
         background: "#FFFFFF",
       }}
     >
@@ -1270,7 +1564,7 @@ function ReturnsBlock({ isMobile }: { isMobile: boolean }) {
             style={{
               fontSize: isMobile ? 14 : 15,
               color: INK,
-              lineHeight: 1.7,
+              lineHeight: 1.75,
               margin: 0,
             }}
           >
@@ -1292,7 +1586,7 @@ function CautionsBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "32px 20px 40px" : "48px 40px 64px",
+        padding: isMobile ? "36px 20px 40px" : "48px 40px 64px",
         background: "#FFFFFF",
       }}
     >
@@ -1372,7 +1666,7 @@ function SectionTitle({
           fontWeight: 800,
           color: INK,
           margin: 0,
-          paddingLeft: 12,
+          paddingLeft: 14,
           borderLeft: `4px solid ${RED}`,
           lineHeight: 1,
         }}
