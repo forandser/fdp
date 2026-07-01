@@ -31,6 +31,12 @@ export interface ExportSliceOptions {
   pixelRatio?: number
   /** 다운로드 파일명 접두사 */
   baseName?: string
+  /**
+   * v2.7: 저장 폴더 핸들 (File System Access API).
+   * 지정 시 브라우저 다운로드 대신 이 폴더에 직접 파일 쓰기.
+   * Chrome/Edge만 지원. 미지원 브라우저는 undefined로 넘기면 자동 fallback.
+   */
+  directoryHandle?: FileSystemDirectoryHandle
 }
 
 export interface ExportSliceResult {
@@ -91,7 +97,7 @@ export async function exportNodeAsSlicedJpg(
         cacheBust: false,
       })
       const blob = await canvasToJpegBlob(canvas, quality)
-      downloadBlob(`${baseName}.jpg`, blob)
+      await saveBlob(`${baseName}.jpg`, blob, opts.directoryHandle)
       return { fileCount: 1, totalBytes: blob.size }
     }
 
@@ -113,7 +119,7 @@ export async function exportNodeAsSlicedJpg(
         cacheBust: false,
       })
       const blob = await canvasToJpegBlob(canvas, quality)
-      downloadBlob(`${baseName}.jpg`, blob)
+      await saveBlob(`${baseName}.jpg`, blob, opts.directoryHandle)
       return { fileCount: 1, totalBytes: blob.size }
     }
 
@@ -164,7 +170,7 @@ export async function exportNodeAsSlicedJpg(
         })
         const blob = await canvasToJpegBlob(canvas, quality)
         const num = String(i + 1).padStart(pad, "0")
-        downloadBlob(`${baseName}_${num}.jpg`, blob)
+        await saveBlob(`${baseName}_${num}.jpg`, blob, opts.directoryHandle)
         totalBytes += blob.size
         fileCount += 1
       } finally {
@@ -225,4 +231,27 @@ function downloadBlob(fileName: string, blob: Blob): void {
   a.click()
   document.body.removeChild(a)
   setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+/**
+ * v2.7: 저장 폴더 핸들이 있으면 그 폴더에 직접 파일 쓰기, 없으면 다운로드 폴더로.
+ * File System Access API 실패(권한 취소·핸들 만료) 시 자동 다운로드 폴더 fallback.
+ */
+async function saveBlob(
+  fileName: string,
+  blob: Blob,
+  dirHandle?: FileSystemDirectoryHandle,
+): Promise<void> {
+  if (dirHandle) {
+    try {
+      const fileHandle = await dirHandle.getFileHandle(fileName, { create: true })
+      const writable = await fileHandle.createWritable()
+      await writable.write(blob)
+      await writable.close()
+      return
+    } catch (err) {
+      console.warn("[saveBlob] directory write failed, fallback to download:", err)
+    }
+  }
+  downloadBlob(fileName, blob)
 }

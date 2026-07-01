@@ -13,73 +13,13 @@ import { CheckoutTrustStrip } from "./CheckoutTrustStrip"
 import { FreshnessTimeline } from "./FreshnessTimeline"
 import { ProducerCard } from "./ProducerCard"
 import { DisclosureBlock } from "./DisclosureBlock"
-import { StickyMobileCta } from "./StickyMobileCta"
+// v2.7: StickyMobileCta 삭제 (중앙 하단 복사/다운로드 버튼 제거 지시)
 import { QualityScoreCard } from "./QualityScoreCard"
 import { WidthPresetSwitcher, WIDTH_PRESETS, type WidthPresetKey } from "./WidthPresetSwitcher"
 // v2.6: WorkJsonExporter 삭제 (사이드바 3개 액션 제거 지시)
 import { checkComplianceReport } from "@/lib/ai/compliance-report"
 import { scoreCopyQuality } from "@/lib/ai/copy-quality-score"
 import { detectFruitFactKey, FRUIT_FACTS } from "@/domain/fruit-facts"
-
-/** CopyOutput을 사람 친화적 텍스트로 평탄화 (전체 복사용). */
-function flattenCopyToText(copy: CopyOutput, productName: string): string {
-  const lines: string[] = []
-  lines.push(`【${productName || copy.headline}】`)
-  if (copy.headline) lines.push(copy.headline)
-  if (copy.subheadline) lines.push(copy.subheadline)
-  lines.push("")
-  if (copy.highlightBox) {
-    lines.push(`▶ ${copy.highlightBox}`)
-    lines.push("")
-  }
-  if (copy.story) {
-    lines.push(copy.story)
-    lines.push("")
-  }
-  if (copy.keyPoints.length > 0) {
-    lines.push("── 구매 포인트 ──")
-    for (const kp of copy.keyPoints) {
-      lines.push(`POINT ${kp.num}. ${kp.title}`)
-      lines.push(kp.body)
-      lines.push("")
-    }
-  }
-  if (copy.spec.length > 0) {
-    lines.push("── 상품 정보 ──")
-    for (const s of copy.spec) {
-      lines.push(`• ${s.label}: ${s.value}`)
-    }
-    lines.push("")
-  }
-  if (copy.storage) {
-    lines.push("── 보관·먹는 법 ──")
-    lines.push(copy.storage)
-    lines.push("")
-  }
-  if (copy.faq.length > 0) {
-    lines.push("── 자주 묻는 질문 ──")
-    for (const f of copy.faq) {
-      lines.push(`Q. ${f.q}`)
-      lines.push(`A. ${f.a}`)
-      lines.push("")
-    }
-  }
-  if (copy.recommendFor.length > 0) {
-    lines.push("── 이런 분께 추천 ──")
-    for (const r of copy.recommendFor) lines.push(`• ${r}`)
-    lines.push("")
-  }
-  if (copy.farmStory) {
-    lines.push("── 농가에서 한 마디 ──")
-    lines.push(copy.farmStory)
-    lines.push("")
-  }
-  if (copy.cautions.length > 0) {
-    lines.push("── 구매 전 확인 ──")
-    for (const c of copy.cautions) lines.push(`• ${c}`)
-  }
-  return lines.join("\n").trim()
-}
 
 /**
  * 결과 미리보기.
@@ -675,25 +615,7 @@ export function ResultView({
         </details>
       </aside>
 
-      {/* v1.8: 모바일 sticky CTA — 스크롤 30% 이상에서 표시 */}
-      <StickyMobileCta
-        onCopy={async () => {
-          try {
-            const text = flattenCopyToText(copy, productName)
-            if (navigator.clipboard && text) {
-              await navigator.clipboard.writeText(text)
-              alert("전체 카피를 복사했어요!")
-            }
-          } catch (e) {
-            console.error("[sticky-copy]", e)
-          }
-        }}
-        onDownload={() => {
-          // ExportPanel 영역으로 스크롤
-          const panel = document.querySelector('[data-fdp-export-panel="true"]') as HTMLElement | null
-          panel?.scrollIntoView({ behavior: "smooth", block: "center" })
-        }}
-      />
+      {/* v2.7: StickyMobileCta 삭제 (사이드바에 이미 있으므로 중복 제거) */}
     </div>
   )
 }

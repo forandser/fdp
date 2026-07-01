@@ -21,6 +21,10 @@ const WIDTH_PRESETS: { value: WidthPreset; label: string }[] = [
   { value: 1000, label: t.detail.result.exportPanel.platformSelf },
 ]
 
+/** v2.7: File System Access API 지원 여부 (Chrome/Edge only). */
+const SUPPORTS_DIR_PICKER =
+  typeof window !== "undefined" && "showDirectoryPicker" in window
+
 export function ExportPanel({ targetRef, baseName }: ExportPanelProps) {
   const [width, setWidth] = useState<WidthPreset>(860)
   const [slice, setSlice] = useState<SliceMode>("sections")
@@ -29,6 +33,38 @@ export function ExportPanel({ targetRef, baseName }: ExportPanelProps) {
   const [message, setMessage] = useState<{ kind: "success" | "error"; text: string } | null>(
     null,
   )
+  /** v2.7: 사용자가 선택한 저장 폴더 핸들. 미선택 = 다운로드 폴더로 저장. */
+  const [directoryHandle, setDirectoryHandle] = useState<FileSystemDirectoryHandle | null>(
+    null,
+  )
+  const [directoryName, setDirectoryName] = useState<string>("")
+
+  const handlePickDirectory = async () => {
+    const picker = (
+      window as Window & {
+        showDirectoryPicker?: (opts?: {
+          mode?: "read" | "readwrite"
+        }) => Promise<FileSystemDirectoryHandle>
+      }
+    ).showDirectoryPicker
+    if (!picker) return
+    try {
+      const handle = await picker({ mode: "readwrite" })
+      setDirectoryHandle(handle)
+      setDirectoryName(handle.name)
+    } catch (err) {
+      // 사용자 취소는 정상 (AbortError)
+      const e = err as { name?: string }
+      if (e?.name !== "AbortError") {
+        console.error("[pick-directory]", err)
+      }
+    }
+  }
+
+  const handleClearDirectory = () => {
+    setDirectoryHandle(null)
+    setDirectoryName("")
+  }
 
   const handleDownload = async () => {
     if (!targetRef.current) return
@@ -42,6 +78,7 @@ export function ExportPanel({ targetRef, baseName }: ExportPanelProps) {
         quality: 0.92,
         pixelRatio: 2,
         baseName,
+        directoryHandle: directoryHandle ?? undefined,
       })
       setMessage({
         kind: "success",
@@ -178,6 +215,105 @@ export function ExportPanel({ targetRef, baseName }: ExportPanelProps) {
           </p>
         </div>
       )}
+
+      {/* v2.7: 저장 위치 선택 (File System Access API, Chrome/Edge만) */}
+      <div>
+        <label
+          style={{
+            display: "block",
+            fontSize: "var(--font-size-sm)",
+            fontWeight: 600,
+            color: "var(--color-neutral-900)",
+            marginBottom: 6,
+          }}
+        >
+          저장 위치
+        </label>
+        {SUPPORTS_DIR_PICKER ? (
+          <>
+            {directoryName ? (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "8px 10px",
+                  background: "var(--color-success-tint)",
+                  border: "1px solid var(--color-success)",
+                  borderRadius: "var(--radius-xs)",
+                  fontSize: 12,
+                  color: "var(--color-neutral-900)",
+                }}
+              >
+                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  📁 {directoryName}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleClearDirectory}
+                  disabled={busy}
+                  style={{
+                    padding: "3px 8px",
+                    background: "transparent",
+                    border: "1px solid var(--color-neutral-300)",
+                    borderRadius: 4,
+                    fontSize: 11,
+                    cursor: "pointer",
+                    color: "var(--color-neutral-700)",
+                  }}
+                >
+                  변경
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void handlePickDirectory()}
+                disabled={busy}
+                style={{
+                  width: "100%",
+                  padding: "9px 12px",
+                  background: "var(--color-bg-surface)",
+                  border: "1px dashed var(--color-neutral-300)",
+                  borderRadius: "var(--radius-xs)",
+                  fontSize: "var(--font-size-sm)",
+                  color: "var(--color-neutral-700)",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                }}
+              >
+                📁 저장 폴더 선택
+              </button>
+            )}
+            <p
+              style={{
+                marginTop: 6,
+                fontSize: 11,
+                color: "var(--color-neutral-600)",
+                lineHeight: 1.5,
+              }}
+            >
+              {directoryName
+                ? "선택한 폴더에 바로 저장됩니다."
+                : "선택 안 하면 브라우저 기본 다운로드 폴더로 저장돼요."}
+            </p>
+          </>
+        ) : (
+          <p
+            style={{
+              margin: 0,
+              padding: "8px 10px",
+              background: "var(--color-bg-subtle)",
+              borderRadius: "var(--radius-xs)",
+              fontSize: 11.5,
+              color: "var(--color-neutral-600)",
+              lineHeight: 1.5,
+            }}
+          >
+            브라우저 기본 다운로드 폴더로 저장돼요. 폴더 선택은 Chrome·Edge에서만 지원됩니다.
+          </p>
+        )}
+      </div>
 
       <button
         type="button"

@@ -115,8 +115,8 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   const [presetKeywords, setPresetKeywords] = useState<string[]>([])
   const [customKeywords, setCustomKeywords] = useState<string[]>([])
   const tone: CopyTone = "sincere"
-  /** 일반 농산물 확인 게이트 — 건강기능식품/숙취해소 표시 상품 차단 (식약처 §10). */
-  const [isOrdinaryProduce, setIsOrdinaryProduce] = useState(true)
+  /** v2.7: 게이트 UI 삭제. 내부 상수 true 유지 (API 안전망 / 규칙 5 준수) */
+  const isOrdinaryProduce = true
   /** 현재 입력에서 합성한 trust 객체 — 미리보기/SellingPointsSuggester에 인입. */
   const trustForPreview: TrustInfo = useMemo(() => {
     const out: TrustInfo = {}
@@ -549,49 +549,7 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         </div>
       )}
 
-      {/* 일반 농산물 게이트 — 식약처 §10 자율심의 대상 차단 (v1.8) */}
-      <section
-        style={{
-          padding: "12px 14px",
-          marginBottom: 20,
-          background: isOrdinaryProduce
-            ? "var(--color-bg-subtle)"
-            : "var(--color-danger-tint)",
-          border: `1px solid ${isOrdinaryProduce ? "var(--color-neutral-300)" : "var(--color-danger)"}`,
-          borderRadius: "var(--radius-xs)",
-          fontSize: "var(--font-size-sm)",
-        }}
-      >
-        <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={isOrdinaryProduce}
-            onChange={(e) => setIsOrdinaryProduce(e.target.checked)}
-            style={{ marginTop: 3 }}
-          />
-          <span style={{ color: "var(--color-neutral-900)", lineHeight: 1.6 }}>
-            <strong>이 상품은 일반 농산물입니다.</strong>
-            <br />
-            <span style={{ color: "var(--color-neutral-700)" }}>
-              (건강기능식품·기능성표시식품·숙취해소 표시 상품 아님)
-            </span>
-          </span>
-        </label>
-        {!isOrdinaryProduce && (
-          <p
-            style={{
-              marginTop: 8,
-              padding: 8,
-              background: "var(--color-bg-surface)",
-              borderRadius: "var(--radius-xs)",
-              color: "var(--color-danger)",
-              fontSize: "var(--font-size-sm)",
-            }}
-          >
-            ⚠️ 건강기능식품·숙취해소 표시 상품은 식약처 §10 자율심의가 필요합니다. 본 사이트는 일반 농산물 카피만 안전하게 지원합니다.
-          </p>
-        )}
-      </section>
+      {/* v2.7: 일반 농산물 게이트 UI 삭제 — isOrdinaryProduce는 내부 상수 true 유지 (API에는 계속 전달, 규칙 5 안전망) */}
 
       <Step number={1} title={t.detail.step1Image} hint={t.detail.step1Hint}>
         <ImageUploader images={images} onChange={setImages} />
