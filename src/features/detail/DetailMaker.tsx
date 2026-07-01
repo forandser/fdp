@@ -150,6 +150,53 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
           : "실온 보관",
     }
   }, [productName])
+
+  /**
+   * v2.0: 예시 채우기 한 클릭 — fruit-facts 기반 자동 채움.
+   * 초보 셀러가 "이렇게 쓰면 되겠구나" 즉시 학습 + AI 생성 즉시 시도 가능.
+   */
+  const canFillDemo = useMemo(() => {
+    const key = detectFruitFactKey(productName)
+    return !!key
+  }, [productName])
+
+  const handleFillDemo = () => {
+    const key = detectFruitFactKey(productName)
+    if (!key) return
+    const fact = FRUIT_FACTS[key]
+    const firstVariety = fact.varieties[0]
+    if (!variety.trim() && firstVariety) setVariety(firstVariety.name)
+    if (!origin.trim() && fact.regions[0]) setOrigin(fact.regions[0])
+    if (!weight.trim()) {
+      const kg =
+        fact.category === "fruit"
+          ? fact.name === "수박" || fact.name === "멜론"
+            ? "1통"
+            : "3kg 한 박스"
+          : "1kg"
+      setWeight(kg)
+    }
+    if (!brix.trim()) setBrix(String(fact.goodBrix))
+    if (!price.trim()) {
+      // 대충 시장 가격 견적
+      const guess = fact.name === "샤인머스캣" || fact.name === "체리" ? 39000
+        : fact.name === "딸기" ? 29000
+        : 19900
+      setPrice(String(guess))
+    }
+    if (!sizeGrade.trim()) setSizeGrade("특")
+    if (!farmIntro.trim() && fact.hookHeadlines[0]) setFarmIntro(fact.hookHeadlines[0])
+    // 추가 설명에 감각어 살짝
+    if (!extraDescription.trim() && fact.sensoryWords.length > 0) {
+      setExtraDescription(
+        `강조 포인트:\n- ${fact.sensoryWords.slice(0, 3).join(" / ")}\n- ${fact.hookHeadlines.slice(1, 3).join("\n- ")}`,
+      )
+    }
+    // 농부 정보 예시
+    if (!producerName.trim()) setProducerName("김 농부")
+    if (!producerRegion.trim() && fact.regions[0]) setProducerRegion(fact.regions[0])
+    if (!farmerYears.trim()) setFarmerYears("20")
+  }
   const [generationStep, setGenerationStep] = useState(0)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [result, setResult] = useState<CopyOutput | null>(null)
@@ -532,6 +579,60 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
 
       <Step number={2} title={t.detail.step2Basic}>
         <SeasonHint productName={productName} category={category} />
+
+        {/* v2.0: 예시 채우기 한 클릭 — 신규 셀러 학습용 */}
+        {canFillDemo && (
+          <div
+            style={{
+              padding: "10px 12px",
+              marginBottom: 12,
+              background: "linear-gradient(90deg, #FFF5F5 0%, #FFF8E7 100%)",
+              border: "1px dashed #E03131",
+              borderRadius: 6,
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              justifyContent: "space-between",
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: 12.5,
+                  fontWeight: 700,
+                  color: "#212529",
+                  marginBottom: 2,
+                }}
+              >
+                ✨ 처음이신가요? 예시로 자동 채워드릴게요
+              </div>
+              <div style={{ fontSize: 11, color: "#495057", lineHeight: 1.4 }}>
+                산지·품종·중량·가격 등 빈 칸을 그 과일 표준값으로 채웁니다. 눈으로 확인하고 수정하세요.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleFillDemo}
+              style={{
+                flexShrink: 0,
+                padding: "8px 14px",
+                background: "#E03131",
+                color: "#FFFFFF",
+                border: "none",
+                borderRadius: 6,
+                fontSize: 12.5,
+                fontWeight: 700,
+                cursor: "pointer",
+                boxShadow: "0 2px 6px rgba(224,49,49,0.25)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              ✨ 예시 채우기
+            </button>
+          </div>
+        )}
+
+
         <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
           {CATEGORY_OPTIONS.map((c) => (
             <button

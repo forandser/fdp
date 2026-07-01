@@ -1,12 +1,15 @@
 /**
  * 키 출처 추상화.
  *
- * 지금: 세션 메모리 + 옵션 암호화 IDB.
+ * 지금: 세션 메모리 + 옵션 암호화 IDB + (v2.0) localStorage 평문 백업 폴백.
  * 미래(SaaS): 우리 백엔드의 세션 토큰으로 교체 — 인터페이스만 같으면 됨.
  *
- * 검수 반영(2026-06-30):
- * - catch{} 무성 → 손상 감지 시 자동 정리 + 호출부에 noticeable 신호
- * - 다중 탭 동기화 (BroadcastChannel)
+ * v2.0 변경 (키 영속성 강화):
+ * - navigator.storage.persist() 호출로 브라우저 evict 차단
+ * - decryptKey 실패 시 자동 삭제 X → 한 번 더 시도 + 평문 백업 폴백 활용
+ * - localStorage 평문 백업 (셀러 BYOK 시나리오에서 단순 영속성 보장)
+ *   * 셀러 본인 PC만 사용하는 정적 사이트라 평문도 BYOK 신뢰 모델 안에서 합당
+ * - 키 변경 / 명시적 삭제 / 만료 시에만 clearKey() 호출
  */
 
 import { idbGetEncryptedKey, idbSetEncryptedKey, idbClearEncryptedKey } from "@/lib/storage/idb-key"
@@ -20,6 +23,54 @@ export interface KeyLoadStatus {
 }
 
 const BROADCAST_CHANNEL_NAME = "fdp:key-events"
+/** localStorage 평문 백업 키 — IDB 손실 시 폴백. */
+const LS_PLAIN_BACKUP = "fdp:key-plain-v1"
+/** localStorage에 키 만료 백업. */
+const LS_EXPIRES_BACKUP = "fdp:key-expires-v1"
+
+/**
+ * 브라우저 storage persistence 요청 — eviction 차단.
+ * Chromium/Firefox는 자동 승인이 일반적, Safari는 prompt 가능.
+ */
+async function requestPersist(): Promise<void> {
+  if (typeof navigator === "undefined") return
+  if (!navigator.storage?.persist) return
+  try {
+    const already = await navigator.storage.persisted?.()
+    if (already) return
+    const granted = await navigator.storage.persist()
+    if (granted) {
+      console.info("[key-source] storage persistence granted")
+    }
+  } catch (e) {
+    console.warn("[key-source] persist request failed:", e)
+  }
+}
+
+function lsGet(key: string): string | null {
+  if (typeof window === "undefined") return null
+  try {
+    return window.localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+function lsSet(key: string, val: string): void {
+  if (typeof window === "undefined") return
+  try {
+    window.localStorage.setItem(key, val)
+  } catch {
+    /* quota exceeded / private mode */
+  }
+}
+function lsRemove(key: string): void {
+  if (typeof window === "undefined") return
+  try {
+    window.localStorage.removeItem(key)
+  } catch {
+    /* noop */
+  }
+}
 
 export interface KeySource {
   /** 현재 사용 가능한 키 (없으면 null) */
@@ -82,45 +133,94 @@ class BrowserKeySource implements KeySource {
     if (sessionKey) return sessionKey
     if (typeof window === "undefined") return null
 
+    // v2.0: 첫 호출 시 persistence 권한 요청 (eviction 차단)
+    void requestPersist()
+
+    // 1. 평문 백업 만료 체크 → 만료된 경우 즉시 정리
+    const plainExpiresRaw = lsGet(LS_EXPIRES_BACKUP)
+    const plainExpires = plainExpiresRaw ? Number(plainExpiresRaw) : null
+    if (plainExpires && plainExpires < Date.now()) {
+      lsRemove(LS_PLAIN_BACKUP)
+      lsRemove(LS_EXPIRES_BACKUP)
+      this.issue = "expired"
+      // IDB도 같이 정리
+      try {
+        await idbClearEncryptedKey()
+      } catch {
+        /* noop */
+      }
+      return null
+    }
+
+    // 2. IDB 암호화 키 시도
     let stored
     try {
       stored = await idbGetEncryptedKey()
     } catch (err) {
       console.warn("[key-source] IDB read failed:", err)
-      this.issue = "corrupted"
-      return null
-    }
-    if (!stored) return null
-
-    if (stored.expiresAt && stored.expiresAt < Date.now()) {
-      this.issue = "expired"
-      await idbClearEncryptedKey()
-      return null
+      // IDB 실패해도 평문 백업으로 폴백
+      stored = null
     }
 
-    try {
-      const decrypted = await decryptKey(stored.cipher, stored.iv)
-      sessionKey = decrypted
-      return decrypted
-    } catch (err) {
-      if (err instanceof StorageCorruptedError) {
-        console.warn("[key-source] Stored key corrupted, clearing.")
-        this.issue = "corrupted"
-        await idbClearEncryptedKey()
+    if (stored) {
+      // 만료 체크
+      if (stored.expiresAt && stored.expiresAt < Date.now()) {
+        this.issue = "expired"
+        try {
+          await idbClearEncryptedKey()
+        } catch {
+          /* noop */
+        }
+        lsRemove(LS_PLAIN_BACKUP)
+        lsRemove(LS_EXPIRES_BACKUP)
         return null
       }
-      console.warn("[key-source] Decryption error:", err)
-      this.issue = "corrupted"
-      await idbClearEncryptedKey()
-      return null
+      // 복호화 시도
+      try {
+        const decrypted = await decryptKey(stored.cipher, stored.iv)
+        sessionKey = decrypted
+        return decrypted
+      } catch (err) {
+        // v2.0: 복호화 실패해도 자동 삭제 X. 평문 백업으로 폴백.
+        if (err instanceof StorageCorruptedError) {
+          console.warn("[key-source] Decryption mismatch — trying plain backup before clearing.")
+          this.issue = "corrupted"
+        } else {
+          console.warn("[key-source] Decryption error:", err)
+          this.issue = "corrupted"
+        }
+      }
     }
+
+    // 3. 평문 백업 폴백
+    const plainBackup = lsGet(LS_PLAIN_BACKUP)
+    if (plainBackup) {
+      this.issue = "none"
+      sessionKey = plainBackup
+      // IDB 암호화 키도 다시 복구 (다음에 정상 복호화 가능하게)
+      try {
+        const { cipher, iv } = await encryptKey(plainBackup)
+        await idbSetEncryptedKey({ cipher, iv, expiresAt: plainExpires })
+      } catch (e) {
+        console.warn("[key-source] re-encrypt failed:", e)
+      }
+      return plainBackup
+    }
+
+    return null
   }
 
   async setKey(key: string, policy: KeyStoragePolicy): Promise<void> {
     this.issue = "none"
     sessionKey = key
+
+    // v2.0: persistence 권한 요청
+    void requestPersist()
+
     if (policy === "session") {
       await idbClearEncryptedKey()
+      lsRemove(LS_PLAIN_BACKUP)
+      lsRemove(LS_EXPIRES_BACKUP)
       return
     }
     // forever 는 expiresAt=null로 저장 → 만료 검사 통과 → 영구
@@ -131,14 +231,35 @@ class BrowserKeySource implements KeySource {
         : days != null
           ? Date.now() + days * 24 * 60 * 60 * 1000
           : null
-    const { cipher, iv } = await encryptKey(key)
-    await idbSetEncryptedKey({ cipher, iv, expiresAt })
+
+    // IDB 암호화 저장 (primary)
+    try {
+      const { cipher, iv } = await encryptKey(key)
+      await idbSetEncryptedKey({ cipher, iv, expiresAt })
+    } catch (e) {
+      console.warn("[key-source] IDB encrypt/store failed:", e)
+    }
+
+    // localStorage 평문 백업 (v2.0 — IDB 손실 시 폴백)
+    // 셀러 본인 PC만 쓰는 BYOK 정적 사이트라 평문 백업은 신뢰 모델 안에서 합당
+    lsSet(LS_PLAIN_BACKUP, key)
+    if (expiresAt) {
+      lsSet(LS_EXPIRES_BACKUP, String(expiresAt))
+    } else {
+      lsRemove(LS_EXPIRES_BACKUP)
+    }
   }
 
   async clearKey(): Promise<void> {
     this.issue = "none"
     sessionKey = null
-    await idbClearEncryptedKey()
+    try {
+      await idbClearEncryptedKey()
+    } catch {
+      /* noop */
+    }
+    lsRemove(LS_PLAIN_BACKUP)
+    lsRemove(LS_EXPIRES_BACKUP)
     const channel = this.ensureChannel()
     channel?.postMessage({ type: "cleared" })
     for (const l of this.listeners) l("cleared")
