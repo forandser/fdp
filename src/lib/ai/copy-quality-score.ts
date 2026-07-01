@@ -69,6 +69,7 @@ function allText(copy: CopyOutput): string {
 function scoreHook(copy: CopyOutput): DimensionScore {
   const max = 15
   const t = detectHookType(copy.headline)
+  const subType = detectHookType(copy.subheadline)
   let earned = 0
   let hint = ""
   if (t === "time") {
@@ -80,9 +81,18 @@ function scoreHook(copy: CopyOutput): DimensionScore {
   } else if (t === "transform") {
     earned = 15
     hint = "변화·감각형 헤드라인 — 강함"
+  } else if (t === "identity") {
+    // 산지·품종 명사형 — 전통 산지직송 스타일. subheadline 후킹 있으면 만점, 없으면 살짝 감점.
+    if (subType && subType !== "identity") {
+      earned = 15
+      hint = "산지·품종 명사형 + 서브 후킹 조합 — 강함"
+    } else {
+      earned = 11
+      hint = "산지·품종 명사형 — OK, 서브에 시간/기능/변화 후킹 추가 권장"
+    }
   } else {
     earned = 5
-    hint = "헤드라인이 3유형(시간/기능/변화) 중 어디에도 속하지 않음 — 후킹 약함"
+    hint = "헤드라인이 4유형(시간/기능/변화/산지) 중 어디에도 속하지 않음 — 후킹 약함"
   }
   // headline + subheadline 80자 초과 페널티
   const heroLen = (copy.headline?.length ?? 0) + (copy.subheadline?.length ?? 0)

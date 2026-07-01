@@ -31,6 +31,7 @@ import { PRESET_KEYWORDS } from "@/domain/keywords"
 import { t } from "@/lib/i18n"
 import { validateProductNameSeo } from "@/lib/ai/validate"
 import { detectFruitFactKey, FRUIT_FACTS } from "@/domain/fruit-facts"
+import { DEMO_COPY } from "./demo-copy"
 
 type Stage = "restoring" | "input" | "generating" | "result" | "error"
 
@@ -317,13 +318,49 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   const hasMin =
     images.length >= 1 && productName.trim() && price.trim() && isOrdinaryProduce
 
-  /** 우측 미리보기에 전달할 카피 — 실제 result가 있으면 그것, 없으면 emptyCopy + 임시 spec. */
+  /** v2.2: 사용자 입력 감지 — 아무것도 안 넣었으면 데모 카피 표시. */
+  const hasUserInput = useMemo(() => {
+    return (
+      images.length > 0 ||
+      productName.trim().length > 0 ||
+      variety.trim().length > 0 ||
+      origin.trim().length > 0 ||
+      weight.trim().length > 0 ||
+      brix.trim().length > 0 ||
+      price.trim().length > 0 ||
+      farmIntro.trim().length > 0 ||
+      extraDescription.trim().length > 0 ||
+      presetKeywords.length > 0 ||
+      customKeywords.length > 0
+    )
+  }, [
+    images.length,
+    productName,
+    variety,
+    origin,
+    weight,
+    brix,
+    price,
+    farmIntro,
+    extraDescription,
+    presetKeywords.length,
+    customKeywords.length,
+  ])
+
+  const isDemoMode = !result && !hasUserInput
+
+  /** 우측 미리보기에 전달할 카피
+   *  - result 있으면 실제 결과
+   *  - 사용자 입력 있으면 emptyCopy + spec
+   *  - 아무 입력 없으면 DEMO_COPY (첫 진입 학습용)
+   */
   const liveCopy = useMemo<CopyOutput>(() => {
     if (result) return result
+    if (!hasUserInput) return DEMO_COPY
     const base = emptyCopy()
     base.spec = buildLiveSpec({ origin, variety, weight, brix })
     return base
-  }, [result, origin, variety, weight, brix])
+  }, [result, hasUserInput, origin, variety, weight, brix])
 
   /** 우측 미리보기에 전달할 메타 — 실제 result가 있으면 그 시점의 값, 없으면 현재 입력. */
   const liveResultMeta = useMemo(() => {
@@ -693,9 +730,9 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
                 )}
               </div>
             )}
-            {/* v1.9: fruit-facts 자동 힌트 */}
+            {/* v2.1: fruit-facts 자동 힌트 — 심플 details로 접힘 */}
             {factHint && (
-              <div
+              <details
                 style={{
                   marginTop: 6,
                   padding: "6px 10px",
@@ -707,16 +744,26 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
                   lineHeight: 1.6,
                 }}
               >
-                💡 <strong>{factHint.name}</strong> 사전 매칭:
-                <br />
-                · 추천 산지: {factHint.regions}
-                <br />
-                · 추천 품종: {factHint.varieties}
-                <br />
-                · &quot;달다/꿀맛&quot; 표현은 <strong>{factHint.goodBrix} Brix 이상</strong>에서만 허용
-                <br />
-                · 보관: {factHint.storage}
-              </div>
+                <summary
+                  style={{
+                    cursor: "pointer",
+                    fontWeight: 700,
+                    color: "var(--color-neutral-900)",
+                    userSelect: "none",
+                  }}
+                >
+                  💡 {factHint.name} 사전 매칭 — 산지·품종·Brix 참고
+                </summary>
+                <div style={{ marginTop: 4 }}>
+                  · 추천 산지: {factHint.regions}
+                  <br />
+                  · 추천 품종: {factHint.varieties}
+                  <br />
+                  · &quot;달다/꿀맛&quot; 표현은 <strong>{factHint.goodBrix} Brix 이상</strong>에서만 허용
+                  <br />
+                  · 보관: {factHint.storage}
+                </div>
+              </details>
             )}
           </Field>
           <Field label={t.detail.field.priceRequired}>
@@ -929,7 +976,26 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   // ---------- 우측 미리보기 ----------
   const previewColumn = (
     <div style={{ position: "relative", width: "100%" }}>
-      {!isWide && (
+      {/* v2.2: 데모 모드 배너 — 첫 진입 시 학습용 예시임을 명시 */}
+      {isDemoMode && (
+        <div
+          style={{
+            padding: "10px 14px",
+            marginBottom: 12,
+            background: "linear-gradient(90deg, #FFF5F5 0%, #FFF8E7 100%)",
+            border: "1px dashed #E03131",
+            borderRadius: 8,
+            color: "#212529",
+            fontSize: 13,
+            textAlign: "center",
+            lineHeight: 1.5,
+          }}
+        >
+          📌 <strong>예시 미리보기</strong> (청송 홍로 사과) — 왼쪽에 상품명을 입력하면 실제 미리보기로 바뀝니다
+        </div>
+      )}
+
+      {!isWide && !isDemoMode && (
         <div
           style={{
             padding: "10px 14px",

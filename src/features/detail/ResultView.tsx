@@ -315,7 +315,7 @@ export function ResultView({
                 'Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif',
             }}
           >
-            {/* 0a. Top hook label — 가는 빨강 가로 띠 + 시즌 표시 (7월 햇과일) */}
+            {/* v2.2: 상단 리본 — 시즌 자동 삽입 대신 얇은 포인트 바만 유지 */}
             <div
               aria-hidden
               style={{
@@ -323,34 +323,8 @@ export function ResultView({
                 height: 4,
                 background: RED,
                 margin: 0,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
               }}
-            >
-              <span
-                style={{
-                  position: "absolute",
-                  top: "50%",
-                  left: "50%",
-                  transform: "translate(-50%, -50%)",
-                  background: "#FFFFFF",
-                  color: RED,
-                  fontSize: 12,
-                  padding: "0 10px",
-                  fontFamily: HEAD_SANS,
-                  fontWeight: 700,
-                  letterSpacing: 1,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                <span style={{ fontSize: 13 }}>🍎</span>
-                <span>7월 햇과일</span>
-                <span style={{ fontSize: 13 }}>✿</span>
-              </span>
-            </div>
+            />
 
             {/* 0. Top thick red bar with center dot */}
             <div
@@ -602,13 +576,10 @@ export function ResultView({
           {t.detail.result.title}
         </h3>
 
-        {/* WidthPresetSwitcher — 셀러 플랫폼 폭에 맞춰 캡처 (v1.9) */}
-        <WidthPresetSwitcher value={widthPreset} onChange={setWidthPreset} />
-
-        {/* QualityScoreCard — 카피 종합 점수 (v1.9) */}
+        {/* QualityScoreCard — 카피 종합 점수 (v2.1 심플 모드) */}
         <QualityScoreCard score={qualityScore} />
 
-        {/* DisclosureBlock — 식약처 자동 검수 + 면책 (v1.8) */}
+        {/* DisclosureBlock — 식약처 자동 검수 + 면책 (v1.8 — 위반 있으면 자동 강조) */}
         <DisclosureBlock report={complianceReport} />
 
         {missing.length > 0 && (
@@ -633,60 +604,93 @@ export function ResultView({
           </div>
         )}
 
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "8px 10px",
-            background: "var(--color-bg-subtle)",
-            borderRadius: 6,
-            cursor: "pointer",
-            fontSize: 13,
-            color: "var(--color-neutral-700)",
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={enhance}
-            onChange={(e) => setEnhance(e.target.checked)}
-            style={{ accentColor: RED }}
-          />
-          {t.detail.result.enhanceLabel}
-        </label>
-
+        {/* v2.1 심플: 주요 액션 2개만 상단에 */}
         <ExportPanel targetRef={captureRef} baseName={sanitizedName} />
-
-        {/* v1.9: JSON 내보내기/임포트 — 작업 백업·공유 */}
-        <WorkJsonExporter
-          copy={copy}
-          productName={productName}
-          price={_price}
-          origin={origin}
-          weight={weight}
-          trust={trust}
-          onImport={onCopyChange}
-        />
 
         <ActionButton onClick={onRetry}>{t.detail.result.retry}</ActionButton>
 
-        {/* 전체 카피 텍스트 복사 — v1.8 */}
-        <ActionButton
-          onClick={async () => {
-            try {
-              const text = flattenCopyToText(copy, productName)
-              if (navigator.clipboard && text) {
-                await navigator.clipboard.writeText(text)
-                alert("전체 카피를 클립보드에 복사했어요!")
-              }
-            } catch (e) {
-              console.error("[copy-to-clipboard]", e)
-              alert("복사에 실패했어요. 텍스트 영역을 직접 선택해주세요.")
-            }
-          }}
-        >
-          📋 전체 카피 텍스트 복사
-        </ActionButton>
+        {/* v2.1: 나머지 옵션은 "고급 설정" details로 접기 */}
+        <details style={{ marginTop: 4 }}>
+          <summary
+            style={{
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 700,
+              color: "var(--color-neutral-700)",
+              padding: "6px 0",
+              userSelect: "none",
+            }}
+          >
+            ⚙️ 고급 설정
+          </summary>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 8 }}>
+            {/* 폭 변경 */}
+            <WidthPresetSwitcher value={widthPreset} onChange={setWidthPreset} />
+
+            {/* 사진 자동 보정 */}
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "6px 10px",
+                background: "var(--color-bg-subtle)",
+                borderRadius: 6,
+                cursor: "pointer",
+                fontSize: 12,
+                color: "var(--color-neutral-700)",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={enhance}
+                onChange={(e) => setEnhance(e.target.checked)}
+                style={{ accentColor: RED }}
+              />
+              {t.detail.result.enhanceLabel}
+            </label>
+
+            {/* 전체 카피 텍스트 복사 */}
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const text = flattenCopyToText(copy, productName)
+                  if (navigator.clipboard && text) {
+                    await navigator.clipboard.writeText(text)
+                    alert("전체 카피를 클립보드에 복사했어요!")
+                  }
+                } catch (e) {
+                  console.error("[copy-to-clipboard]", e)
+                  alert("복사에 실패했어요.")
+                }
+              }}
+              style={{
+                padding: "8px 12px",
+                background: "var(--color-bg-surface)",
+                border: "1px solid var(--color-neutral-300)",
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 600,
+                color: "var(--color-neutral-900)",
+                cursor: "pointer",
+              }}
+            >
+              📋 전체 카피 텍스트 복사
+            </button>
+
+            {/* JSON 백업 */}
+            <WorkJsonExporter
+              copy={copy}
+              productName={productName}
+              price={_price}
+              origin={origin}
+              weight={weight}
+              trust={trust}
+              onImport={onCopyChange}
+            />
+          </div>
+        </details>
       </aside>
 
       {/* v1.8: 모바일 sticky CTA — 스크롤 30% 이상에서 표시 */}
@@ -737,23 +741,8 @@ function WhyHeader({
         borderBottom: `1px solid ${LINE}`,
       }}
     >
+      {/* v2.2: WHY FRUIT 영어 라벨 삭제. 상품명 + 한글 문구만 노출 */}
       <div style={{ textAlign: "center", marginBottom: 26 }}>
-        <div
-          style={{
-            display: "inline-block",
-            padding: "4px 12px",
-            background: RED,
-            color: "#FFF",
-            fontSize: 11,
-            fontWeight: 700,
-            letterSpacing: 3,
-            marginBottom: 14,
-            fontFamily: HEAD_SANS,
-          }}
-          aria-hidden
-        >
-          WHY FRUIT
-        </div>
         <h2
           style={{
             fontSize: isMobile ? 26 : 32,
@@ -765,7 +754,7 @@ function WhyHeader({
             letterSpacing: -0.5,
           }}
         >
-          {productName || <Placeholder text="상품명" />}{" "}
+          {productName || <Placeholder text="상품명을 입력해 주세요" />}{" "}
           <span style={{ color: RED }}>{t.detail.result.whatsDifferentTitle}</span>
         </h2>
         <p
@@ -833,16 +822,13 @@ function WhyHeader({
                   flex: 1,
                 }}
               >
-                {p.title ? (
-                  <EditableResultText
-                    copy={copy}
-                    onChange={onCopyChange}
-                    path={["keyPoints", i, "title"]}
-                    maxLength={40}
-                  />
-                ) : (
-                  <Placeholder text="핵심 포인트" />
-                )}
+                <EditableResultText
+                  copy={copy}
+                  onChange={onCopyChange}
+                  path={["keyPoints", i, "title"]}
+                  maxLength={40}
+                  placeholder={`핵심 포인트 ${i + 1} 제목`}
+                />
               </span>
             </div>
           ))}
@@ -929,25 +915,7 @@ function HeroBlock({
             pointerEvents: "none",
           }}
         />
-        {/* 이미지 위 좌측 상단 작은 라벨 */}
-        <div
-          style={{
-            position: "absolute",
-            top: 16,
-            left: 16,
-            padding: "5px 11px",
-            background: "rgba(224, 49, 49, 0.92)",
-            color: "#FFFFFF",
-            fontSize: 10,
-            fontWeight: 800,
-            letterSpacing: 2,
-            borderRadius: 2,
-            fontFamily: HEAD_SANS,
-          }}
-          aria-hidden
-        >
-          FRESH PICK
-        </div>
+        {/* v2.2: FRESH PICK 영어 라벨 삭제 — 이미지에 방해되고 뜬금없음 */}
       </div>
 
       <div
@@ -969,20 +937,14 @@ function HeroBlock({
             fontStyle: "italic",
           }}
         >
-          {copy.subheadline ? (
-            <EditableResultText
-              copy={copy}
-              onChange={onCopyChange}
-              path={["subheadline"]}
-              maxLength={60}
-            />
-          ) : factPlaceholder?.sub ? (
-            <span style={{ color: PLACEHOLDER, fontStyle: "italic", fontWeight: 400 }}>
-              {factPlaceholder.sub}
-            </span>
-          ) : (
-            <Placeholder text="서브 카피" />
-          )}
+          {/* v2.2: 값 유무 상관 없이 항상 EditableResultText 렌더링 (편집 진입 가능) */}
+          <EditableResultText
+            copy={copy}
+            onChange={onCopyChange}
+            path={["subheadline"]}
+            maxLength={60}
+            placeholder={factPlaceholder?.sub ?? "여기에 서브 카피를 적어보세요"}
+          />
         </p>
         <h1
           style={{
@@ -995,20 +957,14 @@ function HeroBlock({
             fontFamily: HEAD_FONT,
           }}
         >
-          {copy.headline ? (
-            <EditableResultText
-              copy={copy}
-              onChange={onCopyChange}
-              path={["headline"]}
-              maxLength={40}
-            />
-          ) : factPlaceholder?.headline ? (
-            <span style={{ color: PLACEHOLDER, fontStyle: "italic", fontWeight: 400 }}>
-              {factPlaceholder.headline}
-            </span>
-          ) : (
-            <Placeholder text="메인 헤드라인" />
-          )}
+          {/* v2.2: 값 유무 상관 없이 항상 EditableResultText 렌더링 */}
+          <EditableResultText
+            copy={copy}
+            onChange={onCopyChange}
+            path={["headline"]}
+            maxLength={40}
+            placeholder={factPlaceholder?.headline ?? "여기에 상품 헤드라인을 적어보세요"}
+          />
         </h1>
 
         {(onRegenHeadline || onRegenSub) && (
@@ -1122,73 +1078,59 @@ function StoryBlock({
         </div>
       )}
 
-      {hasStory ? (
-        <div
-          style={{
-            position: "relative",
-            textAlign: "center",
-            maxWidth: 640,
-            margin: "0 auto",
-          }}
-        >
-          {firstChar && (
-            <span
-              aria-hidden
-              style={{
-                position: "absolute",
-                left: isMobile ? 0 : -20,
-                top: -8,
-                fontSize: isMobile ? 56 : 72,
-                color: RED,
-                fontFamily: HEAD_FONT,
-                fontWeight: 900,
-                lineHeight: 1,
-                opacity: 0.12,
-                pointerEvents: "none",
-                userSelect: "none",
-              }}
-            >
-              {firstChar}
-            </span>
-          )}
-          <p
+      {/* v2.2: 값 유무 상관 없이 항상 편집 가능 */}
+      <div
+        style={{
+          position: "relative",
+          textAlign: "center",
+          maxWidth: 640,
+          margin: "0 auto",
+        }}
+      >
+        {hasStory && firstChar && (
+          <span
+            aria-hidden
             style={{
-              fontSize: isMobile ? 16 : 18,
-              color: INK,
-              lineHeight: 1.85,
-              whiteSpace: "pre-line",
-              margin: 0,
-              textAlign: "center",
-              fontFamily: SERIF_FONT,
-              position: "relative",
-              zIndex: 1,
+              position: "absolute",
+              left: isMobile ? 0 : -20,
+              top: -8,
+              fontSize: isMobile ? 56 : 72,
+              color: RED,
+              fontFamily: HEAD_FONT,
+              fontWeight: 900,
+              lineHeight: 1,
+              opacity: 0.12,
+              pointerEvents: "none",
+              userSelect: "none",
             }}
           >
-            <EditableResultText
-              copy={copy}
-              onChange={onCopyChange}
-              path={["story"]}
-              multiline
-              maxLength={1000}
-              preserveWhitespace
-            />
-          </p>
-        </div>
-      ) : (
+            {firstChar}
+          </span>
+        )}
         <p
           style={{
-            fontSize: isMobile ? 15 : 17,
-            lineHeight: 1.75,
+            fontSize: isMobile ? 16 : 18,
+            color: INK,
+            lineHeight: 1.85,
+            whiteSpace: "pre-line",
             margin: 0,
             textAlign: "center",
-            color: PLACEHOLDER,
-            fontStyle: "italic",
-            fontFamily: BODY_FONT,
+            fontFamily: SERIF_FONT,
+            position: "relative",
+            zIndex: 1,
           }}
         >
-          여기에 상품 스토리가 들어갑니다
+          <EditableResultText
+            copy={copy}
+            onChange={onCopyChange}
+            path={["story"]}
+            multiline
+            maxLength={1000}
+            preserveWhitespace
+            placeholder="한 입 베면 어떤 맛인지, 어떤 향이 나는지 3~5문장으로 적어보세요"
+          />
         </p>
-      )}
+      </div>
 
       {hasStory && (
         <div
@@ -1208,19 +1150,19 @@ function StoryBlock({
         </div>
       )}
 
-      {hasHighlight && (
-        <div
-          style={{
-            marginTop: 32,
-            padding: isMobile ? "26px 20px" : "32px 28px",
-            background: WARM_BEIGE,
-            border: `1px dashed ${RED}`,
-            borderRadius: 4,
-            textAlign: "center",
-            position: "relative",
-          }}
-        >
-          {/* 도장 마크 */}
+      {/* v2.2: 값 유무 상관 없이 항상 편집 가능 (도장은 값 있을 때만) */}
+      <div
+        style={{
+          marginTop: 32,
+          padding: isMobile ? "26px 20px" : "32px 28px",
+          background: WARM_BEIGE,
+          border: `1px dashed ${RED}`,
+          borderRadius: 4,
+          textAlign: "center",
+          position: "relative",
+        }}
+      >
+        {hasHighlight && (
           <div
             aria-hidden
             style={{
@@ -1243,29 +1185,30 @@ function StoryBlock({
               fontFamily: HEAD_SANS,
             }}
           >
-            FRESH
+            신선
           </div>
-          <p
-            style={{
-              fontSize: isMobile ? 32 : 38,
-              fontWeight: 700,
-              color: RED_DARK,
-              margin: 0,
-              lineHeight: 1.4,
-              fontFamily: HANDWRITING_FONT,
-              transform: "rotate(-1.5deg)",
-              display: "inline-block",
-            }}
-          >
-            <EditableResultText
-              copy={copy}
-              onChange={onCopyChange}
-              path={["highlightBox"]}
-              maxLength={60}
-            />
-          </p>
-        </div>
-      )}
+        )}
+        <p
+          style={{
+            fontSize: isMobile ? 32 : 38,
+            fontWeight: 700,
+            color: RED_DARK,
+            margin: 0,
+            lineHeight: 1.4,
+            fontFamily: HANDWRITING_FONT,
+            transform: "rotate(-1.5deg)",
+            display: "inline-block",
+          }}
+        >
+          <EditableResultText
+            copy={copy}
+            onChange={onCopyChange}
+            path={["highlightBox"]}
+            maxLength={60}
+            placeholder="한 줄 슬로건 (예: 청송의 겸손한 자랑)"
+          />
+        </p>
+      </div>
 
       {onRegen && (
         <div style={{ display: "flex", justifyContent: "center", marginTop: 14 }}>
@@ -1442,16 +1385,13 @@ function SpecBlock({
                       fontFamily: BODY_FONT,
                     }}
                   >
-                    {s.value ? (
-                      <EditableResultText
-                        copy={copy}
-                        onChange={onCopyChange}
-                        path={["spec", i, "value"]}
-                        maxLength={100}
-                      />
-                    ) : (
-                      <Placeholder text={s.label} />
-                    )}
+                    <EditableResultText
+                      copy={copy}
+                      onChange={onCopyChange}
+                      path={["spec", i, "value"]}
+                      maxLength={100}
+                      placeholder={s.label}
+                    />
                   </div>
                 )}
               </div>
@@ -1499,19 +1439,7 @@ function KeyPointsBig({
           textAlign: "center",
         }}
       >
-        <div
-          style={{
-            display: "inline-block",
-            fontSize: isMobile ? 12 : 13,
-            fontWeight: 800,
-            letterSpacing: 4,
-            color: RED,
-            marginBottom: 10,
-            fontFamily: HEAD_SANS,
-          }}
-        >
-          KEY POINTS
-        </div>
+        {/* v2.2: KEY POINTS 영어 라벨 삭제 — 아래 큰 한글 헤드만 유지 */}
         <h2
           style={{
             fontSize: isMobile ? 30 : 42,
@@ -1605,16 +1533,13 @@ function KeyPointsBig({
                   zIndex: 1,
                 }}
               >
-                {p.title ? (
-                  <EditableResultText
-                    copy={copy}
-                    onChange={onCopyChange}
-                    path={["keyPoints", i, "title"]}
-                    maxLength={40}
-                  />
-                ) : (
-                  <Placeholder text="포인트 제목" />
-                )}
+                <EditableResultText
+                  copy={copy}
+                  onChange={onCopyChange}
+                  path={["keyPoints", i, "title"]}
+                  maxLength={40}
+                  placeholder={`POINT ${i + 1} 큰 제목 (예: 새벽 5시에 따 보내요)`}
+                />
               </h3>
               <p
                 style={{
@@ -1629,18 +1554,15 @@ function KeyPointsBig({
                   zIndex: 1,
                 }}
               >
-                {p.body ? (
-                  <EditableResultText
-                    copy={copy}
-                    onChange={onCopyChange}
-                    path={["keyPoints", i, "body"]}
-                    multiline
-                    maxLength={300}
-                    preserveWhitespace
-                  />
-                ) : (
-                  <Placeholder text="포인트 본문" />
-                )}
+                <EditableResultText
+                  copy={copy}
+                  onChange={onCopyChange}
+                  path={["keyPoints", i, "body"]}
+                  multiline
+                  maxLength={300}
+                  preserveWhitespace
+                  placeholder="구체 사실 + 숫자 (Brix / kg / 시간 / 재구매율 등)를 담아 2~3문장"
+                />
               </p>
               {img && (
                 <div
@@ -1709,39 +1631,27 @@ function StorageBlock({
           border: `1px solid ${LINE}`,
         }}
       >
-        {copy.storage ? (
-          <p
-            style={{
-              fontSize: isMobile ? 15 : 16,
-              color: INK,
-              lineHeight: 1.85,
-              whiteSpace: "pre-line",
-              margin: 0,
-              fontFamily: BODY_FONT,
-            }}
-          >
-            <EditableResultText
-              copy={copy}
-              onChange={onCopyChange}
-              path={["storage"]}
-              multiline
-              maxLength={500}
-              preserveWhitespace
-            />
-          </p>
-        ) : (
-          <p
-            style={{
-              fontSize: isMobile ? 14 : 15,
-              lineHeight: 1.75,
-              margin: 0,
-              color: PLACEHOLDER,
-              fontStyle: "italic",
-            }}
-          >
-            여기에 보관·먹는 법이 들어갑니다
-          </p>
-        )}
+        {/* v2.2: 값 유무 상관 없이 항상 EditableResultText — 편집 진입 가능 */}
+        <p
+          style={{
+            fontSize: isMobile ? 15 : 16,
+            color: INK,
+            lineHeight: 1.85,
+            whiteSpace: "pre-line",
+            margin: 0,
+            fontFamily: BODY_FONT,
+          }}
+        >
+          <EditableResultText
+            copy={copy}
+            onChange={onCopyChange}
+            path={["storage"]}
+            multiline
+            maxLength={500}
+            preserveWhitespace
+            placeholder="보관법을 알려주시면 셀러 신뢰가 올라가요"
+          />
+        </p>
       </div>
     </div>
   )
@@ -2273,7 +2183,7 @@ function CautionsBlock({
         >
           ⓘ
         </span>
-        <span>농산물 특성상 색·크기·당도는 ±10% 차이가 있을 수 있습니다.</span>
+        <span>{t.detail.result.cautionsAutoNotice}</span>
       </div>
 
       {cautions.length > 0 && (

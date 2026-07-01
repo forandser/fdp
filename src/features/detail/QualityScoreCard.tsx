@@ -1,10 +1,10 @@
 "use client"
 
 /**
- * 카피 품질 점수 카드 (v1.9).
+ * 카피 품질 점수 카드 (v2.1 — 심플 모드).
  *
- * 사이드 패널에서 0~100점 + 8 차원 게이지로 시각화.
- * topImprovements 3개를 개선 제안으로 노출.
+ * 첫 화면: 총점 + 등급 큰 배지 + 개선 제안 최상위 1개.
+ * "상세 보기" details 안에 8 차원 게이지 + 개선 제안 3개 전체.
  */
 
 import type { CopyQualityResult } from "@/lib/ai/copy-quality-score"
@@ -13,11 +13,11 @@ interface QualityScoreCardProps {
   score: CopyQualityResult
 }
 
-const GRADE_COLOR: Record<CopyQualityResult["grade"], { bg: string; fg: string }> = {
-  A: { bg: "#52C41A", fg: "#FFFFFF" },
-  B: { bg: "#1C7ED6", fg: "#FFFFFF" },
-  C: { bg: "#FAAD14", fg: "#FFFFFF" },
-  D: { bg: "#E03131", fg: "#FFFFFF" },
+const GRADE_COLOR: Record<CopyQualityResult["grade"], { bg: string; fg: string; label: string }> = {
+  A: { bg: "#52C41A", fg: "#FFFFFF", label: "훌륭해요" },
+  B: { bg: "#1C7ED6", fg: "#FFFFFF", label: "괜찮아요" },
+  C: { bg: "#FAAD14", fg: "#FFFFFF", label: "고쳐볼까요" },
+  D: { bg: "#E03131", fg: "#FFFFFF", label: "더 잘 만들 수 있어요" },
 }
 
 export function QualityScoreCard({ score }: QualityScoreCardProps) {
@@ -32,16 +32,33 @@ export function QualityScoreCard({ score }: QualityScoreCardProps) {
         borderRadius: 10,
       }}
     >
-      {/* 헤더 — 총점 + 등급 */}
+      {/* 심플 헤더 — 총점 + 등급 큰 배지 + 텍스트 라벨 */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: 12,
+          gap: 12,
         }}
       >
-        <div>
+        <div
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: "50%",
+            background: gradeColor.bg,
+            color: gradeColor.fg,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexDirection: "column",
+            boxShadow: `0 3px 10px ${gradeColor.bg}55`,
+            flexShrink: 0,
+          }}
+        >
+          <span style={{ fontSize: 26, fontWeight: 900, lineHeight: 1 }}>{score.grade}</span>
+          <span style={{ fontSize: 9, fontWeight: 700, opacity: 0.9 }}>등급</span>
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div
             style={{
               fontSize: 11,
@@ -49,116 +66,130 @@ export function QualityScoreCard({ score }: QualityScoreCardProps) {
               color: "var(--color-neutral-500)",
               letterSpacing: 1,
               textTransform: "uppercase",
+              marginBottom: 2,
             }}
           >
-            카피 품질 점수
+            카피 품질
           </div>
           <div
             style={{
-              fontSize: 24,
+              fontSize: 22,
               fontWeight: 900,
               color: "var(--color-neutral-900)",
-              lineHeight: 1.1,
-              marginTop: 2,
+              lineHeight: 1.15,
             }}
           >
             {score.total}
-            <span style={{ fontSize: 13, color: "var(--color-neutral-500)" }}> / 100</span>
+            <span style={{ fontSize: 12, color: "var(--color-neutral-500)", fontWeight: 600 }}>
+              {" "}
+              / 100
+            </span>
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              color: gradeColor.bg,
+              fontWeight: 700,
+              marginTop: 2,
+            }}
+          >
+            {gradeColor.label}
           </div>
         </div>
-        <div
+      </div>
+
+      {/* 최상위 개선 제안 1개 — 항상 노출 */}
+      {score.topImprovements[0] && score.total < 90 && (
+        <p
           style={{
-            width: 42,
-            height: 42,
-            borderRadius: "50%",
-            background: gradeColor.bg,
-            color: gradeColor.fg,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 22,
-            fontWeight: 900,
-            boxShadow: `0 2px 8px ${gradeColor.bg}55`,
+            margin: "10px 0 0",
+            padding: "8px 10px",
+            background: "var(--color-bg-subtle)",
+            borderRadius: 6,
+            fontSize: 11.5,
+            color: "var(--color-neutral-700)",
+            lineHeight: 1.5,
           }}
         >
-          {score.grade}
-        </div>
-      </div>
+          🛠 <strong>가장 개선하면 좋은 부분:</strong>
+          <br />
+          {score.topImprovements[0]}
+        </p>
+      )}
 
-      {/* 8 차원 게이지 */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-        {score.dimensions.map((d) => {
-          const pct = (d.earned / d.max) * 100
-          const color =
-            pct >= 85 ? "#52C41A" : pct >= 60 ? "#FAAD14" : "#E03131"
-          return (
-            <div key={d.key} title={d.hint}>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  fontSize: 11,
-                  color: "var(--color-neutral-700)",
-                  marginBottom: 2,
-                }}
-              >
-                <span>{d.label}</span>
-                <span style={{ color, fontWeight: 700 }}>
-                  {d.earned}/{d.max}
-                </span>
-              </div>
-              <div
-                style={{
-                  height: 5,
-                  background: "var(--color-bg-subtle)",
-                  borderRadius: 3,
-                  overflow: "hidden",
-                }}
-              >
+      {/* 상세 8 차원 — details로 접힘 */}
+      <details style={{ marginTop: 10 }}>
+        <summary
+          style={{
+            cursor: "pointer",
+            fontSize: 11,
+            fontWeight: 700,
+            color: "var(--color-neutral-700)",
+            userSelect: "none",
+          }}
+        >
+          🔍 차원별 점수 8개 보기
+        </summary>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
+          {score.dimensions.map((d) => {
+            const pct = (d.earned / d.max) * 100
+            const color =
+              pct >= 85 ? "#52C41A" : pct >= 60 ? "#FAAD14" : "#E03131"
+            return (
+              <div key={d.key} title={d.hint}>
                 <div
                   style={{
-                    height: "100%",
-                    width: `${pct}%`,
-                    background: color,
-                    transition: "width 0.3s",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    fontSize: 11,
+                    color: "var(--color-neutral-700)",
+                    marginBottom: 2,
                   }}
-                />
+                >
+                  <span>{d.label}</span>
+                  <span style={{ color, fontWeight: 700 }}>
+                    {d.earned}/{d.max}
+                  </span>
+                </div>
+                <div
+                  style={{
+                    height: 5,
+                    background: "var(--color-bg-subtle)",
+                    borderRadius: 3,
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      height: "100%",
+                      width: `${pct}%`,
+                      background: color,
+                      transition: "width 0.3s",
+                    }}
+                  />
+                </div>
               </div>
-            </div>
-          )
-        })}
-      </div>
-
-      {/* 개선 제안 */}
-      {score.topImprovements.length > 0 && score.total < 95 && (
-        <details style={{ marginTop: 12 }}>
-          <summary
-            style={{
-              cursor: "pointer",
-              fontSize: 12,
-              fontWeight: 700,
-              color: "var(--color-neutral-900)",
-            }}
-          >
-            🛠 개선 제안 {score.topImprovements.length}건
-          </summary>
-          <ul
-            style={{
-              margin: "8px 0 0",
-              paddingLeft: 18,
-              fontSize: 11.5,
-              color: "var(--color-neutral-700)",
-              lineHeight: 1.5,
-            }}
-          >
-            {score.topImprovements.map((s, i) => (
-              <li key={`im-${i}`} style={{ marginBottom: 4 }}>
-                {s}
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
+            )
+          })}
+          {score.topImprovements.length > 1 && (
+            <ul
+              style={{
+                margin: "8px 0 0",
+                paddingLeft: 18,
+                fontSize: 11,
+                color: "var(--color-neutral-500)",
+                lineHeight: 1.5,
+              }}
+            >
+              {score.topImprovements.slice(1).map((s, i) => (
+                <li key={`imp-${i}`} style={{ marginBottom: 3 }}>
+                  {s}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </details>
     </div>
   )
 }

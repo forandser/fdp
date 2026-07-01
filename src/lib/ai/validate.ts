@@ -157,8 +157,14 @@ export function validateProductNameSeo(name: string): SeoCheckResult {
   }
 }
 
-/** 후킹 헤드라인 유형 자동 식별. (A) 시간단축 / (B) 기능강화 / (C) 변화 / null = 불명. */
-export type HookType = "time" | "feature" | "transform" | null
+/** 후킹 헤드라인 유형 자동 식별.
+ *  (A) 시간단축 / (B) 기능강화 / (C) 변화 / (D) 산지·품종 명사형 / null = 불명. */
+export type HookType = "time" | "feature" | "transform" | "identity" | null
+
+/** 산지 지역명 확장 리스트 (규칙 41-D). */
+const REGION_PATTERNS =
+  /(청송|영주|안동|경산|영천|성주|나주|천안|안성|평택|울산|김천|영동|상주|충주|담양|논산|진주|산청|보성|해남|제주|서귀포|남원|위미|표선|부여|고창|함평|함안|고령|칠곡|사천|경산|화성|강진|영암|영광|김해|음성|이천|원주|영천|무안|양양)/
+
 export function detectHookType(headline: string): HookType {
   if (!headline) return null
   const h = headline.trim()
@@ -167,7 +173,9 @@ export function detectHookType(headline: string): HookType {
   // 기능 강화 — Brix·g·이상·선별·골라
   if (/(Brix|brix|당도|\d+\s*g)\s*(이상|선별|골)/.test(h) || /\d+\s*(이상|만)/.test(h)) return "feature"
   // 변화 — 동사형 + 감각
-  if (/(터지|녹|아삭|향이|입안)/.test(h) || /(드세요|드시면)/.test(h)) return "transform"
+  if (/(터지|녹|아삭|향이|입안|톡|사각)/.test(h) || /(드세요|드시면)/.test(h)) return "transform"
+  // 산지·품종 명사형 — 전통 산지직송 스타일 (규칙 41-D)
+  if (REGION_PATTERNS.test(h)) return "identity"
   return null
 }
 
