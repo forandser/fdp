@@ -24,6 +24,10 @@ import {
 import { getKeySource } from "./key-source"
 import { buildFruitCopyMessages, FRUIT_COPY_SYSTEM_PROMPT } from "./prompts/fruit-copy"
 import {
+  buildRefineCopyMessages,
+  REFINE_COPY_SYSTEM_PROMPT,
+} from "./prompts/refine-copy"
+import {
   buildSuggestPointsMessages,
   SUGGEST_POINTS_SYSTEM_PROMPT,
 } from "./prompts/suggest-points"
@@ -133,46 +137,80 @@ export class AnthropicAdapter implements AIProvider {
     }
   }
 
+  /**
+   * v2.5: 2-step 카피 생성.
+   * Step 1 (draft): fruit-copy 프롬프트로 초안 카피 생성.
+   * Step 2 (refine): draft를 스마트스토어 판매 관점 rubric 5개로 자체 심사 → 리라이트.
+   *
+   * refine이 실패하면 draft를 그대로 반환 (양보). 비용은 두 step 합산.
+   */
   async generateCopy(input: CopyInput): Promise<CopyResult> {
     const client = await this.createClient()
-    const messages = buildFruitCopyMessages(input)
 
-    // 입력 크기 기반 max_tokens 동적 결정 (잘림 방지 + 비용 가드)
     const inputCharCount = JSON.stringify(input).length
     const dynamicMaxTokens = Math.min(
       COPY_MAX_TOKENS_CAP,
       Math.max(COPY_BASE_MAX_TOKENS, Math.ceil(inputCharCount * 4)),
     )
 
-    const res = await client.messages.create({
+    // Step 1: draft 생성
+    const draftRes = await client.messages.create({
       model: this.modelId,
       system: FRUIT_COPY_SYSTEM_PROMPT,
       max_tokens: dynamicMaxTokens,
-      messages,
+      messages: buildFruitCopyMessages(input),
     })
 
-    const textBlock = res.content.find((c) => c.type === "text")
-    if (!textBlock || textBlock.type !== "text") {
+    const draftBlock = draftRes.content.find((c) => c.type === "text")
+    if (!draftBlock || draftBlock.type !== "text") {
       throw new Error("EMPTY_RESPONSE")
     }
+    const draftOutput = validateCopyOutput(extractJson(draftBlock.text))
 
-    const parsed = extractJson(textBlock.text)
-    const output = validateCopyOutput(parsed)
+    const draftInputTokens = draftRes.usage?.input_tokens ?? 0
+    const draftOutputTokens = draftRes.usage?.output_tokens ?? 0
+    const draftTruncated = draftRes.stop_reason === "max_tokens"
 
-    const inputTokens = res.usage?.input_tokens ?? 0
-    const outputTokens = res.usage?.output_tokens ?? 0
-    const truncated = res.stop_reason === "max_tokens"
+    // Step 2: refine — draft가 잘림 없이 완성됐을 때만 시도
+    let finalOutput = draftOutput
+    let refineInputTokens = 0
+    let refineOutputTokens = 0
+
+    if (!draftTruncated) {
+      try {
+        const refineRes = await client.messages.create({
+          model: this.modelId,
+          system: REFINE_COPY_SYSTEM_PROMPT,
+          max_tokens: dynamicMaxTokens,
+          messages: buildRefineCopyMessages(input, draftOutput),
+        })
+        const refineBlock = refineRes.content.find((c) => c.type === "text")
+        if (refineBlock && refineBlock.type === "text") {
+          const refinedParsed = extractJson(refineBlock.text)
+          const refined = validateCopyOutput(refinedParsed)
+          finalOutput = refined
+          refineInputTokens = refineRes.usage?.input_tokens ?? 0
+          refineOutputTokens = refineRes.usage?.output_tokens ?? 0
+        }
+      } catch (err) {
+        // refine 실패는 치명적이지 않다 — draft로 fallback.
+        console.warn("[generateCopy] refine step failed, using draft:", err)
+      }
+    }
+
+    const totalInputTokens = draftInputTokens + refineInputTokens
+    const totalOutputTokens = draftOutputTokens + refineOutputTokens
     const estimatedCostKRW =
-      estimateInputCostKRW(this.modelId, inputTokens) +
-      estimateOutputCostKRW(this.modelId, outputTokens)
+      estimateInputCostKRW(this.modelId, totalInputTokens) +
+      estimateOutputCostKRW(this.modelId, totalOutputTokens)
 
     return {
-      output,
+      output: finalOutput,
       usage: {
-        inputTokens,
-        outputTokens,
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
         estimatedCostKRW: Number.isFinite(estimatedCostKRW) ? estimatedCostKRW : 0,
-        truncated,
+        truncated: draftTruncated,
       },
       modelId: this.modelId,
     }

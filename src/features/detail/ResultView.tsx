@@ -112,16 +112,21 @@ const BG_SOFT = "#F8F9FA"
 const LINE = "#E9ECEF"
 const PLACEHOLDER = "#ADB5BD"
 
-/** 헤드라인 폰트 (HeroBlock, KeyPointsBig title, SectionTitle 헤더용). */
-const HEAD_FONT =
-  '"BlackHanSans", "NotoSansKR", Pretendard, sans-serif'
-/** 라벨/도장 (POINT 라벨 등 작은 강조). */
-const HEAD_SANS =
-  '"Jua", "DoHyeon", sans-serif'
-/** 본문 폰트. */
-const BODY_FONT = 'Pretendard, sans-serif'
-/** 명조 폰트 (StoryBlock, highlightBox, farm 인용). */
-const SERIF_FONT = '"GowunBatang", serif'
+/**
+ * v2.5 폰트 계층 — 잘 팔리는 스마트스토어 톤 (임팩트 강력).
+ *
+ * DISPLAY (Hero 초대형, highlightBox 슬로건, POINT 넘버)
+ *   = BlackHanSans — 검은 고딕, 스마트스토어·쿠팡 상위 셀러 표준
+ * HEAD (섹션 타이틀 h2, POINT title, 스펙 큰 값)
+ *   = Pretendard 900 — 가독성 + 임팩트 균형
+ * BODY (본문·스토리·설명)
+ *   = Pretendard 500/700
+ * CAPTION (라벨·뱃지·소형 강조)
+ *   = Pretendard 700 + letterSpacing 강조
+ */
+const DISPLAY_FONT =
+  '"BlackHanSans", "Pretendard", "NotoSansKR", sans-serif'
+const BODY_FONT = '"Pretendard", "NotoSansKR", sans-serif'
 
 /** 빈 CopyOutput — 미리보기 placeholder/초기값용. */
 export function emptyCopy(): CopyOutput {
@@ -153,6 +158,46 @@ function Placeholder({ text }: { text: string }) {
 /** v2.4: 섹션 구분자 — 사과 이모지·빨강 점 제거, 여백만. */
 function DotDivider() {
   return <div aria-hidden style={{ height: 8, background: "#FFFFFF" }} />
+}
+
+/**
+ * v2.5 상단 배지 스트립 — 잘 팔리는 스마트스토어 표준 4대 신뢰 요소.
+ * Hero 아래에 항상 노출. 검정 배경 + 흰 텍스트 + 얇은 라인 구분.
+ */
+function ValuePropStrip({ isMobile }: { isMobile: boolean }) {
+  const items = ["산지 직송", "당일 수확", "100% 환불", "신선 보장"]
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))`,
+        background: INK,
+        color: "#FFFFFF",
+        padding: isMobile ? "16px 0" : "20px 0",
+      }}
+    >
+      {items.map((label, i) => (
+        <div
+          key={`vp-${i}`}
+          style={{
+            textAlign: "center",
+            fontSize: isMobile ? 12 : 14,
+            fontWeight: 800,
+            fontFamily: BODY_FONT,
+            letterSpacing: 0.5,
+            borderLeft: i > 0 ? "1px solid rgba(255,255,255,0.15)" : "none",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+          }}
+        >
+          <span aria-hidden style={{ color: RED, fontWeight: 900 }}>✓</span>
+          <span>{label}</span>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 export function ResultView({
@@ -385,6 +430,9 @@ export function ResultView({
               isMobile={isMobile}
               factPlaceholder={factPlaceholder}
             />
+
+            {/* v2.5: 가치 제안 스트립 (산지직송·당일수확·100%환불·신선보장) */}
+            <ValuePropStrip isMobile={isMobile} />
 
             {/* 2a. FreshnessTimeline — 수확일 + fruit-facts 보관 일수 (v1.8) */}
             {freshnessProps && (
@@ -705,33 +753,35 @@ function WhyHeader({
         borderBottom: `1px solid ${LINE}`,
       }}
     >
-      {/* v2.2: WHY FRUIT 영어 라벨 삭제. 상품명 + 한글 문구만 노출 */}
-      <div style={{ textAlign: "center", marginBottom: 26 }}>
-        <h2
+      {/* v2.5: 큰 상품명 + 빨강 강조구 대비 (스마트스토어 잘 팔리는 톤) */}
+      <div style={{ textAlign: "center", marginBottom: 32 }}>
+        <div
           style={{
-            fontSize: isMobile ? 26 : 32,
-            fontWeight: 900,
-            margin: 0,
-            lineHeight: 1.3,
-            color: INK,
-            fontFamily: HEAD_FONT,
-            letterSpacing: -0.5,
-          }}
-        >
-          {productName || <Placeholder text="상품명을 입력해 주세요" />}{" "}
-          <span style={{ color: RED }}>{t.detail.result.whatsDifferentTitle}</span>
-        </h2>
-        <p
-          style={{
-            fontSize: isMobile ? 13 : 15,
-            color: SUB,
-            marginTop: 10,
-            margin: 0,
+            fontSize: isMobile ? 11 : 12,
+            color: RED,
+            fontWeight: 800,
+            letterSpacing: 3,
+            marginBottom: 14,
             fontFamily: BODY_FONT,
           }}
         >
-          {t.detail.result.whatsDifferentHint}
-        </p>
+          WHY BUY HERE
+        </div>
+        <h2
+          style={{
+            fontSize: isMobile ? 34 : 52,
+            fontWeight: 400,
+            margin: 0,
+            lineHeight: 1.15,
+            color: INK,
+            fontFamily: DISPLAY_FONT,
+            letterSpacing: -1.5,
+          }}
+        >
+          {productName || <Placeholder text="상품명을 입력해 주세요" />}
+          <br />
+          <span style={{ color: RED }}>{t.detail.result.whatsDifferentTitle}</span>
+        </h2>
       </div>
 
       {/* v2.3: mini POINT 카드 삭제 — 아래 KeyPointsBig와 중복이라 정리 */}
@@ -813,18 +863,20 @@ function HeroBlock({
           position: "relative",
         }}
       >
+        {/* v2.5: 스마트스토어 임팩트 톤 — 서브 캡션 스타일(작고 굵음) + 대형 헤드 대비 */}
         <p
           style={{
-            fontSize: isMobile ? 17 : 20,
-            color: SUB,
+            fontSize: isMobile ? 13 : 14,
+            color: RED,
             margin: 0,
-            marginBottom: 14,
-            lineHeight: 1.5,
-            fontFamily: SERIF_FONT,
-            fontStyle: "italic",
+            marginBottom: 18,
+            lineHeight: 1.4,
+            fontFamily: BODY_FONT,
+            fontWeight: 800,
+            letterSpacing: 2,
+            textTransform: "uppercase",
           }}
         >
-          {/* v2.2: 값 유무 상관 없이 항상 EditableResultText 렌더링 (편집 진입 가능) */}
           <EditableResultText
             copy={copy}
             onChange={onCopyChange}
@@ -835,16 +887,15 @@ function HeroBlock({
         </p>
         <h1
           style={{
-            fontSize: isMobile ? 42 : 58,
-            fontWeight: 900,
+            fontSize: isMobile ? 52 : 84,
+            fontWeight: 400,
             margin: 0,
             color: INK,
-            lineHeight: 1.15,
-            letterSpacing: -1,
-            fontFamily: HEAD_FONT,
+            lineHeight: 1.05,
+            letterSpacing: -2,
+            fontFamily: DISPLAY_FONT,
           }}
         >
-          {/* v2.2: 값 유무 상관 없이 항상 EditableResultText 렌더링 */}
           <EditableResultText
             copy={copy}
             onChange={onCopyChange}
@@ -942,26 +993,31 @@ function StoryBlock({
         position: "relative",
       }}
     >
-      {/* 양쪽 큰따옴표 — 상단 가운데 */}
+      {/* v2.5: 큰따옴표 삭제 → STORY 캡션 라벨로 대체 (스마트스토어 톤) */}
       {hasStory && (
         <div
-          aria-hidden
           style={{
             textAlign: "center",
-            fontSize: isMobile ? 56 : 72,
-            color: RED,
-            lineHeight: 0.4,
-            fontFamily: SERIF_FONT,
-            fontWeight: 900,
-            marginBottom: 18,
-            opacity: 0.6,
+            marginBottom: 24,
           }}
         >
-          “
+          <span
+            style={{
+              display: "inline-block",
+              padding: "6px 14px",
+              background: INK,
+              color: "#FFFFFF",
+              fontSize: 11,
+              fontWeight: 800,
+              letterSpacing: 3,
+              fontFamily: BODY_FONT,
+            }}
+          >
+            STORY
+          </span>
         </div>
       )}
 
-      {/* v2.2: 값 유무 상관 없이 항상 편집 가능 */}
       <div
         style={{
           position: "relative",
@@ -970,18 +1026,19 @@ function StoryBlock({
           margin: "0 auto",
         }}
       >
-        {/* v2.3: 드롭캡 워터마크 삭제 — 첫 글자 반투명 표기가 아마추어 느낌을 줌 */}
         <p
           style={{
-            fontSize: isMobile ? 16 : 18,
+            fontSize: isMobile ? 18 : 21,
             color: INK,
             lineHeight: 1.85,
             whiteSpace: "pre-line",
             margin: 0,
             textAlign: "center",
-            fontFamily: SERIF_FONT,
+            fontFamily: BODY_FONT,
+            fontWeight: 500,
             position: "relative",
             zIndex: 1,
+            wordBreak: "keep-all",
           }}
         >
           <EditableResultText
@@ -996,47 +1053,27 @@ function StoryBlock({
         </p>
       </div>
 
-      {hasStory && (
-        <div
-          aria-hidden
-          style={{
-            textAlign: "center",
-            fontSize: isMobile ? 56 : 72,
-            color: RED,
-            lineHeight: 0.4,
-            fontFamily: SERIF_FONT,
-            fontWeight: 900,
-            marginTop: 24,
-            opacity: 0.6,
-          }}
-        >
-          ”
-        </div>
-      )}
-
-      {/* v2.4: highlightBox 리디자인 — 노란 dashed·회전 도장·손글씨 모두 제거.
-          축색 얇은 세로 바 + 큰 세리프 슬로건 (컬리·오늘의집 톤). */}
+      {/* v2.5: highlightBox — 초대형 BlackHanSans 슬로건 + 축색 강조 (임팩트 톤) */}
       <div
         style={{
-          marginTop: 40,
-          padding: isMobile ? "20px 24px" : "24px 32px",
-          background: "#FFFFFF",
-          borderLeft: `3px solid ${INK}`,
-          textAlign: "left",
-          maxWidth: 640,
+          marginTop: 56,
+          padding: isMobile ? "36px 24px" : "56px 32px",
+          background: INK,
+          textAlign: "center",
+          maxWidth: 720,
           marginLeft: "auto",
           marginRight: "auto",
         }}
       >
         <p
           style={{
-            fontSize: isMobile ? 22 : 26,
-            fontWeight: 700,
-            color: INK,
+            fontSize: isMobile ? 40 : 60,
+            fontWeight: 400,
+            color: "#FFFFFF",
             margin: 0,
-            lineHeight: 1.5,
-            fontFamily: SERIF_FONT,
-            letterSpacing: -0.3,
+            lineHeight: 1.15,
+            fontFamily: DISPLAY_FONT,
+            letterSpacing: -1.5,
           }}
         >
           <EditableResultText
@@ -1170,21 +1207,23 @@ function SpecBlock({
                     style={{
                       display: "flex",
                       alignItems: "baseline",
-                      gap: 4,
-                      lineHeight: 1.1,
+                      gap: 6,
+                      lineHeight: 1,
                       color: RED,
-                      fontFamily: HEAD_FONT,
+                      fontFamily: DISPLAY_FONT,
                     }}
                   >
-                    <span style={{ fontSize: 44, fontWeight: 900, letterSpacing: -1 }}>
+                    {/* v2.5: 당도 숫자 44→80px (Spec 카드에서 시각 앵커) */}
+                    <span style={{ fontSize: 80, fontWeight: 400, letterSpacing: -3 }}>
                       {sweetnessMatch[1]}
                     </span>
                     <span
                       style={{
                         fontSize: 14,
-                        fontWeight: 700,
+                        fontWeight: 800,
                         color: RED_DARK,
-                        fontFamily: HEAD_SANS,
+                        fontFamily: BODY_FONT,
+                        letterSpacing: 1,
                       }}
                     >
                       {sweetnessMatch[2] ?? "Brix"}
@@ -1193,12 +1232,13 @@ function SpecBlock({
                 ) : (
                   <div
                     style={{
-                      fontSize: 17,
-                      fontWeight: 700,
+                      fontSize: 18,
+                      fontWeight: 800,
                       color: INK,
-                      lineHeight: 1.4,
+                      lineHeight: 1.35,
                       wordBreak: "keep-all",
                       fontFamily: BODY_FONT,
+                      letterSpacing: -0.3,
                     }}
                   >
                     <EditableResultText
@@ -1255,16 +1295,16 @@ function KeyPointsBig({
           textAlign: "center",
         }}
       >
-        {/* v2.2: KEY POINTS 영어 라벨 삭제 — 아래 큰 한글 헤드만 유지 */}
+        {/* v2.5: 섹션 헤드 크기 42→60 (임팩트 강화) */}
         <h2
           style={{
-            fontSize: isMobile ? 30 : 42,
-            fontWeight: 900,
+            fontSize: isMobile ? 38 : 60,
+            fontWeight: 400,
             margin: 0,
             color: INK,
-            lineHeight: 1.25,
-            fontFamily: HEAD_FONT,
-            letterSpacing: -0.5,
+            lineHeight: 1.1,
+            fontFamily: DISPLAY_FONT,
+            letterSpacing: -1.5,
           }}
         >
           {t.detail.result.keyPointsSectionTitle}
@@ -1295,19 +1335,20 @@ function KeyPointsBig({
               }}
             />
             <div style={{ paddingLeft: isMobile ? 12 : 24, position: "relative" }}>
-              {/* 흐릿한 회색 큰 영문 숫자 배경 */}
+              {/* v2.5: 배경 숫자 크기·색상 강화 (110→180, 얇은 회색선) */}
               <span
                 aria-hidden
                 style={{
                   position: "absolute",
                   right: 0,
-                  top: -28,
-                  fontSize: isMobile ? 110 : 140,
+                  top: -40,
+                  fontSize: isMobile ? 130 : 200,
                   fontWeight: 900,
-                  color: "#F1F3F5",
-                  fontFamily: HEAD_FONT,
+                  color: "transparent",
+                  WebkitTextStroke: `2px ${LINE}`,
+                  fontFamily: DISPLAY_FONT,
                   lineHeight: 1,
-                  letterSpacing: -4,
+                  letterSpacing: -6,
                   userSelect: "none",
                   pointerEvents: "none",
                   zIndex: 0,
@@ -1320,14 +1361,14 @@ function KeyPointsBig({
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 8,
-                  padding: "5px 12px",
+                  padding: "6px 14px",
                   background: RED,
                   color: "#FFF",
                   fontSize: isMobile ? 11 : 12,
                   fontWeight: 800,
-                  letterSpacing: 2,
-                  marginBottom: 14,
-                  fontFamily: HEAD_SANS,
+                  letterSpacing: 2.5,
+                  marginBottom: 18,
+                  fontFamily: BODY_FONT,
                   position: "relative",
                   zIndex: 1,
                 }}
@@ -1336,14 +1377,14 @@ function KeyPointsBig({
               </div>
               <h3
                 style={{
-                  fontSize: isMobile ? 30 : 38,
-                  fontWeight: 900,
+                  fontSize: isMobile ? 32 : 46,
+                  fontWeight: 400,
                   margin: 0,
-                  marginBottom: 16,
+                  marginBottom: 20,
                   color: INK,
-                  lineHeight: 1.3,
-                  fontFamily: HEAD_FONT,
-                  letterSpacing: -0.5,
+                  lineHeight: 1.2,
+                  fontFamily: DISPLAY_FONT,
+                  letterSpacing: -1.2,
                   position: "relative",
                   zIndex: 1,
                 }}
@@ -1358,13 +1399,15 @@ function KeyPointsBig({
               </h3>
               <p
                 style={{
-                  fontSize: isMobile ? 15 : 17,
+                  fontSize: isMobile ? 16 : 18,
                   color: SUB,
                   lineHeight: 1.8,
                   margin: 0,
-                  marginBottom: 28,
+                  marginBottom: 32,
                   whiteSpace: "pre-line",
                   fontFamily: BODY_FONT,
+                  fontWeight: 500,
+                  wordBreak: "keep-all",
                   position: "relative",
                   zIndex: 1,
                 }}
@@ -1764,42 +1807,21 @@ function FarmStoryBlock({
             gap: 12,
           }}
         >
+            {/* v2.5: 판매문구 느낌 — Pretendard 700 + 굵기 대비 (세리프 X) */}
             <p
               style={{
-                fontSize: isMobile ? 17 : 19,
+                fontSize: isMobile ? 18 : 22,
                 color: INK,
-                lineHeight: 1.75,
+                lineHeight: 1.65,
                 margin: 0,
                 whiteSpace: "pre-line",
-                fontFamily: SERIF_FONT,
-                fontWeight: 500,
+                fontFamily: BODY_FONT,
+                fontWeight: 700,
+                wordBreak: "keep-all",
+                letterSpacing: -0.3,
               }}
             >
-              <span
-                aria-hidden
-                style={{
-                  color: SUB,
-                  fontFamily: SERIF_FONT,
-                  fontWeight: 900,
-                  marginRight: 4,
-                  opacity: 0.4,
-                }}
-              >
-                “
-              </span>
               {farmStory}
-              <span
-                aria-hidden
-                style={{
-                  color: SUB,
-                  fontFamily: SERIF_FONT,
-                  fontWeight: 900,
-                  marginLeft: 4,
-                  opacity: 0.4,
-                }}
-              >
-                ”
-              </span>
             </p>
             <p
               style={{
@@ -1952,17 +1974,16 @@ function SectionTitle({
         marginBottom: 18,
       }}
     >
+      {/* v2.5: 섹션 h2 임팩트 강화 — 크기 24→34, BlackHanSans 계열 */}
       <h2
         style={{
-          fontSize: 24,
-          fontWeight: 900,
+          fontSize: 34,
+          fontWeight: 400,
           color: INK,
           margin: 0,
-          paddingLeft: 14,
-          borderLeft: `5px solid ${RED}`,
           lineHeight: 1.05,
-          fontFamily: HEAD_FONT,
-          letterSpacing: -0.5,
+          fontFamily: DISPLAY_FONT,
+          letterSpacing: -1,
         }}
       >
         {title}
