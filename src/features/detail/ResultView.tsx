@@ -16,7 +16,7 @@ import { DisclosureBlock } from "./DisclosureBlock"
 import { StickyMobileCta } from "./StickyMobileCta"
 import { QualityScoreCard } from "./QualityScoreCard"
 import { WidthPresetSwitcher, WIDTH_PRESETS, type WidthPresetKey } from "./WidthPresetSwitcher"
-import { WorkJsonExporter } from "./WorkJsonExporter"
+// v2.6: WorkJsonExporter 삭제 (사이드바 3개 액션 제거 지시)
 import { checkComplianceReport } from "@/lib/ai/compliance-report"
 import { scoreCopyQuality } from "@/lib/ai/copy-quality-score"
 import { detectFruitFactKey, FRUIT_FACTS } from "@/domain/fruit-facts"
@@ -567,12 +567,14 @@ export function ResultView({
         </div>
       </div>
 
-      {/* Side panel */}
+      {/* Side panel — v2.6: 스크롤 추가 (뷰포트 초과 시 내부 스크롤) */}
       <aside
         className="fdp-no-print"
         style={{
           position: "sticky",
           top: 20,
+          maxHeight: "calc(100vh - 40px)",
+          overflowY: "auto",
           background: "var(--color-bg-surface)",
           borderRadius: 12,
           padding: 24,
@@ -668,45 +670,7 @@ export function ResultView({
               {t.detail.result.enhanceLabel}
             </label>
 
-            {/* 전체 카피 텍스트 복사 */}
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  const text = flattenCopyToText(copy, productName)
-                  if (navigator.clipboard && text) {
-                    await navigator.clipboard.writeText(text)
-                    alert("전체 카피를 클립보드에 복사했어요!")
-                  }
-                } catch (e) {
-                  console.error("[copy-to-clipboard]", e)
-                  alert("복사에 실패했어요.")
-                }
-              }}
-              style={{
-                padding: "8px 12px",
-                background: "var(--color-bg-surface)",
-                border: "1px solid var(--color-neutral-300)",
-                borderRadius: 6,
-                fontSize: 12,
-                fontWeight: 600,
-                color: "var(--color-neutral-900)",
-                cursor: "pointer",
-              }}
-            >
-              📋 전체 카피 텍스트 복사
-            </button>
-
-            {/* JSON 백업 */}
-            <WorkJsonExporter
-              copy={copy}
-              productName={productName}
-              price={_price}
-              origin={origin}
-              weight={weight}
-              trust={trust}
-              onImport={onCopyChange}
-            />
+            {/* v2.6: 전체 카피 복사·JSON 내보내기·불러오기 삭제 (사용자 지시) */}
           </div>
         </details>
       </aside>
@@ -1102,40 +1066,73 @@ function GalleryBlock({
   images: UploadedImage[]
   productName: string
 }) {
+  // v2.6: 첫 이미지 대형 통 이미지 + 나머지는 2열 그리드 (아보카도·복숭아 페이지 톤)
+  const gallery = images.slice(0, 5)
+  const [featured, ...rest] = gallery
   return (
     <div
       style={{
-        display: "grid",
-        gridTemplateColumns: images.length === 1 ? "1fr" : "repeat(2, 1fr)",
-        gap: 18,
         background: "#FFFFFF",
         padding: "20px 16px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 16,
       }}
     >
-      {/* v2.4: 폴라로이드 회전/두꺼운 흰 테두리 삭제 → 미니멀 그리드 */}
-      {images.slice(0, 4).map((img, i) => (
+      {featured && (
         <div
-          key={img.id}
           style={{
             background: "#FFFFFF",
-            borderRadius: 4,
+            borderRadius: 8,
             overflow: "hidden",
-            display: "block",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
           }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={img.url}
-            alt={`${productName} ${i + 2}`}
+            src={featured.url}
+            alt={`${productName} 대표`}
             style={{
               width: "100%",
-              aspectRatio: "1",
+              aspectRatio: "4/3",
               objectFit: "cover",
               display: "block",
             }}
           />
         </div>
-      ))}
+      )}
+      {rest.length > 0 && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: rest.length === 1 ? "1fr" : "repeat(2, 1fr)",
+            gap: 12,
+          }}
+        >
+          {rest.map((img, i) => (
+            <div
+              key={img.id}
+              style={{
+                background: "#FFFFFF",
+                borderRadius: 6,
+                overflow: "hidden",
+              }}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={img.url}
+                alt={`${productName} ${i + 3}`}
+                style={{
+                  width: "100%",
+                  aspectRatio: "1",
+                  objectFit: "cover",
+                  display: "block",
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -1311,14 +1308,18 @@ function KeyPointsBig({
         </h2>
       </div>
 
+      {/* v2.6: POINT별 배경색 살짝 변주 (아보카도·수플린 페이지 톤 참조) */}
       {points.map((p, i) => {
         const img = pointImageFor(i)
+        const bgTints = ["#FFFFFF", "#FAFBFC", "#FFF9F9"]
+        const bg = bgTints[i % bgTints.length]
         return (
           <div
             key={`kp-big-${i}`}
             style={{
               position: "relative",
-              padding: isMobile ? "32px 24px 48px" : "44px 48px 64px",
+              padding: isMobile ? "40px 24px 56px" : "56px 48px 72px",
+              background: bg,
             }}
           >
             {/* 좌측 세로 6px 빨강 바 */}
@@ -1327,8 +1328,8 @@ function KeyPointsBig({
               style={{
                 position: "absolute",
                 left: isMobile ? 12 : 24,
-                top: isMobile ? 32 : 44,
-                bottom: isMobile ? 48 : 64,
+                top: isMobile ? 40 : 56,
+                bottom: isMobile ? 56 : 72,
                 width: 6,
                 background: RED,
                 borderRadius: 3,
@@ -1427,25 +1428,27 @@ function KeyPointsBig({
                   style={{
                     display: "flex",
                     justifyContent: "center",
-                    margin: "8px 0",
+                    marginTop: 20,
                   }}
                 >
                   <div
                     style={{
                       background: "#FFFFFF",
-                      borderRadius: 4,
+                      borderRadius: 8,
                       overflow: "hidden",
                       maxWidth: "100%",
                       width: "100%",
+                      boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
                     }}
                   >
+                    {/* v2.6: 4:3 → 1:1 대형 이미지 (아보카도·복숭아 페이지 톤) */}
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={img.url}
                       alt=""
                       style={{
                         width: "100%",
-                        aspectRatio: "4/3",
+                        aspectRatio: "1",
                         objectFit: "cover",
                         display: "block",
                       }}

@@ -18,13 +18,16 @@ interface DisclosureBlockProps {
 export function DisclosureBlock({ report, defaultOpen }: DisclosureBlockProps) {
   const hasViolations = report && report.violations.length > 0
 
+  // v2.6: 위반 없으면 아무 것도 안 그림 (안내 문구 삭제 지시)
+  if (!hasViolations) return null
+
   return (
     <div
       className="fdp-no-print"
       style={{
         padding: "12px 14px",
-        background: hasViolations ? "#FFF5F5" : "#F8F9FA",
-        border: `1px solid ${hasViolations ? "#E03131" : "#E9ECEF"}`,
+        background: "#FFF5F5",
+        border: "1px solid #E03131",
         borderRadius: 8,
         marginBottom: 16,
         fontSize: 13,
@@ -32,13 +35,6 @@ export function DisclosureBlock({ report, defaultOpen }: DisclosureBlockProps) {
         color: "#495057",
       }}
     >
-      <p style={{ margin: 0 }}>
-        <span aria-hidden style={{ marginRight: 6 }}>
-          ℹ️
-        </span>
-        <strong style={{ color: "#212529" }}>안내:</strong> 본 카피는 AI 자동 생성물입니다. 식품등의 표시·광고에 관한 법률(§8) 위반 여부 최종 책임은 게시 주체(셀러)에게 있어요. 출고 전 반드시 검수해주세요.
-      </p>
-
       {hasViolations && report && (
         <details open={defaultOpen} style={{ marginTop: 10 }}>
           <summary
