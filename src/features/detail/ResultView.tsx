@@ -105,28 +105,22 @@ interface ResultViewProps {
 
 const RED = "#E03131"
 const RED_DARK = "#C92A2A"
-const RED_TINT = "#FFF5F5"
 const INK = "#212529"
 const SUB = "#495057"
 const MUTE = "#868E96"
 const BG_SOFT = "#F8F9FA"
 const LINE = "#E9ECEF"
 const PLACEHOLDER = "#ADB5BD"
-const WARM_BEIGE = "#FFF8E7"
-const SOFT_GREEN = "#E8F5E9"
 
 /** 헤드라인 폰트 (HeroBlock, KeyPointsBig title, SectionTitle 헤더용). */
 const HEAD_FONT =
   '"BlackHanSans", "NotoSansKR", Pretendard, sans-serif'
-/** 라벨/도장 (FRESH 도장, POINT 라벨 등 작은 강조). */
+/** 라벨/도장 (POINT 라벨 등 작은 강조). */
 const HEAD_SANS =
   '"Jua", "DoHyeon", sans-serif'
 /** 본문 폰트. */
 const BODY_FONT = 'Pretendard, sans-serif'
-/** 손글씨 강조 폰트 (HighlightBox, FarmStoryBlock 인용). */
-const HANDWRITING_FONT =
-  '"NanumPenScript", "Gugi", Pretendard, cursive'
-/** 명조 폰트 (StoryBlock, cautionsTitle). */
+/** 명조 폰트 (StoryBlock, highlightBox, farm 인용). */
 const SERIF_FONT = '"GowunBatang", serif'
 
 /** 빈 CopyOutput — 미리보기 placeholder/초기값용. */
@@ -156,28 +150,9 @@ function Placeholder({ text }: { text: string }) {
   )
 }
 
-/** 섹션 사이 빨강 점 + 작은 사과 구분자. */
+/** v2.4: 섹션 구분자 — 사과 이모지·빨강 점 제거, 여백만. */
 function DotDivider() {
-  return (
-    <div
-      aria-hidden
-      style={{
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        gap: 10,
-        padding: "14px 0",
-        background: "#FFFFFF",
-        color: RED,
-        fontSize: 12,
-        letterSpacing: 2,
-      }}
-    >
-      <span>•</span>
-      <span>•</span>
-      <span style={{ fontSize: 14, opacity: 0.9 }}>🍎</span>
-    </div>
-  )
+  return <div aria-hidden style={{ height: 8, background: "#FFFFFF" }} />
 }
 
 export function ResultView({
@@ -194,8 +169,6 @@ export function ResultView({
   busySection,
 }: ResultViewProps) {
   const [enhance, setEnhance] = useState(true)
-  /** v2.3: 편집 모드 토글 — off면 다시 버튼/편집 UI 완전 감춤 (진짜 상세페이지처럼) */
-  const [editMode, setEditMode] = useState(false)
   const captureRef = useRef<HTMLDivElement>(null)
   /** v1.9: 폭 프리셋 토글 — 셀러 플랫폼 폭에 맞게 캡처. */
   const [widthPreset, setWidthPreset] = useState<WidthPresetKey>("smartstore-860")
@@ -251,7 +224,6 @@ export function ResultView({
 
   const renderRegen = (sectionId: SectionId) => {
     if (!onSectionRegenerate) return null
-    if (!editMode) return null
     return (
       <RegenButton
         sectionId={sectionId}
@@ -606,34 +578,6 @@ export function ResultView({
 
         <ActionButton onClick={onRetry}>{t.detail.result.retry}</ActionButton>
 
-        {/* v2.3: 다시 버튼 토글 — off면 "🔄 다시" 버튼 감춰서 진짜 상세페이지처럼 */}
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 8,
-            padding: "10px 12px",
-            background: editMode ? "#FFF5F5" : "var(--color-bg-subtle)",
-            border: `1px solid ${editMode ? RED : "var(--color-neutral-300)"}`,
-            borderRadius: 8,
-            cursor: "pointer",
-            fontSize: 13,
-            fontWeight: 700,
-            color: editMode ? RED : "var(--color-neutral-700)",
-          }}
-        >
-          <span>🔄 재생성 버튼 표시</span>
-          <input
-            type="checkbox"
-            checked={editMode}
-            onChange={(e) => setEditMode(e.target.checked)}
-            style={{ accentColor: RED, width: 18, height: 18 }}
-          />
-        </label>
-        <p style={{ fontSize: 11, color: "var(--color-neutral-600)", margin: "-6px 0 0", lineHeight: 1.5 }}>
-          텍스트 편집은 언제든 미리보기 위 텍스트를 클릭하면 됩니다. 이 토글은 각 섹션의 "🔄 다시" 버튼 노출 여부만 조절합니다.
-        </p>
 
         {/* v2.1: 나머지 옵션은 "고급 설정" details로 접기 */}
         <details style={{ marginTop: 4 }}>
@@ -990,7 +934,6 @@ function StoryBlock({
   isMobile: boolean
 }) {
   const hasStory = !!copy.story
-  const hasHighlight = !!copy.highlightBox
   return (
     <div
       style={{
@@ -1071,54 +1014,29 @@ function StoryBlock({
         </div>
       )}
 
-      {/* v2.2: 값 유무 상관 없이 항상 편집 가능 (도장은 값 있을 때만) */}
+      {/* v2.4: highlightBox 리디자인 — 노란 dashed·회전 도장·손글씨 모두 제거.
+          축색 얇은 세로 바 + 큰 세리프 슬로건 (컬리·오늘의집 톤). */}
       <div
         style={{
-          marginTop: 32,
-          padding: isMobile ? "26px 20px" : "32px 28px",
-          background: WARM_BEIGE,
-          border: `1px dashed ${RED}`,
-          borderRadius: 4,
-          textAlign: "center",
-          position: "relative",
+          marginTop: 40,
+          padding: isMobile ? "20px 24px" : "24px 32px",
+          background: "#FFFFFF",
+          borderLeft: `3px solid ${INK}`,
+          textAlign: "left",
+          maxWidth: 640,
+          marginLeft: "auto",
+          marginRight: "auto",
         }}
       >
-        {hasHighlight && (
-          <div
-            aria-hidden
-            style={{
-              position: "absolute",
-              top: -16,
-              right: -10,
-              width: 56,
-              height: 56,
-              borderRadius: "50%",
-              border: `2px solid ${RED}`,
-              background: "#FFFFFF",
-              color: RED,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 10,
-              fontWeight: 800,
-              letterSpacing: 1,
-              transform: "rotate(-9deg)",
-              fontFamily: HEAD_SANS,
-            }}
-          >
-            신선
-          </div>
-        )}
         <p
           style={{
-            fontSize: isMobile ? 32 : 38,
+            fontSize: isMobile ? 22 : 26,
             fontWeight: 700,
-            color: RED_DARK,
+            color: INK,
             margin: 0,
-            lineHeight: 1.4,
-            fontFamily: HANDWRITING_FONT,
-            transform: "rotate(-1.5deg)",
-            display: "inline-block",
+            lineHeight: 1.5,
+            fontFamily: SERIF_FONT,
+            letterSpacing: -0.3,
           }}
         >
           <EditableResultText
@@ -1157,16 +1075,14 @@ function GalleryBlock({
         padding: "20px 16px",
       }}
     >
+      {/* v2.4: 폴라로이드 회전/두꺼운 흰 테두리 삭제 → 미니멀 그리드 */}
       {images.slice(0, 4).map((img, i) => (
         <div
           key={img.id}
           style={{
             background: "#FFFFFF",
-            padding: 6,
-            border: "6px solid #FFFFFF",
-            borderRadius: 2,
-            boxShadow: "0 4px 12px rgba(0,0,0,0.18)",
-            transform: `rotate(${i % 2 === 0 ? "-1.2deg" : "1deg"})`,
+            borderRadius: 4,
+            overflow: "hidden",
             display: "block",
           }}
         >
@@ -1357,7 +1273,6 @@ function KeyPointsBig({
 
       {points.map((p, i) => {
         const img = pointImageFor(i)
-        const polaroidRot = i % 2 === 0 ? "-1.4deg" : "1.6deg"
         return (
           <div
             key={`kp-big-${i}`}
@@ -1475,11 +1390,10 @@ function KeyPointsBig({
                   <div
                     style={{
                       background: "#FFFFFF",
-                      padding: "10px 10px 32px",
-                      boxShadow: "0 6px 18px rgba(0,0,0,0.12)",
-                      transform: `rotate(${polaroidRot})`,
-                      maxWidth: "85%",
-                      width: "85%",
+                      borderRadius: 4,
+                      overflow: "hidden",
+                      maxWidth: "100%",
+                      width: "100%",
                     }}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1519,7 +1433,7 @@ function StorageBlock({
     <div
       style={{
         padding: isMobile ? "36px 20px" : "48px 40px",
-        background: WARM_BEIGE,
+        background: "#FFFFFF",
       }}
     >
       <SectionTitle title={t.detail.result.storage} regen={onRegen} />
@@ -1593,6 +1507,7 @@ function FaqBlock({
                 i < copy.faq.length - 1 ? `1px solid ${LINE}` : "none",
             }}
           >
+            {/* v2.4: ▼ 화살표·빨강 Q. 삭제 → Q./A. 미니멀 표기 */}
             <p
               style={{
                 fontSize: isMobile ? 14 : 15,
@@ -1603,10 +1518,7 @@ function FaqBlock({
                 lineHeight: 1.5,
               }}
             >
-              <span style={{ color: RED, marginRight: 4, fontSize: 10 }} aria-hidden>
-                ▼
-              </span>
-              <span style={{ color: RED, marginRight: 6 }}>Q.</span>
+              <span style={{ color: INK, marginRight: 8, fontWeight: 900 }}>Q.</span>
               <EditableResultText
                 copy={copy}
                 onChange={onCopyChange}
@@ -1622,10 +1534,7 @@ function FaqBlock({
                 margin: 0,
               }}
             >
-              <span style={{ color: RED, marginRight: 4, fontSize: 10 }} aria-hidden>
-                ▼
-              </span>
-              <span style={{ color: MUTE, marginRight: 6, fontWeight: 700 }}>A.</span>
+              <span style={{ color: MUTE, marginRight: 8, fontWeight: 700 }}>A.</span>
               <EditableResultText
                 copy={copy}
                 onChange={onCopyChange}
@@ -1647,110 +1556,78 @@ function DeliveryBlock({ isMobile }: { isMobile: boolean }) {
     <div
       style={{
         padding: isMobile ? "36px 20px" : "48px 40px",
-        background: SOFT_GREEN,
+        background: "#FFFFFF",
       }}
     >
       <SectionTitle title={t.detail.result.deliveryTitle} />
+      {/* v2.4: 초록 배경·주황 원형 이모지 삭제 → 얇은 라인 카드 */}
       <div
         style={{
-          padding: isMobile ? "18px 18px" : "24px 28px",
+          padding: isMobile ? "20px 22px" : "26px 30px",
           background: "#FFFFFF",
-          borderRadius: 10,
+          borderRadius: 4,
           border: `1px solid ${LINE}`,
         }}
       >
-        <div
+        <p
           style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 14,
-            marginBottom: 12,
+            fontSize: isMobile ? 14 : 15,
+            color: INK,
+            lineHeight: 1.85,
+            margin: 0,
+            fontFamily: BODY_FONT,
           }}
         >
-          <div
-            style={{
-              width: 44,
-              height: 44,
-              borderRadius: "50%",
-              background: RED_TINT,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 20,
-              flexShrink: 0,
-            }}
-            aria-hidden
-          >
-            📦
-          </div>
-          <p
-            style={{
-              fontSize: isMobile ? 14 : 15,
-              color: INK,
-              lineHeight: 1.75,
-              margin: 0,
-            }}
-          >
-            {t.detail.result.deliveryBody}
-          </p>
-        </div>
+          {t.detail.result.deliveryBody}
+        </p>
       </div>
     </div>
   )
 }
 
 function TrustBadgesRow({ trust }: { trust: TrustInfo }) {
-  const items: { icon: string; label: string }[] = []
-  if (trust.sameDayHarvest) items.push({ icon: "🌅", label: "당일 수확·발송" })
-  if (trust.coldChain) items.push({ icon: "❄️", label: "콜드체인 배송" })
-  if (trust.directFromFarm) items.push({ icon: "🚜", label: "산지 직거래" })
-  if (trust.refundGuarantee) items.push({ icon: "🛡️", label: "환불 보장" })
-  if (trust.gapNumber?.trim()) items.push({ icon: "✅", label: "GAP 인증" })
-  if (trust.organicNumber?.trim()) items.push({ icon: "🌿", label: "친환경 인증" })
-  if (trust.pesticideFreeNumber?.trim()) items.push({ icon: "🍃", label: "무농약 인증" })
+  const items: string[] = []
+  if (trust.sameDayHarvest) items.push("당일 수확·발송")
+  if (trust.coldChain) items.push("콜드체인 배송")
+  if (trust.directFromFarm) items.push("산지 직거래")
+  if (trust.refundGuarantee) items.push("환불 보장")
+  if (trust.gapNumber?.trim()) items.push("GAP 인증")
+  if (trust.organicNumber?.trim()) items.push("친환경 인증")
+  if (trust.pesticideFreeNumber?.trim()) items.push("무농약 인증")
   if (trust.harvestDateLabel?.trim())
-    items.push({ icon: "📅", label: `수확 ${trust.harvestDateLabel.trim()}` })
+    items.push(`수확 ${trust.harvestDateLabel.trim()}`)
 
   if (items.length === 0) return null
 
-  // 칩별 약한 회전 (-2 ~ +2도, 결정론적)
-  const rotFor = (i: number) => {
-    const seq = [-1.6, 1.2, -2, 0.8, 1.8, -1, 2, -1.4]
-    return seq[i % seq.length]
-  }
+  // v2.4: 이모지·dashed·회전 도트 삭제 → 흰 배경 미니멀 칩 (컬리·오늘의집 톤)
   return (
     <div
       style={{
         display: "flex",
         flexWrap: "wrap",
-        gap: 8,
-        padding: "16px 20px 20px",
+        gap: 6,
+        padding: "14px 20px 20px",
         justifyContent: "center",
         borderBottom: `1px solid ${LINE}`,
       }}
     >
-      {items.map((it, i) => (
+      {items.map((label, i) => (
         <span
           key={`tb-${i}`}
           style={{
             display: "inline-flex",
             alignItems: "center",
-            gap: 5,
-            padding: "6px 12px",
+            padding: "5px 10px",
             background: "#FFFFFF",
-            border: `1.5px dashed ${RED}`,
-            color: RED_DARK,
+            border: `1px solid ${LINE}`,
+            color: SUB,
             borderRadius: 999,
             fontSize: 11,
-            fontWeight: 700,
-            fontFamily: HEAD_SANS,
-            letterSpacing: 0.3,
-            boxShadow: "0 2px 4px rgba(0,0,0,0.08)",
-            transform: `rotate(${rotFor(i)}deg)`,
+            fontWeight: 600,
+            fontFamily: BODY_FONT,
           }}
         >
-          <span aria-hidden>{it.icon}</span>
-          {it.label}
+          {label}
         </span>
       ))}
     </div>
@@ -1768,7 +1645,7 @@ function RecommendForBlock({
     <div
       style={{
         padding: isMobile ? "40px 20px" : "52px 40px",
-        background: SOFT_GREEN,
+        background: "#FFFFFF",
       }}
     >
       <SectionTitle title={t.detail.result.recommendForTitle} />
@@ -1889,22 +1766,23 @@ function FarmStoryBlock({
         >
             <p
               style={{
-                fontSize: isMobile ? 26 : 30,
+                fontSize: isMobile ? 17 : 19,
                 color: INK,
-                lineHeight: 1.55,
+                lineHeight: 1.75,
                 margin: 0,
                 whiteSpace: "pre-line",
-                fontFamily: HANDWRITING_FONT,
+                fontFamily: SERIF_FONT,
+                fontWeight: 500,
               }}
             >
               <span
                 aria-hidden
                 style={{
-                  color: RED,
+                  color: SUB,
                   fontFamily: SERIF_FONT,
                   fontWeight: 900,
                   marginRight: 4,
-                  opacity: 0.6,
+                  opacity: 0.4,
                 }}
               >
                 “
@@ -1913,11 +1791,11 @@ function FarmStoryBlock({
               <span
                 aria-hidden
                 style={{
-                  color: RED,
+                  color: SUB,
                   fontFamily: SERIF_FONT,
                   fontWeight: 900,
                   marginLeft: 4,
-                  opacity: 0.6,
+                  opacity: 0.4,
                 }}
               >
                 ”
@@ -1950,42 +1828,26 @@ function ReturnsBlock({ isMobile }: { isMobile: boolean }) {
       }}
     >
       <SectionTitle title={t.detail.result.returnsTitle} />
+      {/* v2.4: 원형 이모지·BG_SOFT 배경 삭제 → 얇은 라인 카드 */}
       <div
         style={{
-          padding: isMobile ? "18px 18px" : "24px 28px",
-          background: BG_SOFT,
-          borderRadius: 10,
+          padding: isMobile ? "20px 22px" : "26px 30px",
+          background: "#FFFFFF",
+          borderRadius: 4,
           border: `1px solid ${LINE}`,
         }}
       >
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
-          <div
-            style={{
-              width: 44,
-              height: 44,
-              borderRadius: "50%",
-              background: RED_TINT,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 20,
-              flexShrink: 0,
-            }}
-            aria-hidden
-          >
-            ↩️
-          </div>
-          <p
-            style={{
-              fontSize: isMobile ? 14 : 15,
-              color: INK,
-              lineHeight: 1.75,
-              margin: 0,
-            }}
-          >
-            {t.detail.result.returnsBody}
-          </p>
-        </div>
+        <p
+          style={{
+            fontSize: isMobile ? 14 : 15,
+            color: INK,
+            lineHeight: 1.85,
+            margin: 0,
+            fontFamily: BODY_FONT,
+          }}
+        >
+          {t.detail.result.returnsBody}
+        </p>
       </div>
     </div>
   )
@@ -2005,96 +1867,67 @@ function CautionsBlock({
         background: "#FFFFFF",
       }}
     >
-      {/* 신선식품 면책 자동 박스 — cautions 유무와 관계없이 항상 노출 */}
+      {/* v2.4: 빨강·노랑 경고 박스 삭제 → 얇은 회색 라인 카드 하나로 통합 */}
       <div
         style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "10px 14px",
-          marginBottom: 14,
-          background: RED_TINT,
-          border: `1px solid ${RED}`,
-          borderRadius: 8,
-          color: RED_DARK,
-          fontSize: isMobile ? 13 : 14,
-          fontWeight: 600,
-          fontFamily: BODY_FONT,
+          padding: isMobile ? "20px 22px" : "26px 30px",
+          background: "#FFFFFF",
+          borderRadius: 4,
+          border: `1px solid ${LINE}`,
         }}
       >
-        <span
-          aria-hidden
+        <p
           style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 18,
-            height: 18,
-            borderRadius: "50%",
-            background: RED,
-            color: "#FFFFFF",
-            fontSize: 11,
-            fontWeight: 900,
-            flexShrink: 0,
-            fontFamily: HEAD_SANS,
+            fontSize: isMobile ? 13 : 14,
+            color: SUB,
+            lineHeight: 1.75,
+            margin: 0,
+            marginBottom: cautions.length > 0 ? 16 : 0,
+            fontFamily: BODY_FONT,
           }}
         >
-          ⓘ
-        </span>
-        <span>{t.detail.result.cautionsAutoNotice}</span>
+          {t.detail.result.cautionsAutoNotice}
+        </p>
+        {cautions.length > 0 && (
+          <>
+            <h3
+              style={{
+                fontSize: isMobile ? 14 : 15,
+                fontWeight: 700,
+                color: INK,
+                margin: 0,
+                marginBottom: 10,
+                fontFamily: BODY_FONT,
+              }}
+            >
+              {t.detail.result.cautionsTitle}
+            </h3>
+            <ul
+              style={{
+                margin: 0,
+                paddingLeft: 16,
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+              }}
+            >
+              {cautions.map((c, i) => (
+                <li
+                  key={`c-${i}`}
+                  style={{
+                    fontSize: isMobile ? 13 : 14,
+                    color: SUB,
+                    lineHeight: 1.7,
+                    fontFamily: BODY_FONT,
+                  }}
+                >
+                  {c}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </div>
-
-      {cautions.length > 0 && (
-        <div
-          style={{
-            padding: isMobile ? "18px 18px" : "24px 28px",
-            background: "#FFFBEB",
-            borderRadius: 10,
-            border: "1px solid #FBBF24",
-          }}
-        >
-          <h3
-            style={{
-              fontSize: isMobile ? 17 : 19,
-              fontWeight: 900,
-              color: "#92400E",
-              margin: 0,
-              marginBottom: 14,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              fontFamily: SERIF_FONT,
-              letterSpacing: -0.3,
-            }}
-          >
-            <span aria-hidden>⚠️</span>
-            {t.detail.result.cautionsTitle}
-          </h3>
-          <ul
-            style={{
-              margin: 0,
-              paddingLeft: 18,
-              display: "flex",
-              flexDirection: "column",
-              gap: 8,
-            }}
-          >
-            {cautions.map((c, i) => (
-              <li
-                key={`c-${i}`}
-                style={{
-                  fontSize: isMobile ? 14 : 15,
-                  color: "#78350F",
-                  lineHeight: 1.65,
-                  fontFamily: BODY_FONT,
-                }}
-              >
-                {c}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
     </div>
   )
 }
