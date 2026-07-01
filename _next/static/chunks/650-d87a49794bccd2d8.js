@@ -143,6 +143,41 @@
     금지: "고당도 사과" / 허용: "평균 15Brix 이상 선별한 홍로 사과 약 300g".
     fruit-facts goodBrix 미만 Brix는 "달다/꿀맛/고당도" 어휘 일체 금지.
 
+[v9 신규 — 6차 리서치(2026-07) 반영: 토스페이먼츠\xb7아임웹\xb7크몽 2026 트렌드 통합]
+
+44. 숫자로 설득. "많이 판매/인기 상품" 같은 막연 표현 금지 — 구체 수치로 치환:
+    - "많이 팔린 상품" → "이번 주 XX박스 출하", "재구매 X%"
+    - "빠른 배송" → "새벽 5시 수확\xb7오후 3시 출고", "12시간 안에 도착"
+    - "선물용" → "3대째 대접해 온 청송의 부유", "손이 많이 든 만큼 가격 20% 낮췄어요"
+    수치 없으면 그 표현 자체를 빼세요. 추정\xb7과장 금지.
+
+45. story 필드는 3막 미니 서사로 구성 (신선식품 맞춤 각색):
+    - 1막(먹기 전): 문제\xb7기대\xb7궁금증 한 문장 — 시각\xb7후각 트리거
+    - 2막(한 입): 변화\xb7발견\xb7감각 폭발 — 미각\xb7촉각 트리거
+    - 3막(여운): 잔향\xb7다음 만남 예고 — 감정 트리거
+    예: "아침 식탁에 올려두면 향이 먼저 인사해요. // 한 입 베면 톡 터지는 즙이 접시에 고여요. // 마지막 한 알까지 아까워지는 맛이에요."
+    문장 사이는 '\\n\\n'. 각 막 18자 이내.
+
+46. highlightBox는 "슬로건 형" 짧은 미니 문구로 다듬으세요.
+    좋은 슬로건: 예상 밖 조합 + 구체 감각 + 6~15자.
+    예: "청송의 겸손한 자랑", "새벽 5시의 산책", "여름의 진심 한 알", "붉은 정직", "손이 만든 단맛".
+    나쁜 슬로건: 흔한 광고문("최고의 맛", "환상의 맛"), 형용사 나열 3개.
+
+47. keyPoints 중 최소 1건은 "안심 요소" 를 명확히 담으세요:
+    - 조건부 환불 조건 (기한 + 조건)
+    - 콜드체인 봉인 (배송 봉투 사진 언급도 가능)
+    - 24시간 CS 응답 시간대
+    - 반품 판단 기준 (문의 → 사진 판단 → 즉시 처리)
+    trust.refundGuarantee 유무와 별개로 배송/CS 안심 요소 1건은 필수. 입력에 없으면 일반 신선식품 기준(예: "받으시고 12시간 내 사진 보내주시면 즉시 재발송")으로 처리.
+
+48. 오감 5개(시각\xb7후각\xb7미각\xb7촉각\xb7청각) 중 최소 3개를 서로 다른 필드에 분산 배치:
+    - 시각: headline/subheadline/highlightBadges
+    - 후각: story 1막 또는 highlightBox
+    - 미각: story 2막 또는 keyPoints
+    - 촉각: keyPoints body ("아삭한 씹는 맛", "탱글한 껍질")
+    - 청각: story 또는 keyPoints ("사각 소리", "톡 터지는 소리")
+    한 필드에 같은 감각 3번 이상 금지. 감각어는 규칙 42의 fact 풀에서만.
+
 참고 출력 예시 (스타일만 참고, 그대로 베끼지 마세요):
 {
   "headline": "썬프레 천도 복숭아",
@@ -334,6 +369,13 @@ keyPoints 3개와 highlightBox, cautions를 빠뜨리지 마세요.
 - 규칙 41: headline은 시간단축/기능강화/변화 3유형 중 택1, headline+sub 합산 80자 이하
 - 규칙 42: 감각어는 위 fact 컨텍스트에 표시된 그 과일의 풀에서만
 - 규칙 43: 추상 등급어(고당도/꿀맛/특상품 등) 단독 사용 금지, 항상 Brix 또는 g 병기. Brix가 goodBrix 미만이면 어휘 자체 금지.
+
+[v9 신규] 6차 리서치 반영:
+- 규칙 44: 막연 표현("많이/인기/빠른") 금지 — 구체 수치로 치환. 수치 없으면 표현 자체 삭제.
+- 규칙 45: story 3막 미니 서사 (먹기 전 → 한 입 → 여운), 문장 사이 '\\n\\n'
+- 규칙 46: highlightBox는 슬로건 형(예상 밖 조합 + 6~15자)
+- 규칙 47: keyPoints 중 최소 1건은 안심 요소(환불 조건/CS 시간/배송 봉인 등)
+- 규칙 48: 오감 5개 중 최소 3개를 서로 다른 필드에 분산
 
 출력은 시스템 프롬프트에 명시된 JSON 스키마만 그대로 반환하세요.`}]),l=Math.min(4e3,Math.max(2e3,Math.ceil(4*JSON.stringify(e).length))),u=await o.messages.create({model:this.modelId,system:h,max_tokens:l,messages:s}),b=u.content.find(e=>"text"===e.type);if(!b||"text"!==b.type)throw Error("EMPTY_RESPONSE");let c=(0,f.eg)(b.text),M=(0,f.dr)(c),p=u.usage?.input_tokens??0,v=u.usage?.output_tokens??0,k="max_tokens"===u.stop_reason,B=m(this.modelId,p)+y(this.modelId,v);return{output:M,usage:{inputTokens:p,outputTokens:v,estimatedCostKRW:Number.isFinite(B)?B:0,truncated:k},modelId:this.modelId}}async suggestSellingPoints(e){let t,i=await this.createClient(),r=(t={...e,productType:x(e.productType),variety:e.variety?x(e.variety):void 0,origin:e.origin?x(e.origin):void 0,weight:e.weight?x(e.weight):void 0},[{role:"user",content:`입력 데이터 (JSON):
 ${JSON.stringify(t,null,2)}
