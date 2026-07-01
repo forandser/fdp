@@ -194,6 +194,8 @@ export function ResultView({
   busySection,
 }: ResultViewProps) {
   const [enhance, setEnhance] = useState(true)
+  /** v2.3: 편집 모드 토글 — off면 다시 버튼/편집 UI 완전 감춤 (진짜 상세페이지처럼) */
+  const [editMode, setEditMode] = useState(false)
   const captureRef = useRef<HTMLDivElement>(null)
   /** v1.9: 폭 프리셋 토글 — 셀러 플랫폼 폭에 맞게 캡처. */
   const [widthPreset, setWidthPreset] = useState<WidthPresetKey>("smartstore-860")
@@ -249,6 +251,7 @@ export function ResultView({
 
   const renderRegen = (sectionId: SectionId) => {
     if (!onSectionRegenerate) return null
+    if (!editMode) return null
     return (
       <RegenButton
         sectionId={sectionId}
@@ -353,14 +356,8 @@ export function ResultView({
               />
             </div>
 
-            {/* 1. WHY HEADER + Compact POINT cards */}
-            <WhyHeader
-              productName={productName}
-              keyPoints={keyPoints}
-              copy={copy}
-              onCopyChange={onCopyChange}
-              isMobile={isMobile}
-            />
+            {/* v2.3: mini POINT 카드 제거된 헤더만 (KeyPointsBig와 중복 방지) */}
+            <WhyHeader productName={productName} isMobile={isMobile} />
 
             {/* 1a. TRUST BADGES */}
             {trust && <TrustBadgesRow trust={trust} />}
@@ -609,6 +606,35 @@ export function ResultView({
 
         <ActionButton onClick={onRetry}>{t.detail.result.retry}</ActionButton>
 
+        {/* v2.3: 다시 버튼 토글 — off면 "🔄 다시" 버튼 감춰서 진짜 상세페이지처럼 */}
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            padding: "10px 12px",
+            background: editMode ? "#FFF5F5" : "var(--color-bg-subtle)",
+            border: `1px solid ${editMode ? RED : "var(--color-neutral-300)"}`,
+            borderRadius: 8,
+            cursor: "pointer",
+            fontSize: 13,
+            fontWeight: 700,
+            color: editMode ? RED : "var(--color-neutral-700)",
+          }}
+        >
+          <span>🔄 재생성 버튼 표시</span>
+          <input
+            type="checkbox"
+            checked={editMode}
+            onChange={(e) => setEditMode(e.target.checked)}
+            style={{ accentColor: RED, width: 18, height: 18 }}
+          />
+        </label>
+        <p style={{ fontSize: 11, color: "var(--color-neutral-600)", margin: "-6px 0 0", lineHeight: 1.5 }}>
+          텍스트 편집은 언제든 미리보기 위 텍스트를 클릭하면 됩니다. 이 토글은 각 섹션의 "🔄 다시" 버튼 노출 여부만 조절합니다.
+        </p>
+
         {/* v2.1: 나머지 옵션은 "고급 설정" details로 접기 */}
         <details style={{ marginTop: 4 }}>
           <summary
@@ -722,15 +748,9 @@ export function ResultView({
 
 function WhyHeader({
   productName,
-  keyPoints,
-  copy,
-  onCopyChange,
   isMobile,
 }: {
   productName: string
-  keyPoints: CopyKeyPoint[]
-  copy: CopyOutput
-  onCopyChange: (next: CopyOutput) => void
   isMobile: boolean
 }) {
   return (
@@ -770,84 +790,7 @@ function WhyHeader({
         </p>
       </div>
 
-      {keyPoints.length > 0 ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {keyPoints.map((p, i) => (
-            <div
-              key={`kp-compact-${i}`}
-              style={{
-                display: "flex",
-                alignItems: "stretch",
-                gap: 0,
-                background: "#FFFFFF",
-                border: `1px solid ${LINE}`,
-                borderLeft: `4px solid ${RED}`,
-                borderRadius: 4,
-                overflow: "hidden",
-              }}
-            >
-              <span
-                style={{
-                  flexShrink: 0,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  minWidth: 72,
-                  padding: isMobile ? "10px 8px" : "12px 10px",
-                  background: RED,
-                  color: "#FFF",
-                  fontSize: isMobile ? 10 : 11,
-                  fontWeight: 800,
-                  letterSpacing: 1.5,
-                  fontFamily: HEAD_SANS,
-                  flexDirection: "column",
-                  gap: 2,
-                }}
-              >
-                <span style={{ fontSize: 9, opacity: 0.85 }}>POINT</span>
-                <span style={{ fontSize: isMobile ? 18 : 22, fontWeight: 900 }}>
-                  {p.num}
-                </span>
-              </span>
-              <span
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  padding: isMobile ? "12px 16px" : "14px 22px",
-                  fontSize: isMobile ? 15 : 17,
-                  fontWeight: 700,
-                  color: INK,
-                  lineHeight: 1.4,
-                  fontFamily: BODY_FONT,
-                  flex: 1,
-                }}
-              >
-                <EditableResultText
-                  copy={copy}
-                  onChange={onCopyChange}
-                  path={["keyPoints", i, "title"]}
-                  maxLength={40}
-                  placeholder={`핵심 포인트 ${i + 1} 제목`}
-                />
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div
-          style={{
-            padding: "16px 18px",
-            background: BG_SOFT,
-            borderRadius: 12,
-            textAlign: "center",
-            color: PLACEHOLDER,
-            fontSize: 13,
-            fontStyle: "italic",
-          }}
-        >
-          여기에 핵심 포인트 3가지가 들어갑니다
-        </div>
-      )}
+      {/* v2.3: mini POINT 카드 삭제 — 아래 KeyPointsBig와 중복이라 정리 */}
     </div>
   )
 }
@@ -1048,9 +991,6 @@ function StoryBlock({
 }) {
   const hasStory = !!copy.story
   const hasHighlight = !!copy.highlightBox
-  // 드롭캡용 첫 글자 추출
-  const storyText = copy.story ?? ""
-  const firstChar = storyText.trim().charAt(0)
   return (
     <div
       style={{
@@ -1087,26 +1027,7 @@ function StoryBlock({
           margin: "0 auto",
         }}
       >
-        {hasStory && firstChar && (
-          <span
-            aria-hidden
-            style={{
-              position: "absolute",
-              left: isMobile ? 0 : -20,
-              top: -8,
-              fontSize: isMobile ? 56 : 72,
-              color: RED,
-              fontFamily: HEAD_FONT,
-              fontWeight: 900,
-              lineHeight: 1,
-              opacity: 0.12,
-              pointerEvents: "none",
-              userSelect: "none",
-            }}
-          >
-            {firstChar}
-          </span>
-        )}
+        {/* v2.3: 드롭캡 워터마크 삭제 — 첫 글자 반투명 표기가 아마추어 느낌을 줌 */}
         <p
           style={{
             fontSize: isMobile ? 16 : 18,
@@ -1266,21 +1187,6 @@ function GalleryBlock({
   )
 }
 
-/** spec label 기반 아이콘 매핑. 라벨 부분 일치(포함)로 결정. */
-function iconForSpecLabel(label: string): string {
-  const l = label.trim()
-  if (/(산지|원산지|지역)/.test(l)) return "🏠"
-  if (/(품종|종류|품목)/.test(l)) return "🍑"
-  if (/(중량|용량|수량|박스|개수|과수)/.test(l)) return "⚖️"
-  if (/(당도|Brix|brix|맛)/.test(l)) return "🌡"
-  if (/(등급|선별|규격)/.test(l)) return "⭐"
-  if (/(보관|냉장|냉동)/.test(l)) return "❄️"
-  if (/(수확|출하)/.test(l)) return "📅"
-  if (/(인증|GAP|친환경|유기|무농약)/.test(l)) return "✅"
-  if (/(배송|발송|택배)/.test(l)) return "📦"
-  return "🍃"
-}
-
 function SpecBlock({
   copy,
   onCopyChange,
@@ -1312,10 +1218,9 @@ function SpecBlock({
             gap: 8,
           }}
         >
+          {/* v2.3: 이모지 아이콘 삭제, 카드 테두리 얇은 회색, 라벨/값 리듬 통일 */}
           {copy.spec.map((s, i) => {
-            const icon = iconForSpecLabel(s.label)
             const isSweetness = /(당도|Brix|brix)/.test(s.label)
-            // "13Brix" / "13 Brix" / "13brix" 같은 값에서 숫자/단위 분리
             const sweetnessMatch = isSweetness && s.value
               ? s.value.trim().match(/^(\d+(?:\.\d+)?)\s*([A-Za-z가-힣]+)?/)
               : null
@@ -1324,30 +1229,25 @@ function SpecBlock({
                 key={`spec-${i}`}
                 style={{
                   background: "#FFFFFF",
-                  border: `1px solid ${RED}`,
-                  borderRadius: 10,
-                  padding: 16,
+                  border: `1px solid ${LINE}`,
+                  borderRadius: 12,
+                  padding: "20px 22px",
                   display: "flex",
                   flexDirection: "column",
-                  gap: 6,
+                  gap: 10,
                   minWidth: 0,
                 }}
               >
                 <div
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    fontSize: 13,
+                    fontSize: 12,
                     color: SUB,
-                    fontWeight: 600,
+                    fontWeight: 700,
                     fontFamily: BODY_FONT,
+                    letterSpacing: 0.5,
                   }}
                 >
-                  <span aria-hidden style={{ fontSize: 14, lineHeight: 1 }}>
-                    {icon}
-                  </span>
-                  <span>{s.label}</span>
+                  {s.label}
                 </div>
                 {isSweetness && sweetnessMatch ? (
                   <div
@@ -1360,7 +1260,7 @@ function SpecBlock({
                       fontFamily: HEAD_FONT,
                     }}
                   >
-                    <span style={{ fontSize: 48, fontWeight: 900, letterSpacing: -1 }}>
+                    <span style={{ fontSize: 44, fontWeight: 900, letterSpacing: -1 }}>
                       {sweetnessMatch[1]}
                     </span>
                     <span
@@ -1864,8 +1764,6 @@ function RecommendForBlock({
   items: string[]
   isMobile: boolean
 }) {
-  // 항목별 좌측 컬러 점
-  const DOT_COLORS = [RED, "#F59F00", "#37B24D", "#1C7ED6", "#AE3EC9", "#F76707"]
   return (
     <div
       style={{
@@ -1877,7 +1775,7 @@ function RecommendForBlock({
       <div
         style={{
           background: "#FFFFFF",
-          borderRadius: 4,
+          borderRadius: 12,
           border: `1px solid ${LINE}`,
           padding: isMobile ? "20px 22px" : "28px 32px",
           display: "flex",
@@ -1890,44 +1788,39 @@ function RecommendForBlock({
             key={`r-${i}`}
             style={{
               display: "flex",
-              alignItems: "center",
-              gap: 14,
+              alignItems: "flex-start",
+              gap: 12,
               fontSize: isMobile ? 15 : 17,
               color: INK,
-              lineHeight: 1.5,
+              lineHeight: 1.55,
               fontFamily: BODY_FONT,
               paddingBottom: i < Math.min(items.length, 6) - 1 ? 12 : 0,
               borderBottom:
                 i < Math.min(items.length, 6) - 1
-                  ? `1px dashed ${LINE}`
+                  ? `1px solid ${LINE}`
                   : "none",
             }}
           >
-            {/* 좌측 컬러 점 */}
+            {/* v2.3: 색점 삭제 → 체크 아이콘 하나만 */}
             <span
               aria-hidden
               style={{
                 flexShrink: 0,
-                width: 10,
-                height: 10,
+                marginTop: 2,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 20,
+                height: 20,
                 borderRadius: "50%",
-                background: DOT_COLORS[i % DOT_COLORS.length],
-                boxShadow: `0 0 0 3px ${DOT_COLORS[i % DOT_COLORS.length]}22`,
-              }}
-            />
-            {/* 손글씨 풍 ★ */}
-            <span
-              style={{
-                flexShrink: 0,
-                color: RED,
-                fontSize: isMobile ? 22 : 26,
+                background: RED,
+                color: "#FFFFFF",
+                fontSize: 12,
+                fontWeight: 900,
                 lineHeight: 1,
-                fontFamily: HANDWRITING_FONT,
-                fontWeight: 700,
               }}
-              aria-hidden
             >
-              ★
+              ✓
             </span>
             <span style={{ fontWeight: 600 }}>{it}</span>
           </div>
@@ -1950,14 +1843,13 @@ function FarmStoryBlock({
   const hasProducer = !!(trust?.producerName || trust?.producerRegion || trust?.farmerYears)
   const farmerMeta = hasProducer
     ? [
-        trust!.farmerYears ? `${trust!.farmerYears}년차` : null,
+        trust!.farmerYears && trust!.farmerYears > 0 ? `${trust!.farmerYears}년차` : null,
         trust!.producerRegion || null,
         trust!.producerName ? `${trust!.producerName} 농가` : null,
       ]
         .filter(Boolean)
         .join(" ")
     : "20년차 청송 김 농부"
-  const initial = (farmerMeta.match(/[가-힣A-Za-z]/)?.[0] ?? "농").toUpperCase()
   return (
     <div
       style={{
@@ -1981,53 +1873,20 @@ function FarmStoryBlock({
 
       <div
         style={{
-          padding: isMobile ? "24px 20px" : "32px 32px",
-          background: `linear-gradient(135deg, ${WARM_BEIGE} 0%, ${SOFT_GREEN} 100%)`,
-          borderRadius: 4,
-          border: `1px dashed ${RED}`,
+          padding: isMobile ? "28px 24px" : "36px 40px",
+          background: BG_SOFT,
+          borderRadius: 12,
+          border: `1px solid ${LINE}`,
           position: "relative",
         }}
       >
         <div
           style={{
             display: "flex",
-            flexDirection: "row",
-            alignItems: "flex-start",
-            gap: 14,
+            flexDirection: "column",
+            gap: 12,
           }}
         >
-          {/* 좌측 농부 자리 — 40x40 원형, 회색 placeholder + 첫 글자 */}
-          <div
-            aria-hidden
-            style={{
-              flexShrink: 0,
-              width: 40,
-              height: 40,
-              borderRadius: "50%",
-              background: "#DEE2E6",
-              color: "#495057",
-              border: "2px solid #FFFFFF",
-              boxShadow: "0 2px 6px rgba(0,0,0,0.08)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 16,
-              fontWeight: 800,
-              fontFamily: HEAD_SANS,
-            }}
-          >
-            {initial}
-          </div>
-          {/* 우측 — 손글씨 인용 + 농부 메타 한 줄 */}
-          <div
-            style={{
-              flex: 1,
-              minWidth: 0,
-              display: "flex",
-              flexDirection: "column",
-              gap: 8,
-            }}
-          >
             <p
               style={{
                 fontSize: isMobile ? 26 : 30,
@@ -2076,7 +1935,6 @@ function FarmStoryBlock({
             >
               — {farmerMeta}
             </p>
-          </div>
         </div>
       </div>
     </div>

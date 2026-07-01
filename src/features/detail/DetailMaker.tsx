@@ -102,12 +102,10 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   const [images, setImages] = useState<UploadedImage[]>([])
   const [category, setCategory] = useState<ProductCategory>("fruit")
   const [productName, setProductName] = useState("")
-  const [price, setPrice] = useState("")
   const [variety, setVariety] = useState("")
   const [origin, setOrigin] = useState("")
   const [weight, setWeight] = useState("")
   const [brix, setBrix] = useState("")
-  const [avgWeightG, setAvgWeightG] = useState("")
   const [sizeGrade, setSizeGrade] = useState("")
   const [extraDescription, setExtraDescription] = useState("")
   const [farmIntro, setFarmIntro] = useState("")
@@ -178,13 +176,6 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       setWeight(kg)
     }
     if (!brix.trim()) setBrix(String(fact.goodBrix))
-    if (!price.trim()) {
-      // 대충 시장 가격 견적
-      const guess = fact.name === "샤인머스캣" || fact.name === "체리" ? 39000
-        : fact.name === "딸기" ? 29000
-        : 19900
-      setPrice(String(guess))
-    }
     if (!sizeGrade.trim()) setSizeGrade("특")
     if (!farmIntro.trim() && fact.hookHeadlines[0]) setFarmIntro(fact.hookHeadlines[0])
     // 추가 설명에 감각어 살짝
@@ -273,7 +264,6 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         setImages(restored)
         setCategory(input.category)
         setProductName(input.productType)
-        setPrice(String(input.price ?? ""))
         setVariety(input.variety ?? "")
         setOrigin(input.origin ?? "")
         setWeight(input.weight ?? "")
@@ -288,7 +278,7 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         if (work.copy) {
           setResult(work.copy)
           setResultMeta({
-            priceNum: input.price,
+            priceNum: 0,
             productName: input.productType,
             origin: input.origin,
             weight: input.weight,
@@ -316,7 +306,7 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   }, [])
 
   const hasMin =
-    images.length >= 1 && productName.trim() && price.trim() && isOrdinaryProduce
+    images.length >= 1 && productName.trim() && isOrdinaryProduce
 
   /** v2.2: 사용자 입력 감지 — 아무것도 안 넣었으면 데모 카피 표시. */
   const hasUserInput = useMemo(() => {
@@ -327,7 +317,6 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       origin.trim().length > 0 ||
       weight.trim().length > 0 ||
       brix.trim().length > 0 ||
-      price.trim().length > 0 ||
       farmIntro.trim().length > 0 ||
       extraDescription.trim().length > 0 ||
       presetKeywords.length > 0 ||
@@ -340,7 +329,6 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
     origin,
     weight,
     brix,
-    price,
     farmIntro,
     extraDescription,
     presetKeywords.length,
@@ -365,20 +353,18 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   /** 우측 미리보기에 전달할 메타 — 실제 result가 있으면 그 시점의 값, 없으면 현재 입력. */
   const liveResultMeta = useMemo(() => {
     if (result && resultMeta) return resultMeta
-    const priceNum = Number(price.replace(/[^\d]/g, "")) || 0
     return {
-      priceNum,
+      priceNum: 0,
       productName: productName.trim(),
       origin: origin.trim(),
       weight: weight.trim(),
     }
-  }, [result, resultMeta, price, productName, origin, weight])
+  }, [result, resultMeta, productName, origin, weight])
 
   const handleSubmit = async () => {
     if (!hasMin) {
       if (images.length === 0) setErrorMsg(t.detail.minImages)
       else if (!productName.trim()) setErrorMsg(t.detail.needName)
-      else if (!price.trim()) setErrorMsg(t.detail.needPrice)
       return
     }
 
@@ -393,8 +379,6 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
     if (extraDescription.trim()) {
       allKeywords.push(`상품 추가 설명: ${extraDescription.trim()}`)
     }
-
-    const priceNum = Number(price.replace(/[^\d]/g, ""))
 
     const trustData: TrustInfo | undefined =
       producerName.trim() || producerRegion.trim() || farmerYears.trim()
@@ -411,9 +395,8 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       variety: variety.trim() || undefined,
       origin: origin.trim(),
       weight: weight.trim(),
-      price: priceNum,
+      price: 0,
       brix: brix.trim() ? Number(brix) : undefined,
-      avgWeightG: avgWeightG.trim() ? Number(avgWeightG) : undefined,
       sizeGrade: sizeGrade.trim() || undefined,
       farmIntro: farmIntro.trim() || undefined,
       trust: trustData,
@@ -428,7 +411,7 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       setResult(res.output)
       setCurrentInput(input)
       setResultMeta({
-        priceNum,
+        priceNum: 0,
         productName: productName.trim(),
         origin: origin.trim(),
         weight: weight.trim(),
@@ -766,16 +749,6 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
               </details>
             )}
           </Field>
-          <Field label={t.detail.field.priceRequired}>
-            <input
-              type="text"
-              inputMode="numeric"
-              value={price ? Number(price).toLocaleString("ko-KR") : ""}
-              onChange={(e) => setPrice(e.target.value.replace(/[^\d]/g, ""))}
-              placeholder={t.detail.field.pricePh}
-              style={inputStyle}
-            />
-          </Field>
           <Field label={t.detail.field.weight}>
             <input
               type="text"
@@ -812,16 +785,6 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
               style={inputStyle}
             />
           </Field>
-          <Field label="개당 평균 g (선택)">
-            <input
-              type="text"
-              inputMode="numeric"
-              value={avgWeightG}
-              onChange={(e) => setAvgWeightG(e.target.value.replace(/[^\d]/g, ""))}
-              placeholder="예) 300"
-              style={inputStyle}
-            />
-          </Field>
           <Field label="등급 표기 (선택)">
             <input
               type="text"
@@ -846,7 +809,7 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
           origin={origin}
           weight={weight}
           brix={brix.trim() ? Number(brix) : undefined}
-          price={price.trim() ? Number(price) : undefined}
+          price={undefined}
           tone={tone}
         />
       </Step>
@@ -925,7 +888,7 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
           origin={origin}
           weight={weight}
           brix={brix.trim() ? Number(brix) : undefined}
-          price={price.trim() ? Number(price) : undefined}
+          price={undefined}
           tone={tone}
           trust={trustForPreview}
           customKeywords={customKeywords}

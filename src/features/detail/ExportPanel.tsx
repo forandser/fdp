@@ -24,6 +24,7 @@ const WIDTH_PRESETS: { value: WidthPreset; label: string }[] = [
 export function ExportPanel({ targetRef, baseName }: ExportPanelProps) {
   const [width, setWidth] = useState<WidthPreset>(860)
   const [slice, setSlice] = useState<SliceMode>("sections")
+  const [targetSliceHeight, setTargetSliceHeight] = useState<number>(3000)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{ kind: "success" | "error"; text: string } | null>(
     null,
@@ -37,6 +38,7 @@ export function ExportPanel({ targetRef, baseName }: ExportPanelProps) {
       const result = await exportNodeAsSlicedJpg(targetRef.current, {
         width,
         mode: slice,
+        targetSliceHeight,
         quality: 0.92,
         pixelRatio: 2,
         baseName,
@@ -138,6 +140,44 @@ export function ExportPanel({ targetRef, baseName }: ExportPanelProps) {
           </p>
         )}
       </div>
+
+      {slice === "sections" && (
+        <div>
+          <label
+            style={{
+              display: "block",
+              fontSize: "var(--font-size-sm)",
+              fontWeight: 600,
+              color: "var(--color-neutral-900)",
+              marginBottom: 6,
+            }}
+          >
+            장당 목표 세로 크기
+          </label>
+          <select
+            value={targetSliceHeight}
+            onChange={(e) => setTargetSliceHeight(Number(e.target.value))}
+            disabled={busy}
+            style={selectStyle}
+          >
+            <option value={2000}>2000px (짧게 · 파일 많음)</option>
+            <option value={3000}>3000px (권장 · 쿠팡·스마트스토어 기본)</option>
+            <option value={4000}>4000px (길게 · 컬리·자사몰)</option>
+            <option value={5000}>5000px (매우 길게)</option>
+          </select>
+          <p
+            style={{
+              marginTop: 6,
+              fontSize: 11,
+              color: "var(--color-neutral-600)",
+              lineHeight: 1.5,
+            }}
+          >
+            섹션 사이의 자연 경계에서 자르기 때문에 실제 크기는 이 값보다 약간 작을 수 있어요.
+            내용이 중간에 잘리지 않아요.
+          </p>
+        </div>
+      )}
 
       <button
         type="button"

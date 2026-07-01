@@ -17,8 +17,14 @@ export type SliceMode = "single" | "sections"
 export interface ExportSliceOptions {
   /** 출력 가로 폭 (px) */
   width: number
-  /** "single" = 한 장, "sections" = 직속 자식 노드 단위 */
+  /** "single" = 한 장, "sections" = 자연 경계에서 자름 (targetSliceHeight 근처) */
   mode: SliceMode
+  /**
+   * "sections" 모드 목표 슬라이스 세로 픽셀. 실제 슬라이스는 이 값을 넘지 않으면서
+   * 가장 많은 섹션을 묶어 자른다 (섹션 중간 절단 방지).
+   * 미지정 시 3000px.
+   */
+  targetSliceHeight?: number
   /** JPG 품질 0~1 */
   quality?: number
   /** 픽셀 비율 (1 또는 2). 메모리 부족 위험 있을 때 1 */
@@ -89,11 +95,12 @@ export async function exportNodeAsSlicedJpg(
       return { fileCount: 1, totalBytes: blob.size }
     }
 
-    // "sections" 모드: clone 직속 자식들을 각각 캡처
+    // "sections" 모드: clone 직속 자식들을 targetSliceHeight(기본 3000px) 근처에서
+    // 자연 경계(섹션 사이)로 묶어 캡처. 콘텐츠 중간 절단 방지.
+    const target = opts.targetSliceHeight ?? 3000
     const children = Array.from(
       clone.querySelectorAll<HTMLElement>(":scope > *"),
     ).filter((el) => {
-      // 빈 노드/높이 0인 노드는 스킵
       const rect = el.getBoundingClientRect()
       return rect.height > 0 && rect.width > 0
     })
@@ -110,22 +117,66 @@ export async function exportNodeAsSlicedJpg(
       return { fileCount: 1, totalBytes: blob.size }
     }
 
-    const pad = children.length >= 100 ? 3 : 2
-    for (let i = 0; i < children.length; i++) {
-      const child = children[i]
-      const canvas = await toCanvas(child, {
-        pixelRatio,
-        backgroundColor: "#ffffff",
-        cacheBust: false,
-      })
-      const blob = await canvasToJpegBlob(canvas, quality)
-      const num = String(i + 1).padStart(pad, "0")
-      downloadBlob(`${baseName}_${num}.jpg`, blob)
-      totalBytes += blob.size
-      fileCount += 1
+    // 그리디 그룹화: 각 그룹의 누적 높이가 target을 넘지 않도록 섹션을 묶음.
+    // 한 섹션이 target보다 크면 단독 그룹으로 처리 (자연 경계 유지).
+    const groups: HTMLElement[][] = []
+    let curr: HTMLElement[] = []
+    let currH = 0
+    for (const el of children) {
+      const h = el.getBoundingClientRect().height
+      if (curr.length > 0 && currH + h > target) {
+        groups.push(curr)
+        curr = []
+        currH = 0
+      }
+      curr.push(el)
+      currH += h
+    }
+    if (curr.length > 0) groups.push(curr)
 
-      // 브라우저가 다운로드를 모두 받도록 약간의 텀
-      if (i < children.length - 1) {
+    const pad = groups.length >= 100 ? 3 : 2
+
+    // 각 그룹을 임시 wrapper에 담아 캡처 (원본 clone 훼손 없음)
+    for (let i = 0; i < groups.length; i++) {
+      const group = groups[i]
+
+      const groupWrapper = document.createElement("div")
+      groupWrapper.style.width = "100%"
+      groupWrapper.style.background = "#ffffff"
+      groupWrapper.style.display = "block"
+
+      // 그룹 요소들을 임시 wrapper로 이동 (다시 원위치)
+      const originalParents: { el: HTMLElement; nextSibling: Node | null }[] = []
+      for (const el of group) {
+        originalParents.push({ el, nextSibling: el.nextSibling })
+        groupWrapper.appendChild(el)
+      }
+      clone.appendChild(groupWrapper)
+
+      try {
+        // 폰트/이미지 재로드 대기 (안전용)
+        await new Promise((r) => requestAnimationFrame(() => r(null)))
+
+        const canvas = await toCanvas(groupWrapper, {
+          pixelRatio,
+          backgroundColor: "#ffffff",
+          cacheBust: false,
+        })
+        const blob = await canvasToJpegBlob(canvas, quality)
+        const num = String(i + 1).padStart(pad, "0")
+        downloadBlob(`${baseName}_${num}.jpg`, blob)
+        totalBytes += blob.size
+        fileCount += 1
+      } finally {
+        // 원래 위치로 복원
+        clone.removeChild(groupWrapper)
+        for (const { el, nextSibling } of originalParents) {
+          if (nextSibling) clone.insertBefore(el, nextSibling)
+          else clone.appendChild(el)
+        }
+      }
+
+      if (i < groups.length - 1) {
         await new Promise((r) => setTimeout(r, 250))
       }
     }
