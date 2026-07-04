@@ -48,8 +48,25 @@ export interface CopyInput {
   recommendFor?: string[]
   /** 신뢰 옵션 — 셀러가 토글/입력한 사실만 반영. */
   trust?: TrustInfo
+  /**
+   * 고객 후기 — 셀러가 실제로 받은 후기만 직접 입력(AI 생성 금지).
+   * ResultView의 ReviewsBlock이 렌더. 저장 하위호환: 구버전엔 없음(옵셔널).
+   */
+  reviews?: SellerReview[]
   /** 일반 농산물 확인 게이트 (건강기능식품/숙취해소 표시 상품 제외). v1.8 식약처 §10 보호. */
   isOrdinaryProduce?: boolean
+}
+
+/**
+ * 셀러가 직접 입력한 고객 후기 1건.
+ * - text: 후기 본문 (최대 200자).
+ * - highlight: text 안에서 형광펜(accent 배경)으로 강조할 핵심 문장(선택).
+ *   text에 포함된 부분 문자열이어야 강조가 붙는다(없으면 강조 없이 본문만 노출).
+ * AI가 절대 생성하지 않는다 — 실제 받은 후기만 셀러가 입력.
+ */
+export interface SellerReview {
+  text: string
+  highlight?: string
 }
 
 /** 신뢰 옵션 — 셀러가 직접 체크/입력한 사실. AI가 임의로 추가 못 함. */

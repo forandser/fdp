@@ -13,6 +13,7 @@ import type {
   CopySpec,
   CopyTone,
   ProductCategory,
+  SellerReview,
   TrustInfo,
 } from "@/lib/ai/types"
 import {
@@ -116,6 +117,11 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   const [sameDayHarvest, setSameDayHarvest] = useState(false)
   const [coldChain, setColdChain] = useState(false)
   const [refundGuarantee, setRefundGuarantee] = useState(false)
+  /**
+   * 고객 후기 — 셀러가 실제 받은 후기만 직접 입력(AI 생성 금지). 최대 3개.
+   * 저장/복원 하위호환: 구버전 저장본엔 input.reviews 없음(옵셔널).
+   */
+  const [reviews, setReviews] = useState<SellerReview[]>([])
   const [presetKeywords, setPresetKeywords] = useState<string[]>([])
   const [customKeywords, setCustomKeywords] = useState<string[]>([])
   const tone: CopyTone = "sincere"
@@ -283,6 +289,12 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         setSameDayHarvest(!!input.trust?.sameDayHarvest)
         setColdChain(!!input.trust?.coldChain)
         setRefundGuarantee(input.trust?.refundGuarantee === true)
+        // 고객 후기 복원 — 구버전 저장본엔 없음(하위호환).
+        setReviews(
+          Array.isArray(input.reviews)
+            ? input.reviews.filter((r) => r && typeof r.text === "string")
+            : [],
+        )
         setExtraDescription(extra)
         setPresetKeywords(preset)
         setCustomKeywords(custom)
@@ -412,6 +424,15 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         }
       : undefined
 
+    // 고객 후기 — 본문 있는 것만(최대 3개), 200자 컷. 셀러 직접 입력(AI 생성 아님).
+    const cleanReviews: SellerReview[] = reviews
+      .map((r) => ({
+        text: r.text.trim().slice(0, 200),
+        highlight: r.highlight?.trim().slice(0, 200) || undefined,
+      }))
+      .filter((r) => r.text.length > 0)
+      .slice(0, 3)
+
     const input: CopyInput = {
       category,
       productType: productName.trim(),
@@ -423,6 +444,7 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       sizeGrade: sizeGrade.trim() || undefined,
       farmIntro: farmIntro.trim() || undefined,
       trust: trustData,
+      reviews: cleanReviews.length > 0 ? cleanReviews : undefined,
       highlightKeywords: allKeywords,
       recommendBadge: undefined,
       tone: "sincere",
@@ -827,6 +849,10 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         />
         <div style={{ height: 12 }} />
 
+        {/* 고객 후기 (선택) — 실제 받은 후기만 직접 입력(AI 생성 아님). 최대 3개. */}
+        <ReviewsInput reviews={reviews} onChange={setReviews} />
+        <div style={{ height: 12 }} />
+
         {/* 농부 정식 정보 (선택) — 신뢰 카드용. v1.8 */}
         <details style={{ marginBottom: 12 }}>
           <summary
@@ -975,6 +1001,7 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         origin={liveResultMeta.origin}
         weight={liveResultMeta.weight}
         trust={currentInput?.trust ?? trustForPreview}
+        reviews={currentInput?.reviews ?? reviews}
         onCopyChange={handleCopyChange}
         onSectionRegenerate={result ? handleSectionRegenerate : undefined}
         busySection={busySection}
@@ -1248,6 +1275,182 @@ function TrustPromiseChecks({
           </label>
         ))}
       </div>
+    </div>
+  )
+}
+
+/**
+ * 고객 후기 입력 — 셀러가 실제 받은 후기만 직접 입력(AI 생성 금지). 최대 3개.
+ * 각 후기: 본문(최대 200자) + 강조할 핵심 문장(선택).
+ * "실제 받은 후기만 넣어주세요 — 지어내면 안 돼요" 안내를 명시.
+ */
+const REVIEW_MAX = 3
+const REVIEW_TEXT_MAX = 200
+
+function ReviewsInput({
+  reviews,
+  onChange,
+}: {
+  reviews: SellerReview[]
+  onChange: (next: SellerReview[]) => void
+}) {
+  const c = t.detail.reviews
+  const update = (idx: number, patch: Partial<SellerReview>) => {
+    onChange(reviews.map((r, i) => (i === idx ? { ...r, ...patch } : r)))
+  }
+  const add = () => {
+    if (reviews.length >= REVIEW_MAX) return
+    onChange([...reviews, { text: "" }])
+  }
+  const remove = (idx: number) => {
+    onChange(reviews.filter((_, i) => i !== idx))
+  }
+
+  return (
+    <div
+      style={{
+        padding: "14px 16px",
+        border: "1px solid var(--color-neutral-100)",
+        borderRadius: "var(--radius-xs)",
+        background: "var(--color-bg-surface)",
+      }}
+    >
+      <div
+        style={{
+          fontSize: "var(--font-size-sm)",
+          fontWeight: 700,
+          color: "var(--color-neutral-900)",
+          marginBottom: 4,
+        }}
+      >
+        {c.title}
+      </div>
+      <p
+        style={{
+          fontSize: "var(--font-size-xs)",
+          color: "var(--color-danger)",
+          margin: "0 0 12px",
+          lineHeight: 1.5,
+          fontWeight: 600,
+        }}
+      >
+        {c.hint}
+      </p>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {reviews.map((r, i) => (
+          <div
+            key={`review-input-${i}`}
+            style={{
+              border: "1px solid var(--color-neutral-100)",
+              borderRadius: "var(--radius-xs)",
+              padding: "12px 12px",
+              background: "var(--color-bg-subtle)",
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: "var(--font-size-sm)",
+                  fontWeight: 700,
+                  color: "var(--color-neutral-900)",
+                }}
+              >
+                {c.textLabel.replace("{n}", String(i + 1))}
+              </span>
+              <button
+                type="button"
+                onClick={() => remove(i)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "var(--color-danger)",
+                  fontSize: "var(--font-size-xs)",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  padding: "2px 4px",
+                }}
+              >
+                {c.remove}
+              </button>
+            </div>
+            <textarea
+              value={r.text}
+              onChange={(e) => update(i, { text: e.target.value.slice(0, REVIEW_TEXT_MAX) })}
+              placeholder={c.textPh}
+              rows={2}
+              maxLength={REVIEW_TEXT_MAX}
+              style={{
+                ...inputStyle,
+                resize: "vertical",
+                fontFamily: "inherit",
+                lineHeight: 1.5,
+              }}
+            />
+            <div style={{ fontSize: 10, color: "var(--color-neutral-500)", textAlign: "right" }}>
+              {r.text.length} / {REVIEW_TEXT_MAX}
+            </div>
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span
+                style={{
+                  fontSize: "var(--font-size-xs)",
+                  fontWeight: 600,
+                  color: "var(--color-neutral-700)",
+                }}
+              >
+                {c.highlightLabel}
+              </span>
+              <input
+                type="text"
+                value={r.highlight ?? ""}
+                onChange={(e) => update(i, { highlight: e.target.value.slice(0, REVIEW_TEXT_MAX) })}
+                placeholder={c.highlightPh}
+                style={inputStyle}
+              />
+            </label>
+            <p
+              style={{
+                fontSize: 10,
+                color: "var(--color-neutral-500)",
+                margin: 0,
+                lineHeight: 1.4,
+              }}
+            >
+              {c.highlightHint}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      {reviews.length < REVIEW_MAX && (
+        <button
+          type="button"
+          onClick={add}
+          style={{
+            marginTop: reviews.length > 0 ? 12 : 0,
+            width: "100%",
+            padding: "10px 12px",
+            background: "var(--color-bg-subtle)",
+            border: "1px dashed var(--color-neutral-300)",
+            borderRadius: "var(--radius-xs)",
+            color: "var(--color-neutral-700)",
+            fontSize: "var(--font-size-sm)",
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          {c.add}
+        </button>
+      )}
     </div>
   )
 }

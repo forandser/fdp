@@ -112,6 +112,18 @@ export const ko = {
       coldChain: "아이스팩·콜드체인 포장이에요",
       refundGuarantee: "문제 시 100% 환불을 보장해요",
     },
+    /** 고객 후기 입력 — 셀러가 실제 받은 후기만 직접 입력(AI 생성 금지). */
+    reviews: {
+      title: "고객 후기 (선택)",
+      hint: "실제 받은 후기만 넣어주세요 — 지어내면 안 돼요. 최대 3개까지 넣을 수 있어요.",
+      textLabel: "후기 {n}",
+      textPh: "예) 아이가 하나 먹더니 계속 달라고 하네요. 당도가 정말 좋아요!",
+      highlightLabel: "이 후기에서 형광펜으로 강조할 핵심 문장 (선택)",
+      highlightPh: "예) 당도가 정말 좋아요",
+      highlightHint: "후기 본문에 들어있는 문장을 그대로 적으면 그 부분만 강조돼요.",
+      add: "+ 후기 추가",
+      remove: "삭제",
+    },
     suggest: {
       title: "AI 추천 소구점",
       hint: "기본 정보를 보고 한국 농산물 셀러들이 자주 쓰는 표현을 골라드려요. 마음에 드는 것을 눌러 키워드에 추가하세요.",
@@ -182,6 +194,10 @@ export const ko = {
       cautionsTitle: "구매 전 꼭 확인해주세요",
       recommendForTitle: "이런 분께 추천해요",
       farmStoryTitle: "농가의 한 마디",
+      /** 고객 후기 블록 — 셀러가 직접 입력한 후기만 노출(0건이면 블록 미노출). */
+      reviews: {
+        title: "먼저 맛본 분들의 솔직 후기",
+      },
       deliveryTitle: "배송 안내",
       deliveryBody: "주문 확인 후 가장 신선한 상태로 준비해, 영업일 기준 빠르게 발송해 드려요.\n\n완충 포장으로 문 앞까지 신선하게 도착하며, 도서·산간 지역은 1~2일 정도 더 걸릴 수 있어요.",
       /** trust.sameDayHarvest 체크 시에만 노출하는 당일 발송 문구. */

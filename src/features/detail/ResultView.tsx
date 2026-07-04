@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { t } from "@/lib/i18n"
-import type { CopyOutput, CopyKeyPoint, TrustInfo } from "@/lib/ai/types"
+import type { CopyOutput, CopyKeyPoint, TrustInfo, SellerReview } from "@/lib/ai/types"
 import type { SectionId } from "@/lib/ai/section-regenerate"
 import type { UploadedImage } from "./ImageUploader"
 import { ExportPanel } from "./ExportPanel"
@@ -58,6 +58,11 @@ interface ResultViewProps {
   origin?: string
   weight?: string
   trust?: TrustInfo
+  /**
+   * 고객 후기 — 셀러 직접 입력(AI 생성 아님). 0건이면 ReviewsBlock 미노출.
+   * CopyOutput이 아니라 입력 흐름(CopyInput.reviews)에서 내려온다.
+   */
+  reviews?: SellerReview[]
   onRetry: () => void
   onCopyChange: (next: CopyOutput) => void
   onSectionRegenerate?: (sectionId: SectionId) => Promise<void>
@@ -116,6 +121,12 @@ export interface ImagePlan {
   packaging?: UploadedImage
   /** 크기 비교 블록용 — "실제 크기 참고" 사진 1장. 남는 사진이 없으면 undefined. */
   sizeRef?: UploadedImage
+  /**
+   * 임팩트 카피-사진 밀착 블록(SensoryPunch)용 분위기 컷 1장.
+   * galleryPool(아직 안 쓴 사진) 우선, 없으면 hero 재사용 허용(분위기 컷이라 중복 OK).
+   * 사진 자체가 0장이면 undefined.
+   */
+  punch?: UploadedImage
   gallery: UploadedImage[]
 }
 
@@ -137,6 +148,7 @@ export function planImages(
       recipe: Array<UploadedImage | undefined>(recipeCount).fill(undefined),
       packaging: undefined,
       sizeRef: undefined,
+      punch: undefined,
       gallery: [],
     }
   }
@@ -211,11 +223,18 @@ export function planImages(
   // 예전 `rest.slice(...)` 무조건 폴백이 특징+갤러리 전량 중복을 만들던 문제를 제거.
   const unused = rest.filter((img) => (useCount.get(img.id) ?? 0) === 0)
 
+  // SensoryPunch용 분위기 컷 — galleryPool(unused) 첫 장 우선.
+  // unused를 하나 쓰면 갤러리 중복을 피하려고 그 장을 gallery에서 제외한다.
+  // unused가 비면(사진이 특징 슬롯에서 모두 소진 or 1장뿐) hero 재사용 허용
+  // (이 블록은 검정 배경 분위기 컷이라 중복이 튀지 않는다).
+  const punch = unused.length > 0 ? unused[0] : hero
+  const galleryPool = punch && unused.length > 0 ? unused.slice(1) : unused
+
   // v3.1-b: sizeRef 예약 삭제 — 크기와 무관한 사진(비닐하우스 등)에 "실제 크기 참고"
   // 캡션이 붙는 사고가 나서, 남는 사진은 전부 갤러리가 흡수한다.
-  const gallery = unused.slice(0, GALLERY_MAX)
+  const gallery = galleryPool.slice(0, GALLERY_MAX)
 
-  return { hero, whyBrand, keyPoints, recipe, packaging, sizeRef: undefined, gallery }
+  return { hero, whyBrand, keyPoints, recipe, packaging, sizeRef: undefined, punch, gallery }
 }
 
 /** fruit-facts에서 무료로 합류시킬 hookHeadlines 최대 개수 (기획 Should: 2~3개). */
@@ -288,6 +307,74 @@ export function emptyCopy(): CopyOutput {
 /** v2.4: 섹션 구분자 — 사과 이모지·빨강 점 제거, 여백만. */
 function DotDivider() {
   return <div aria-hidden style={{ height: 8, background: "#FFFFFF" }} />
+}
+
+/** 감각어 사전 — 형광펜 강조 문장 자동 감지용(맛·향·식감 표현). */
+const SENSORY_WORDS = [
+  "달", "달콤", "새콤", "꿀", "과즙", "즙", "아삭", "사각", "촉촉", "수분",
+  "향", "진한", "부드럽", "쫄깃", "탱글", "시원", "상큼", "풍미", "팡팡", "가득",
+  "입안", "한입", "베어", "베이", "터지", "녹", "고소",
+]
+
+/**
+ * story 문단에서 형광펜으로 강조할 "핵심(감각) 문장"을 결정적으로 하나 고른다.
+ *
+ * 규칙(지어내지 않고 스타일만):
+ *  1. 문장 단위(마침표·느낌표·물음표·줄바꿈)로 분할.
+ *  2. 느낌표(!)가 있거나 감각어(SENSORY_WORDS)를 포함한 첫 문장을 강조.
+ *  3. 그런 문장이 없으면 두 번째 문장을 기본 강조(안전한 결정적 폴백).
+ *     문장이 1개뿐이면 강조하지 않는다(문단 전체를 칠하지 않기 위해).
+ *
+ * 반환: { before, highlight, after } — before/after는 강조 문장 앞뒤 원문 그대로.
+ *        강조할 문장이 없으면 null(형광펜 없이 문단만 렌더).
+ * 문단당 강조 1개.
+ */
+export function splitStoryHighlight(
+  story: string,
+): { before: string; highlight: string; after: string } | null {
+  const text = story ?? ""
+  if (!text.trim()) return null
+
+  // 문장 끝 구분자(., !, ?, 줄바꿈)를 유지한 채 분할. 각 조각은 원문 그대로.
+  const parts: string[] = []
+  const re = /[^.!?\n]*(?:[.!?]+|\n+|$)/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    if (m[0].length === 0) break
+    parts.push(m[0])
+    if (re.lastIndex >= text.length) break
+  }
+  // 실제 내용이 있는 문장 인덱스만 후보로.
+  const sentences = parts.filter((p) => p.trim().length > 0)
+  if (sentences.length < 2) return null // 한 문장뿐이면 강조 안 함(과도 방지)
+
+  const isSensory = (s: string) =>
+    /!/.test(s) || SENSORY_WORDS.some((w) => s.includes(w))
+
+  let targetTrimmed: string | null = null
+  const firstSensory = sentences.find(isSensory)
+  if (firstSensory) {
+    targetTrimmed = firstSensory
+  } else {
+    // 감지 애매 → 두 번째 문장 기본 강조(결정적 폴백).
+    targetTrimmed = sentences[1] ?? null
+  }
+  if (!targetTrimmed) return null
+
+  // 원문에서 해당 문장의 위치를 찾아 before/highlight/after로 분리.
+  // 앞뒤 공백은 highlight 밖(before/after)에 둔다 — 배경 박스가 공백까지 칠하지 않게.
+  const idx = text.indexOf(targetTrimmed)
+  if (idx < 0) return null
+  const rawHighlight = targetTrimmed
+  const leadWs = rawHighlight.length - rawHighlight.trimStart().length
+  const trailWs = rawHighlight.length - rawHighlight.trimEnd().length
+  const start = idx + leadWs
+  const end = idx + rawHighlight.length - trailWs
+  const before = text.slice(0, start)
+  const highlight = text.slice(start, end)
+  const after = text.slice(end)
+  if (!highlight.trim()) return null
+  return { before, highlight, after }
 }
 
 /**
@@ -434,6 +521,7 @@ export function ResultView({
   origin,
   weight,
   trust,
+  reviews,
   onRetry,
   onCopyChange,
   onSectionRegenerate,
@@ -495,6 +583,18 @@ export function ResultView({
   )
   const heroImage = imagePlan.hero
   const galleryImages = imagePlan.gallery
+
+  /**
+   * 노출할 고객 후기 — 본문이 있는 것만(최대 3개). 0건이면 ReviewsBlock 미노출.
+   * 셀러 직접 입력이라 AI가 만들지 않는다. highlight는 text에 실제로 포함될 때만 강조.
+   */
+  const validReviews = useMemo<SellerReview[]>(() => {
+    if (!reviews || reviews.length === 0) return []
+    return reviews
+      .filter((r) => r && r.text.trim().length > 0)
+      .slice(0, 3)
+      .map((r) => ({ text: r.text.trim(), highlight: r.highlight?.trim() || undefined }))
+  }, [reviews])
 
   const missing = useMemo(() => {
     const m: string[] = []
@@ -740,7 +840,7 @@ export function ResultView({
 
             <DotDivider />
 
-            {/* 3. STORY + HIGHLIGHT BOX */}
+            {/* 3. STORY (형광펜 강조 — 첫 감각 문장 자동 강조) */}
             <StoryBlock
               copy={copy}
               onCopyChange={onCopyChange}
@@ -748,11 +848,30 @@ export function ResultView({
               isMobile={isMobile}
             />
 
+            {/* 3b. SENSORY PUNCH — 검정 배경 임팩트 카피 + 바로 아래 실사진 밀착 (참외 레퍼런스).
+                   highlightBox(기존 StoryBlock 슬로건)를 승격. 비어 있으면 미노출. */}
+            {copy.highlightBox.trim() && (
+              <SensoryPunchBlock
+                copy={copy}
+                onCopyChange={onCopyChange}
+                image={imagePlan.punch}
+                isMobile={isMobile}
+              />
+            )}
+
             {/* 3a. RECOMMEND FOR */}
             {copy.recommendFor && copy.recommendFor.length > 0 && (
               <>
                 <DotDivider />
                 <RecommendForBlock items={copy.recommendFor} isMobile={isMobile} />
+              </>
+            )}
+
+            {/* 3c. REVIEWS — 셀러가 직접 입력한 고객 후기(AI 생성 아님). 0건이면 미노출. */}
+            {validReviews.length > 0 && (
+              <>
+                <DotDivider />
+                <ReviewsBlock reviews={validReviews} isMobile={isMobile} />
               </>
             )}
 
@@ -1565,7 +1684,11 @@ function StoryBlock({
   onRegen: React.ReactNode
   isMobile: boolean
 }) {
+  const accent = useAccent()
   const hasStory = !!copy.story
+  // 형광펜 강조: story에서 첫 감각 문장을 결정적으로 하나 뽑는다(문단당 1개).
+  // 편집은 위 EditableResultText 문단에서 하고, 강조는 그 아래 비편집 콜아웃으로 훑어읽기 지원.
+  const storyHi = useMemo(() => splitStoryHighlight(copy.story), [copy.story])
   return (
     <div
       style={{
@@ -1632,29 +1755,94 @@ function StoryBlock({
             placeholder="한 입 베면 어떤 맛인지, 어떤 향이 나는지 3~5문장으로 적어보세요"
           />
         </p>
+
+        {/*
+          형광펜 강조 콜아웃 — story의 첫 감각 문장을 accent.soft 배경+진한 글씨로 다시 노출.
+          긴 문단에서 "핵심 한 줄"을 훑어 읽게 하는 참외/수플린 레퍼런스 장치.
+          지어내는 것 없이 셀러 원문 문장 그대로. 문장이 1개뿐이거나 감지 실패 시 미노출.
+        */}
+        {storyHi && (
+          <div
+            style={{
+              marginTop: isMobile ? 24 : 34,
+              display: "flex",
+              justifyContent: "center",
+            }}
+          >
+            <span
+              style={{
+                display: "inline-block",
+                background: accent.soft,
+                color: accent.dark,
+                padding: isMobile ? "10px 16px" : "16px 26px",
+                borderRadius: 8,
+                fontSize: isMobile ? 20 : 34,
+                fontWeight: 800,
+                lineHeight: 1.5,
+                fontFamily: BODY_FONT,
+                letterSpacing: -0.3,
+                wordBreak: "keep-all",
+                boxShadow: `inset 0 -0.5em 0 ${accent.soft}`,
+              }}
+            >
+              {storyHi.highlight}
+            </span>
+          </div>
+        )}
       </div>
 
-      {/* v2.5: highlightBox — 초대형 BlackHanSans 슬로건 + 축색 강조 (임팩트 톤) */}
+      {onRegen && (
+        <div data-edit-chrome style={{ display: "flex", justifyContent: "center", marginTop: 14 }}>
+          {onRegen}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * SensoryPunchBlock — 임팩트 카피-사진 밀착 블록 (참외 레퍼런스).
+ *
+ * 검정(#1A1A1A) 풀블리드 배경 + 대형 임팩트 카피(BlackHanSans) + 바로 아래 실사진 1장 밀착.
+ * 카피 소스는 copy.highlightBox(기존 검정 슬로건) — StoryBlock에서 이 블록으로 승격.
+ * highlightBox가 비어 있으면 호출부에서 렌더하지 않는다(게이팅).
+ *
+ * 카피는 accent 색을 입혀(검정 배경 위 대비) 시선 앵커로 만든다 — 지어내는 것 없이
+ * highlightBox 원문 그대로, 스타일만. 편집 가능(highlightBox 경로).
+ * 사진은 imagePlan.punch(분위기 컷, 중복 허용). 없으면 카피만 노출.
+ */
+const PUNCH_BG = "#1A1A1A"
+function SensoryPunchBlock({
+  copy,
+  onCopyChange,
+  image,
+  isMobile,
+}: {
+  copy: CopyOutput
+  onCopyChange: (next: CopyOutput) => void
+  image?: UploadedImage
+  isMobile: boolean
+}) {
+  const accent = useAccent()
+  return (
+    <div style={{ background: PUNCH_BG }}>
+      {/* 임팩트 카피 — 검정 배경 위 대형 BlackHanSans. 편집 가능(highlightBox 경로). */}
       <div
         style={{
-          marginTop: isMobile ? 56 : 88,
-          padding: isMobile ? "44px 24px" : "80px 40px",
-          background: INK,
+          padding: isMobile ? "56px 24px" : "104px 56px",
           textAlign: "center",
-          maxWidth: 760,
-          marginLeft: "auto",
-          marginRight: "auto",
         }}
       >
         <p
           style={{
-            fontSize: isMobile ? 44 : 84,
+            fontSize: isMobile ? 42 : 72,
             fontWeight: 400,
             color: "#FFFFFF",
             margin: 0,
-            lineHeight: 1.15,
+            lineHeight: 1.18,
             fontFamily: DISPLAY_FONT,
             letterSpacing: -1.5,
+            wordBreak: "keep-all",
           }}
         >
           <EditableResultText
@@ -1662,15 +1850,25 @@ function StoryBlock({
             onChange={onCopyChange}
             path={["highlightBox"]}
             maxLength={60}
-            placeholder="한 줄 슬로건 (예: 청송의 겸손한 자랑)"
+            placeholder="한 줄 임팩트 카피 (예: 수분 가득, 과즙 팡팡!)"
+            style={{ color: accent.accent }}
           />
         </p>
       </div>
 
-      {onRegen && (
-        <div data-edit-chrome style={{ display: "flex", justifyContent: "center", marginTop: 14 }}>
-          {onRegen}
-        </div>
+      {/* 바로 아래 실사진 1장 — 카피와 한 몸으로 밀착(꽉 찬 폭). 분위기 컷이라 중복 허용. */}
+      {image && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={image.url}
+          alt=""
+          style={{
+            width: "100%",
+            aspectRatio: isMobile ? "4/3" : "16/9",
+            objectFit: "cover",
+            display: "block",
+          }}
+        />
       )}
     </div>
   )
@@ -2939,6 +3137,121 @@ function RecommendForBlock({
         ))}
       </div>
     </div>
+  )
+}
+
+/**
+ * ReviewsBlock — 고객 후기 (참외/수플린 레퍼런스: 별점 + 후기 문장 + 핵심 문장 형광펜).
+ *
+ * 셀러가 직접 입력한 후기만 노출한다(AI 생성 금지 — reviews는 CopyInput 입력 흐름).
+ * 0건이면 호출부에서 렌더하지 않는다.
+ *
+ * 각 카드: 별 5개 아이콘 + 후기 본문(34px) + highlight가 본문에 포함되면
+ * 그 부분만 accent 배경 형광펜으로 강조. highlight가 본문에 없으면 강조 없이 본문만.
+ */
+function ReviewsBlock({
+  reviews,
+  isMobile,
+}: {
+  reviews: SellerReview[]
+  isMobile: boolean
+}) {
+  const accent = useAccent()
+  return (
+    <div style={{ padding: isMobile ? "48px 24px" : "104px 44px", background: BG_SOFT }}>
+      <SectionTitle title={t.detail.result.reviews.title} isMobile={isMobile} />
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: isMobile ? 14 : 22,
+        }}
+      >
+        {reviews.map((r, i) => (
+          <div
+            key={`review-${i}`}
+            style={{
+              background: "#FFFFFF",
+              borderRadius: 16,
+              border: `1px solid ${LINE}`,
+              padding: isMobile ? "24px 24px" : "40px 44px",
+              display: "flex",
+              flexDirection: "column",
+              gap: isMobile ? 12 : 18,
+            }}
+          >
+            {/* 별 5개 — 항상 5점(셀러가 대표 후기로 고른 것). accent 색 채움. */}
+            <div
+              aria-hidden
+              style={{
+                display: "flex",
+                gap: isMobile ? 3 : 5,
+                fontSize: isMobile ? 20 : 32,
+                color: accent.accent,
+                lineHeight: 1,
+              }}
+            >
+              {"★★★★★"}
+            </div>
+            {/* 후기 본문 — highlight가 본문에 포함되면 그 부분만 형광펜 강조. */}
+            <p
+              style={{
+                fontSize: isMobile ? 20 : 34,
+                color: INK,
+                lineHeight: 1.6,
+                margin: 0,
+                fontFamily: BODY_FONT,
+                fontWeight: 500,
+                wordBreak: "keep-all",
+                whiteSpace: "pre-line",
+              }}
+            >
+              <ReviewBody text={r.text} highlight={r.highlight} accent={accent} />
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 후기 본문 렌더 — highlight가 text에 실제 포함될 때만 그 부분을 accent 배경
+ * 형광펜(진한 글씨)으로 강조한다. 포함되지 않으면 본문 그대로(강조 없음).
+ * 첫 등장 1회만 강조(과도 방지).
+ */
+function ReviewBody({
+  text,
+  highlight,
+  accent,
+}: {
+  text: string
+  highlight?: string
+  accent: AccentPalette
+}) {
+  const hi = highlight?.trim()
+  const idx = hi ? text.indexOf(hi) : -1
+  if (!hi || idx < 0) return <>{text}</>
+  const before = text.slice(0, idx)
+  const after = text.slice(idx + hi.length)
+  return (
+    <>
+      {before}
+      <span
+        style={{
+          background: accent.soft,
+          color: accent.dark,
+          fontWeight: 800,
+          padding: "0.1em 0.25em",
+          borderRadius: 4,
+          boxDecorationBreak: "clone",
+          WebkitBoxDecorationBreak: "clone",
+        }}
+      >
+        {hi}
+      </span>
+      {after}
+    </>
   )
 }
 
