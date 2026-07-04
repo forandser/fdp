@@ -211,13 +211,11 @@ export function planImages(
   // 예전 `rest.slice(...)` 무조건 폴백이 특징+갤러리 전량 중복을 만들던 문제를 제거.
   const unused = rest.filter((img) => (useCount.get(img.id) ?? 0) === 0)
 
-  // sizeRef — 크기 비교 블록용. 미사용 사진이 2장 이상 있을 때만 1장 예약한다.
-  // (미사용이 1장뿐이면 갤러리에 양보 — 크기 참고보다 갤러리 노출이 우선.)
-  const sizeRef = unused.length >= 2 ? unused[0] : undefined
-  const galleryPool = sizeRef ? unused.slice(1) : unused
-  const gallery = galleryPool.slice(0, GALLERY_MAX)
+  // v3.1-b: sizeRef 예약 삭제 — 크기와 무관한 사진(비닐하우스 등)에 "실제 크기 참고"
+  // 캡션이 붙는 사고가 나서, 남는 사진은 전부 갤러리가 흡수한다.
+  const gallery = unused.slice(0, GALLERY_MAX)
 
-  return { hero, whyBrand, keyPoints, recipe, packaging, sizeRef, gallery }
+  return { hero, whyBrand, keyPoints, recipe, packaging, sizeRef: undefined, gallery }
 }
 
 /** fruit-facts에서 무료로 합류시킬 hookHeadlines 최대 개수 (기획 Should: 2~3개). */
@@ -401,12 +399,12 @@ function DeliveryPromiseBand({ isMobile, trust }: { isMobile: boolean; trust?: T
         alignItems: "center",
         justifyContent: "center",
         gap: isMobile ? 8 : 12,
-        background: INK,
-        color: "#FFFFFF",
+        // v3.1-b: 검정 → accent.soft 밝은 톤. CTA(검정 pill)·ValuePropStrip(검정)과
+        // 연달아 검은 덩어리 3개가 쌓여 무겁던 문제 완화 (설향 실측에서 확인).
+        background: accent.soft,
+        color: INK,
         padding: isMobile ? "16px 20px" : "26px 44px",
         textAlign: "center",
-        // 바로 아래 ValuePropStrip도 검정 배경 — 두 밴드가 뭉치지 않게 하단 하어라인 구분.
-        borderBottom: "1px solid rgba(255,255,255,0.15)",
       }}
     >
       <span aria-hidden style={{ color: accent.accent, fontSize: isMobile ? 18 : 30, fontWeight: 900 }}>
@@ -487,23 +485,13 @@ export function ResultView({
   }, [copy.keyPoints])
 
   /**
-   * v3.0: 즐기는 법(RecipeBlock)이 실제로 렌더될 때의 이미지 슬롯 수.
-   * RecipeBlock 내부의 pairings.slice(0,3)와 동일한 개수를 미리 계산해
-   * 이미지 배정기가 recipe 슬롯을 정확히 잡게 한다. 미매칭이면 0.
-   */
-  const recipeImageCount = useMemo(() => {
-    const key = detectFruitFactKey(productName)
-    const n = key ? FRUIT_FACTS[key]?.pairings?.length ?? 0 : 0
-    return Math.min(3, n)
-  }, [productName])
-
-  /**
    * v3.0 중앙 이미지 배정 — 모든 블록이 여기서 나온 imagePlan을 소비한다.
-   * (예전처럼 블록마다 images 인덱스를 따로 계산하지 않는다 → 중복·낭비 제거)
+   * v3.1-b: RecipeBlock이 사진을 안 쓰게 되어 recipe 슬롯은 항상 0 —
+   * 그만큼의 사진이 갤러리로 흘러간다.
    */
   const imagePlan = useMemo(
-    () => planImages(images, { keyPointCount: keyPoints.length, recipeCount: recipeImageCount }),
-    [images, keyPoints.length, recipeImageCount],
+    () => planImages(images, { keyPointCount: keyPoints.length, recipeCount: 0 }),
+    [images, keyPoints.length],
   )
   const heroImage = imagePlan.hero
   const galleryImages = imagePlan.gallery
@@ -792,7 +780,6 @@ export function ResultView({
             <SizeDiagramBlock
               productName={productName}
               weight={weight}
-              sizeRef={imagePlan.sizeRef}
               isMobile={isMobile}
             />
 
@@ -839,7 +826,7 @@ export function ResultView({
             {hasRecipe && (
               <>
                 <DotDivider />
-                <RecipeBlock productName={productName} images={imagePlan.recipe} isMobile={isMobile} />
+                <RecipeBlock productName={productName} isMobile={isMobile} />
               </>
             )}
 
@@ -1135,14 +1122,17 @@ function WhyBrandCard({
  * fruit-facts.pairings 기반 3개 페어링 카드 + 이미지 슬롯.
  * 과일 미매칭 or pairings 없으면 렌더 안 함 (환각 방지 — 없으면 안 만든다).
  */
+/**
+ * v3.1-b 재설계: 사진 카드 3개 → 사진 없는 콤팩트 칩 한 줄.
+ * 전용 레시피 사진이 없는데 갤러리 사진을 돌려 붙이면 "AI가 만든 티"가 나서
+ * (설향 딸기 사례 — 같은 무더기 사진 3장에 라벨만 교체) 사진을 완전히 뺐다.
+ * 페어링은 재료·용도 단어라 텍스트 칩이 오히려 정직하고 깔끔하다.
+ */
 function RecipeBlock({
   productName,
-  images,
   isMobile,
 }: {
   productName: string
-  /** v3.0: 중앙 배정기가 pairing 순서대로 배정한 이미지(각 슬롯 1장, 없으면 undefined). */
-  images: (UploadedImage | undefined)[]
   isMobile: boolean
 }) {
   const accent = useAccent()
@@ -1153,20 +1143,8 @@ function RecipeBlock({
 
   const name = productName.trim() || "이 상품"
   return (
-    <div style={{ padding: isMobile ? "52px 24px" : "104px 44px", background: "#FFFFFF" }}>
-      <div style={{ textAlign: "center", marginBottom: isMobile ? 32 : 48 }}>
-        <div
-          style={{
-            fontSize: isMobile ? 14 : 24,
-            color: accent.accent,
-            fontWeight: 800,
-            letterSpacing: 2,
-            marginBottom: isMobile ? 10 : 14,
-            fontFamily: BODY_FONT,
-          }}
-        >
-          HOW TO ENJOY
-        </div>
+    <div style={{ padding: isMobile ? "44px 24px" : "80px 44px", background: "#FFFFFF" }}>
+      <div style={{ textAlign: "center", marginBottom: isMobile ? 24 : 40 }}>
         <h2
           style={{
             fontSize: isMobile ? 30 : 50,
@@ -1182,71 +1160,36 @@ function RecipeBlock({
         </h2>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 18 : 28 }}>
-        {items.map((pairing, i) => {
-          const img = images[i]
-          return (
-            <div
-              key={`recipe-${i}`}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: isMobile ? 16 : 28,
-                background: "#FFFFFF",
-                border: `1px solid ${LINE}`,
-                borderRadius: 16,
-                overflow: "hidden",
-              }}
-            >
-              <div
-                style={{
-                  flexShrink: 0,
-                  width: isMobile ? 118 : 190,
-                  height: isMobile ? 118 : 190,
-                  background: accent.soft,
-                }}
-              >
-                {img && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={img.url}
-                    alt=""
-                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                  />
-                )}
-              </div>
-              <div style={{ flex: 1, minWidth: 0, padding: isMobile ? "0 18px 0 0" : "0 32px 0 0" }}>
-                <div
-                  style={{
-                    fontSize: isMobile ? 13 : 24,
-                    color: accent.accent,
-                    fontWeight: 800,
-                    letterSpacing: 1.5,
-                    marginBottom: isMobile ? 6 : 10,
-                    fontFamily: BODY_FONT,
-                  }}
-                >
-                  IDEA {String(i + 1).padStart(2, "0")}
-                </div>
-                {/* v2.9-b: "{pairing}와 함께" 삭제 — pairings에 용도(선물·이유식)가
-                    섞여 조사(선물→선물과)·의미가 깨짐. pairing만 깔끔히 노출. */}
-                <div
-                  style={{
-                    fontSize: isMobile ? 20 : 34,
-                    fontWeight: 800,
-                    color: INK,
-                    fontFamily: BODY_FONT,
-                    letterSpacing: -0.3,
-                    lineHeight: 1.3,
-                    wordBreak: "keep-all",
-                  }}
-                >
-                  {pairing}
-                </div>
-              </div>
-            </div>
-          )
-        })}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          flexWrap: "wrap",
+          gap: isMobile ? 12 : 20,
+        }}
+      >
+        {items.map((pairing, i) => (
+          <span
+            key={`recipe-${i}`}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: isMobile ? 8 : 12,
+              padding: isMobile ? "14px 22px" : "24px 40px",
+              background: accent.soft,
+              borderRadius: 999,
+              fontSize: isMobile ? 18 : 32,
+              fontWeight: 800,
+              color: INK,
+              fontFamily: BODY_FONT,
+              letterSpacing: -0.3,
+              whiteSpace: "nowrap",
+            }}
+          >
+            <span aria-hidden style={{ color: accent.accent, fontWeight: 900 }}>✓</span>
+            {pairing}
+          </span>
+        ))}
       </div>
     </div>
   )
@@ -2474,10 +2417,12 @@ function FaqBlock({
 /**
  * 크기·중량 안내 — 사용자 지적("사진도 없는데 추상 원 3개가 무슨 소용") 반영 개편.
  *
- * 추상 원 3개를 제거하고 실제 근거만 노출한다:
- *  ① sizeRef 사진이 있으면 → 그 사진 + "실제 크기 참고" 캡션 (+ 개당 g/개수 환산 있으면).
- *  ② 사진·무게 데이터 둘 다 없으면 → 블록 자체를 렌더하지 않는다(null).
- *  ③ 무게 데이터만 있으면 → 텍스트 카드(개당 평균 g + 박스 개수 환산 + 편차 안내 1줄).
+ * 무게 데이터가 있을 때만 텍스트 카드(개당 평균 g + 박스 개수 환산 + 편차 안내)로
+ * 렌더하고, 없으면 블록 자체를 렌더하지 않는다(null).
+ *
+ * v3.1-b: "남는 사진 자동 부착(sizeRef)" 삭제 — 설향 딸기 사례에서 비닐하우스
+ * 사진에 "실제 크기 참고" 캡션이 붙어 오히려 자동 생성 티가 났다. 크기와 무관한
+ * 사진일 확률이 높으므로 사진 슬롯은 셀러가 명시 지정할 수 있게 될 때까지 없앤다.
  *
  * "개당 평균 g"·"개수 환산"은 fruit-facts.avgWeightG가 있는 품종에서만 — 없으면 그 행 생략.
  * 렌더할 내용이 있을 때만 앞에 DotDivider를 함께 그린다(빈 블록 뒤 유령 구분선 방지).
@@ -2485,12 +2430,10 @@ function FaqBlock({
 function SizeDiagramBlock({
   productName,
   weight,
-  sizeRef,
   isMobile,
 }: {
   productName?: string
   weight?: string
-  sizeRef?: UploadedImage
   isMobile: boolean
 }) {
   const accent = useAccent()
@@ -2506,9 +2449,9 @@ function SizeDiagramBlock({
       ? sr.boxCount.replace("{weight}", weight.trim()).replace("{count}", boxCount)
       : null
 
-  // ② 사진도 무게 데이터도 없으면 렌더하지 않음. (무게만 있어도 ③으로 렌더 — 개수 환산 없이 중량 카드)
+  // 무게 데이터가 없으면 렌더하지 않음.
   const hasWeightInfo = !!weight?.trim() || perPieceLabel != null
-  if (!sizeRef && !hasWeightInfo) return null
+  if (!hasWeightInfo) return null
 
   return (
     <>
@@ -2548,39 +2491,7 @@ function SizeDiagramBlock({
           </h2>
         </div>
 
-        {/* ① 실제 크기 참고 사진 (남는 사진이 있을 때만) */}
-        {sizeRef && (
-          <div style={{ marginBottom: isMobile ? 20 : 28 }}>
-            <div
-              style={{
-                borderRadius: 12,
-                overflow: "hidden",
-                boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
-              }}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={sizeRef.url}
-                alt="실제 크기 참고"
-                style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", display: "block" }}
-              />
-            </div>
-            <div
-              style={{
-                textAlign: "center",
-                marginTop: isMobile ? 12 : 16,
-                fontSize: isMobile ? 15 : 24,
-                color: SUB,
-                fontWeight: 600,
-                fontFamily: BODY_FONT,
-              }}
-            >
-              {sr.photoCaption}
-            </div>
-          </div>
-        )}
-
-        {/* ③ 무게·개수 카드 — 개당 g / 박스 개수 환산 / 중량 (있는 행만) */}
+        {/* 무게·개수 카드 — 개당 g / 박스 개수 환산 / 중량 (있는 행만) */}
         {(perPieceLabel || boxCountLabel || weight?.trim()) && (
           <div
             style={{
