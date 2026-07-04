@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useRef, useState } from "react"
+import { createContext, useContext, useMemo, useRef, useState } from "react"
 import { t } from "@/lib/i18n"
 import type { CopyOutput, CopyKeyPoint, TrustInfo } from "@/lib/ai/types"
 import type { SectionId } from "@/lib/ai/section-regenerate"
@@ -20,6 +20,17 @@ import { WidthPresetSwitcher, WIDTH_PRESETS, type WidthPresetKey } from "./Width
 import { checkComplianceReport } from "@/lib/ai/compliance-report"
 import { scoreCopyQuality } from "@/lib/ai/copy-quality-score"
 import { detectFruitFactKey, FRUIT_FACTS } from "@/domain/fruit-facts"
+import { resolveAccent, DEFAULT_ACCENT, type AccentPalette } from "./fruit-accent"
+
+/**
+ * v2.8: 과일별 축색 Context.
+ * ResultView가 productName에서 팔레트를 계산해 Provider로 내려주고,
+ * 각 블록이 useAccent()로 소비. export(toCanvas) 시엔 구체 색으로 인라인되어 안전.
+ */
+const AccentContext = createContext<AccentPalette>(DEFAULT_ACCENT)
+function useAccent(): AccentPalette {
+  return useContext(AccentContext)
+}
 
 /**
  * 결과 미리보기.
@@ -43,8 +54,7 @@ interface ResultViewProps {
   busySection?: SectionId | null
 }
 
-const RED = "#E03131"
-const RED_DARK = "#C92A2A"
+const RED = "#E03131" // 사이드바 편집 컨트롤용 브랜드 색 (내보내는 페이지엔 accent 사용)
 const INK = "#212529"
 const SUB = "#495057"
 const MUTE = "#868E96"
@@ -105,6 +115,7 @@ function DotDivider() {
  * Hero 아래에 항상 노출. 검정 배경 + 흰 텍스트 + 얇은 라인 구분.
  */
 function ValuePropStrip({ isMobile }: { isMobile: boolean }) {
+  const accent = useAccent()
   const items = ["산지 직송", "당일 수확", "100% 환불", "신선 보장"]
   return (
     <div
@@ -132,7 +143,7 @@ function ValuePropStrip({ isMobile }: { isMobile: boolean }) {
             gap: 6,
           }}
         >
-          <span aria-hidden style={{ color: RED, fontWeight: 900 }}>✓</span>
+          <span aria-hidden style={{ color: accent.accent, fontWeight: 900 }}>✓</span>
           <span>{label}</span>
         </div>
       ))}
@@ -237,7 +248,11 @@ export function ResultView({
     }
   }, [productName])
 
+  /** v2.8: 과일별 축색 팔레트 — 상품명 기반 자동 전환. */
+  const accent = useMemo(() => resolveAccent(productName), [productName])
+
   return (
+    <AccentContext.Provider value={accent}>
     <div
       style={{
         display: "grid",
@@ -275,25 +290,25 @@ export function ResultView({
                 'Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif',
             }}
           >
-            {/* v2.2: 상단 리본 — 시즌 자동 삽입 대신 얇은 포인트 바만 유지 */}
+            {/* v2.2: 상단 리본 — 시즌 자동 삽입 대신 얇은 포인트 바만 유지 (v2.8 축색) */}
             <div
               aria-hidden
               style={{
                 position: "relative",
                 height: 4,
-                background: RED,
+                background: accent.accent,
                 margin: 0,
               }}
             />
 
-            {/* 0. Top thick red bar with center dot */}
+            {/* 0. Top thick accent bar with center dot */}
             <div
               aria-hidden
               style={{
                 margin: "28px 20px 24px",
                 position: "relative",
                 height: 6,
-                background: RED,
+                background: accent.accent,
                 borderRadius: 3,
               }}
             >
@@ -306,9 +321,9 @@ export function ResultView({
                   width: 16,
                   height: 16,
                   borderRadius: "50%",
-                  background: RED,
+                  background: accent.accent,
                   border: "3px solid #FFFFFF",
-                  boxShadow: `0 0 0 1px ${RED}`,
+                  boxShadow: `0 0 0 1px ${accent.accent}`,
                 }}
               />
             </div>
@@ -420,6 +435,14 @@ export function ResultView({
               isMobile={isMobile}
             />
 
+            {/* v2.8: 5a. 크기·중량 안내 (수플린 중량 다이어그램) */}
+            <DotDivider />
+            <SizeDiagramBlock
+              productName={productName}
+              weight={weight}
+              isMobile={isMobile}
+            />
+
             {/* 6. POINT BIG CARDS */}
             {keyPoints.length > 0 && (
               <>
@@ -474,7 +497,21 @@ export function ResultView({
 
             <DotDivider />
 
-            {/* 9. DELIVERY (정형) */}
+            {/* v2.8: 8a. 배송 시 구성 (수플린 박스 이미지 레퍼런스) */}
+            <PackagingBlock
+              image={galleryImages[galleryImages.length - 1] ?? heroImage}
+              weight={weight}
+              isMobile={isMobile}
+            />
+
+            <DotDivider />
+
+            {/* v2.8: 8b. 신선함을 잇는 4단계 (수플린 배송 흐름 레퍼런스) */}
+            <DeliveryFlowBlock trust={trust} isMobile={isMobile} />
+
+            <DotDivider />
+
+            {/* 9. DELIVERY (정형 텍스트 상세) */}
             <DeliveryBlock isMobile={isMobile} />
 
             <DotDivider />
@@ -617,6 +654,7 @@ export function ResultView({
 
       {/* v2.7: StickyMobileCta 삭제 (사이드바에 이미 있으므로 중복 제거) */}
     </div>
+    </AccentContext.Provider>
   )
 }
 
@@ -631,6 +669,7 @@ function WhyHeader({
   productName: string
   isMobile: boolean
 }) {
+  const accent = useAccent()
   return (
     <div
       style={{
@@ -639,12 +678,12 @@ function WhyHeader({
         borderBottom: `1px solid ${LINE}`,
       }}
     >
-      {/* v2.5: 큰 상품명 + 빨강 강조구 대비 (스마트스토어 잘 팔리는 톤) */}
+      {/* v2.5: 큰 상품명 + 축색 강조구 대비 (스마트스토어 잘 팔리는 톤) */}
       <div style={{ textAlign: "center", marginBottom: 32 }}>
         <div
           style={{
             fontSize: isMobile ? 11 : 12,
-            color: RED,
+            color: accent.accent,
             fontWeight: 800,
             letterSpacing: 3,
             marginBottom: 14,
@@ -666,7 +705,7 @@ function WhyHeader({
         >
           {productName || <Placeholder text="상품명을 입력해 주세요" />}
           <br />
-          <span style={{ color: RED }}>{t.detail.result.whatsDifferentTitle}</span>
+          <span style={{ color: accent.accent }}>{t.detail.result.whatsDifferentTitle}</span>
         </h2>
       </div>
 
@@ -692,6 +731,7 @@ function HeroBlock({
   isMobile: boolean
   factPlaceholder?: { headline: string; sub: string; highlightBox: string } | null
 }) {
+  const accent = useAccent()
   return (
     <div style={{ background: "#FFFFFF" }}>
       <div style={{ position: "relative" }}>
@@ -753,7 +793,7 @@ function HeroBlock({
         <p
           style={{
             fontSize: isMobile ? 13 : 14,
-            color: RED,
+            color: accent.accent,
             margin: 0,
             marginBottom: 18,
             lineHeight: 1.4,
@@ -824,12 +864,12 @@ function HeroBlock({
                   gap: 5,
                   padding: "7px 14px",
                   borderRadius: 999,
-                  background: RED,
+                  background: accent.accent,
                   color: "#FFFFFF",
                   fontSize: isMobile ? 12 : 13,
                   fontWeight: 700,
                   fontFamily: BODY_FONT,
-                  boxShadow: "0 2px 6px rgba(224,49,49,0.25)",
+                  boxShadow: `0 2px 6px ${accent.accent}40`,
                 }}
               >
                 <span
@@ -841,7 +881,7 @@ function HeroBlock({
                     height: 16,
                     borderRadius: "50%",
                     background: "#FFFFFF",
-                    color: RED,
+                    color: accent.accent,
                     fontSize: 10,
                     fontWeight: 900,
                   }}
@@ -1070,6 +1110,7 @@ function SpecBlock({
   onRegen: React.ReactNode
   isMobile: boolean
 }) {
+  const accent = useAccent()
   const specCount = copy.spec.length
   // 4개 이상이면 2열, 3개면 1열(좁은 모바일)/2열(데스크탑) 자동 — 항상 2열로 통일하되 홀수 시 마지막 카드가 가득 차도록 grid auto-fit 흉내
   const columns = specCount <= 1 ? "1fr" : "repeat(2, minmax(0, 1fr))"
@@ -1128,7 +1169,7 @@ function SpecBlock({
                       alignItems: "baseline",
                       gap: 6,
                       lineHeight: 1,
-                      color: RED,
+                      color: accent.accent,
                       fontFamily: DISPLAY_FONT,
                     }}
                   >
@@ -1140,7 +1181,7 @@ function SpecBlock({
                       style={{
                         fontSize: 14,
                         fontWeight: 800,
-                        color: RED_DARK,
+                        color: accent.dark,
                         fontFamily: BODY_FONT,
                         letterSpacing: 1,
                       }}
@@ -1206,6 +1247,7 @@ function KeyPointsBig({
   pointImageFor: (idx: number) => UploadedImage | undefined
   isMobile: boolean
 }) {
+  const accent = useAccent()
   return (
     <div style={{ background: "#FFFFFF" }}>
       <div
@@ -1233,7 +1275,8 @@ function KeyPointsBig({
       {/* v2.6: POINT별 배경색 살짝 변주 (아보카도·수플린 페이지 톤 참조) */}
       {points.map((p, i) => {
         const img = pointImageFor(i)
-        const bgTints = ["#FFFFFF", "#FAFBFC", "#FFF9F9"]
+        // v2.8: POINT 배경 변주 — 흰 / 옅은 회색 / 과일 축색 soft 틴트
+        const bgTints = ["#FFFFFF", "#FAFBFC", accent.soft]
         const bg = bgTints[i % bgTints.length]
         return (
           <div
@@ -1244,7 +1287,7 @@ function KeyPointsBig({
               background: bg,
             }}
           >
-            {/* 좌측 세로 6px 빨강 바 */}
+            {/* 좌측 세로 6px 축색 바 */}
             <div
               aria-hidden
               style={{
@@ -1253,7 +1296,7 @@ function KeyPointsBig({
                 top: isMobile ? 40 : 56,
                 bottom: isMobile ? 56 : 72,
                 width: 6,
-                background: RED,
+                background: accent.accent,
                 borderRadius: 3,
               }}
             />
@@ -1285,7 +1328,7 @@ function KeyPointsBig({
                   alignItems: "center",
                   gap: 8,
                   padding: "6px 14px",
-                  background: RED,
+                  background: accent.accent,
                   color: "#FFF",
                   fontSize: isMobile ? 11 : 12,
                   fontWeight: 800,
@@ -1519,6 +1562,365 @@ function FaqBlock({
   )
 }
 
+/**
+ * v2.8 크기·중량 안내 (수플린 아보카도 중량 다이어그램 레퍼런스).
+ * 3단계 상대 크기 원(소과/중과/대과) + 중량 표기 + 정직한 편차 안내.
+ * 실제 g 수치는 환각 방지를 위해 만들지 않고, 셀러가 입력한 weight만 노출.
+ */
+function SizeDiagramBlock({
+  productName,
+  weight,
+  isMobile,
+}: {
+  productName?: string
+  weight?: string
+  isMobile: boolean
+}) {
+  const accent = useAccent()
+  const tiers = [
+    { label: "소과", scale: 0.62 },
+    { label: "중과", scale: 0.82 },
+    { label: "대과", scale: 1 },
+  ]
+  const maxSize = isMobile ? 84 : 108
+  const name = productName?.trim() || "이 상품"
+  return (
+    <div style={{ padding: isMobile ? "44px 20px" : "56px 40px", background: "#FFFFFF" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <span
+          aria-hidden
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 26,
+            height: 26,
+            borderRadius: "50%",
+            background: accent.accent,
+            color: "#FFFFFF",
+            fontSize: 14,
+            fontWeight: 900,
+          }}
+        >
+          ✓
+        </span>
+        <h2
+          style={{
+            fontSize: isMobile ? 26 : 34,
+            fontWeight: 400,
+            margin: 0,
+            color: INK,
+            fontFamily: DISPLAY_FONT,
+            letterSpacing: -1,
+            lineHeight: 1.1,
+          }}
+        >
+          {name} 크기가 <span style={{ color: accent.accent }}>궁금해요</span>
+        </h2>
+      </div>
+
+      {/* 상대 크기 3원 + 라벨 */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "center",
+          gap: isMobile ? 28 : 48,
+          padding: isMobile ? "28px 0 24px" : "36px 0 28px",
+        }}
+      >
+        {tiers.map((tier) => {
+          const d = Math.round(maxSize * tier.scale)
+          return (
+            <div key={tier.label} style={{ textAlign: "center" }}>
+              <div
+                aria-hidden
+                style={{
+                  width: d,
+                  height: d,
+                  borderRadius: "50%",
+                  background: accent.soft,
+                  border: `2px solid ${accent.accent}`,
+                  margin: "0 auto 12px",
+                }}
+              />
+              <div
+                style={{
+                  fontSize: isMobile ? 14 : 16,
+                  fontWeight: 800,
+                  color: INK,
+                  fontFamily: BODY_FONT,
+                }}
+              >
+                {tier.label}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {weight?.trim() && (
+        <div
+          style={{
+            textAlign: "center",
+            fontSize: isMobile ? 14 : 15,
+            color: SUB,
+            marginBottom: 16,
+            fontFamily: BODY_FONT,
+          }}
+        >
+          중량 구성 · <strong style={{ color: INK }}>{weight.trim()}</strong>
+        </div>
+      )}
+
+      {/* 정직한 편차 안내 */}
+      <div
+        style={{
+          padding: isMobile ? "14px 16px" : "16px 20px",
+          background: accent.soft,
+          borderRadius: 10,
+          fontSize: isMobile ? 12.5 : 13.5,
+          color: SUB,
+          lineHeight: 1.7,
+          fontFamily: BODY_FONT,
+        }}
+      >
+        <strong style={{ color: accent.dark }}>꼭 확인해 주세요</strong>
+        <br />
+        과일 특성상 크기가 일정하지 않아요. 실제 크기와 외형에 다소 차이가 있을 수 있으니 참고 부탁드려요.
+      </div>
+    </div>
+  )
+}
+
+/**
+ * v2.8 신선함을 잇는 4단계 (수플린 FARM→AIR→COLD→HOME 레퍼런스).
+ * 국내 산지직송에 맞게 각색: 수확 → 손 선별·포장 → 출고 → 문 앞 도착.
+ *
+ * v2.8-b: "당일 수확 / 당일 포장 / 콜드체인" 은 셀러가 trust에서 실제 체크한 경우에만 강한 문구로.
+ * 미체크 시 일반화 문구 — 다른 신뢰 요소(TrustBadgesRow 등)와 동일한 게이팅 원칙 준수 (허위광고 방지).
+ */
+function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: boolean }) {
+  const accent = useAccent()
+  const sameDay = !!trust?.sameDayHarvest
+  const cold = !!trust?.coldChain
+  const steps = [
+    {
+      title: "산지 수확",
+      desc: sameDay ? "아침 일찍 산지에서 그날 딴 것만" : "산지에서 수확한 신선한 상품을",
+    },
+    {
+      title: "손 선별·포장",
+      desc: sameDay ? "상태 좋은 것만 하나씩 골라 당일 포장" : "상태 좋은 것만 하나씩 골라 포장",
+    },
+    {
+      title: cold ? "콜드체인 출고" : "포장·출고",
+      desc: cold ? "신선도를 지키는 냉장 상태로 출고" : "신선하게 포장해 바로 출고",
+    },
+    { title: "문 앞 도착", desc: "완충 포장으로 신선하게 문 앞까지" },
+  ]
+  return (
+    <div style={{ padding: isMobile ? "44px 20px" : "56px 40px", background: BG_SOFT }}>
+      <div style={{ textAlign: "center", marginBottom: isMobile ? 28 : 36 }}>
+        <div
+          style={{
+            fontSize: isMobile ? 13 : 15,
+            color: SUB,
+            fontWeight: 600,
+            marginBottom: 8,
+            fontFamily: BODY_FONT,
+          }}
+        >
+          산지에서 문 앞까지
+        </div>
+        <h2
+          style={{
+            fontSize: isMobile ? 30 : 44,
+            fontWeight: 400,
+            margin: 0,
+            color: INK,
+            fontFamily: DISPLAY_FONT,
+            letterSpacing: -1.5,
+            lineHeight: 1.1,
+          }}
+        >
+          신선함을 잇는 <span style={{ color: accent.accent }}>4단계</span>
+        </h2>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+        {steps.map((step, i) => (
+          <div
+            key={step.title}
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: isMobile ? 14 : 20,
+              padding: isMobile ? "16px 0" : "20px 0",
+              borderBottom: i < steps.length - 1 ? `1px solid ${LINE}` : "none",
+            }}
+          >
+            <div
+              aria-hidden
+              style={{
+                flexShrink: 0,
+                width: isMobile ? 40 : 48,
+                height: isMobile ? 40 : 48,
+                borderRadius: "50%",
+                background: accent.accent,
+                color: "#FFFFFF",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: isMobile ? 20 : 24,
+                fontWeight: 400,
+                fontFamily: DISPLAY_FONT,
+              }}
+            >
+              {i + 1}
+            </div>
+            <div style={{ flex: 1, minWidth: 0, paddingTop: 2 }}>
+              <div
+                style={{
+                  fontSize: isMobile ? 17 : 20,
+                  fontWeight: 800,
+                  color: INK,
+                  marginBottom: 4,
+                  fontFamily: BODY_FONT,
+                  letterSpacing: -0.3,
+                }}
+              >
+                {step.title}
+              </div>
+              <div
+                style={{
+                  fontSize: isMobile ? 13.5 : 15,
+                  color: SUB,
+                  lineHeight: 1.6,
+                  fontFamily: BODY_FONT,
+                }}
+              >
+                {step.desc}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * v2.8 배송 시 구성 (수플린 박스 이미지 + 옵션 레퍼런스).
+ * 대표 이미지 + 중량 구성 + 완충 포장 안내. 이미지 없으면 안내만.
+ */
+function PackagingBlock({
+  image,
+  weight,
+  isMobile,
+}: {
+  image?: UploadedImage
+  weight?: string
+  isMobile: boolean
+}) {
+  const accent = useAccent()
+  return (
+    <div style={{ padding: isMobile ? "44px 20px" : "56px 40px", background: "#FFFFFF" }}>
+      <div style={{ textAlign: "center", marginBottom: isMobile ? 24 : 32 }}>
+        <div
+          style={{
+            fontSize: isMobile ? 13 : 15,
+            color: accent.accent,
+            fontWeight: 800,
+            letterSpacing: 2,
+            marginBottom: 8,
+            fontFamily: BODY_FONT,
+          }}
+        >
+          PACKAGE
+        </div>
+        <h2
+          style={{
+            fontSize: isMobile ? 28 : 40,
+            fontWeight: 400,
+            margin: 0,
+            color: INK,
+            fontFamily: DISPLAY_FONT,
+            letterSpacing: -1.5,
+            lineHeight: 1.15,
+          }}
+        >
+          배송 시 이렇게 <span style={{ color: accent.accent }}>구성돼요</span>
+        </h2>
+      </div>
+
+      {image && (
+        <div
+          style={{
+            borderRadius: 10,
+            overflow: "hidden",
+            marginBottom: 20,
+            boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
+          }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={image.url}
+            alt="배송 구성"
+            style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", display: "block" }}
+          />
+        </div>
+      )}
+
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+          padding: isMobile ? "18px 20px" : "22px 26px",
+          background: accent.soft,
+          borderRadius: 10,
+        }}
+      >
+        {weight?.trim() && (
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+            <span
+              style={{
+                flexShrink: 0,
+                fontSize: 12,
+                fontWeight: 800,
+                color: accent.dark,
+                fontFamily: BODY_FONT,
+              }}
+            >
+              중량
+            </span>
+            <span style={{ fontSize: isMobile ? 15 : 16, fontWeight: 700, color: INK, fontFamily: BODY_FONT }}>
+              {weight.trim()}
+            </span>
+          </div>
+        )}
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+          <span
+            style={{
+              flexShrink: 0,
+              fontSize: 12,
+              fontWeight: 800,
+              color: accent.dark,
+              fontFamily: BODY_FONT,
+            }}
+          >
+            포장
+          </span>
+          <span style={{ fontSize: isMobile ? 14 : 15, color: SUB, lineHeight: 1.6, fontFamily: BODY_FONT }}>
+            완충재로 흔들림 없이 담아, 신선한 상태 그대로 보내드려요.
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function DeliveryBlock({ isMobile }: { isMobile: boolean }) {
   return (
     <div
@@ -1609,6 +2011,7 @@ function RecommendForBlock({
   items: string[]
   isMobile: boolean
 }) {
+  const accent = useAccent()
   return (
     <div
       style={{
@@ -1646,7 +2049,7 @@ function RecommendForBlock({
                   : "none",
             }}
           >
-            {/* v2.3: 색점 삭제 → 체크 아이콘 하나만 */}
+            {/* v2.3: 색점 삭제 → 체크 아이콘 하나만 (v2.8 축색) */}
             <span
               aria-hidden
               style={{
@@ -1658,7 +2061,7 @@ function RecommendForBlock({
                 width: 20,
                 height: 20,
                 borderRadius: "50%",
-                background: RED,
+                background: accent.accent,
                 color: "#FFFFFF",
                 fontSize: 12,
                 fontWeight: 900,
