@@ -152,6 +152,10 @@ export function InlineEdit({
       <span
         role={disabled ? undefined : "button"}
         tabIndex={disabled ? -1 : 0}
+        // 캡처 클론에서 hover 하이라이트 배경을 지우기 위한 마커 (html-to-jpg가 사용)
+        data-inline-edit=""
+        // 빈 값 placeholder는 편집 안내일 뿐 콘텐츠가 아니므로 JPG 캡처에서 제거
+        {...(isEmpty ? { "data-edit-chrome": "" } : {})}
         aria-label={ariaLabel ?? t.detail.result.inlineEdit.editLabel}
         onClick={() => !disabled && setEditing(true)}
         onKeyDown={(e) => {
@@ -169,6 +173,7 @@ export function InlineEdit({
         {hovering && !disabled && (
           <span
             aria-hidden="true"
+            data-edit-chrome=""
             style={{
               marginLeft: 6,
               fontSize: "0.85em",

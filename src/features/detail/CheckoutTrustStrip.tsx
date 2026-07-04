@@ -36,10 +36,12 @@ export function CheckoutTrustStrip({
       style={{
         display: "flex",
         flexWrap: "wrap",
+        justifyContent: "center",
         gap: 12,
         padding: "18px 22px",
-        background: "#FFF8E7",
-        border: "1px dashed #E03131",
+        // v3.0.1: 노랑 배경+빨강 dashed는 경고문처럼 읽혀 미니멀 톤과 충돌 → 중립 카드로
+        background: "#F8F9FA",
+        border: "1px solid #E9ECEF",
         borderRadius: 12,
         margin: "24px 0",
       }}

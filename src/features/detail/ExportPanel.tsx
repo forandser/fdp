@@ -9,6 +9,11 @@ interface ExportPanelProps {
   targetRef: React.RefObject<HTMLElement | null>
   /** 파일명 접두사 */
   baseName: string
+  /**
+   * 지정되면 다운로드를 막고 이유를 표시한다.
+   * (빈 카피 상태로 placeholder투성이 JPG를 저장하는 사고 방지 — v3.0.1)
+   */
+  blockedReason?: string
 }
 
 type SliceMode = "sections" | "single"
@@ -25,7 +30,7 @@ const WIDTH_PRESETS: { value: WidthPreset; label: string }[] = [
 const SUPPORTS_DIR_PICKER =
   typeof window !== "undefined" && "showDirectoryPicker" in window
 
-export function ExportPanel({ targetRef, baseName }: ExportPanelProps) {
+export function ExportPanel({ targetRef, baseName, blockedReason }: ExportPanelProps) {
   const [width, setWidth] = useState<WidthPreset>(860)
   const [slice, setSlice] = useState<SliceMode>("sections")
   const [targetSliceHeight, setTargetSliceHeight] = useState<number>(3000)
@@ -315,20 +320,40 @@ export function ExportPanel({ targetRef, baseName }: ExportPanelProps) {
         )}
       </div>
 
+      {blockedReason && (
+        <p
+          style={{
+            margin: 0,
+            padding: "10px 12px",
+            background: "var(--color-bg-surface)",
+            border: "1px solid var(--color-neutral-100)",
+            borderRadius: "var(--radius-xs)",
+            fontSize: "var(--font-size-sm)",
+            color: "var(--color-neutral-700)",
+            lineHeight: 1.5,
+          }}
+        >
+          ✍️ {blockedReason}
+        </p>
+      )}
+
       <button
         type="button"
         onClick={() => void handleDownload()}
-        disabled={busy}
+        disabled={busy || blockedReason != null}
         style={{
           marginTop: 4,
           padding: "12px 16px",
-          background: busy ? "var(--color-neutral-300)" : "var(--color-primary-600)",
+          background:
+            busy || blockedReason != null
+              ? "var(--color-neutral-300)"
+              : "var(--color-primary-600)",
           color: "var(--color-text-on-primary)",
           border: "none",
           borderRadius: "var(--radius-xs)",
           fontSize: "var(--font-size-md)",
           fontWeight: 700,
-          cursor: busy ? "not-allowed" : "pointer",
+          cursor: busy || blockedReason != null ? "not-allowed" : "pointer",
         }}
       >
         {busy

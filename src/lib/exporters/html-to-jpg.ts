@@ -63,6 +63,11 @@ export async function exportNodeAsSlicedJpg(
   // 내보내기 위생: 편집 전용 UI(재생성 버튼·편집 장식 등)는 JPG에 남으면 안 됨.
   // 원본이 아니라 클론에서만 제거 → 화면 UI는 그대로 유지.
   clone.querySelectorAll("[data-edit-chrome]").forEach((el) => el.remove())
+  // 인라인 편집 hover 하이라이트(React state라 클론에 복사됨)를 중화 —
+  // 편집 직후 마우스가 안 움직인 채 내보내면 파란 배경이 JPG에 찍히던 버그 방지.
+  clone.querySelectorAll<HTMLElement>("[data-inline-edit]").forEach((el) => {
+    el.style.background = "transparent"
+  })
   const wrapper = document.createElement("div")
   wrapper.style.position = "fixed"
   wrapper.style.top = "0"
@@ -154,10 +159,13 @@ export async function exportNodeAsSlicedJpg(
       groupWrapper.style.background = "#ffffff"
       groupWrapper.style.display = "block"
 
-      // 그룹 요소들을 임시 wrapper로 이동 (다시 원위치)
-      const originalParents: { el: HTMLElement; nextSibling: Node | null }[] = []
+      // 그룹 요소들을 임시 wrapper로 이동 (다시 원위치).
+      // 복원 기준은 이동 전에 심어둔 marker — 기존 nextSibling 방식은 같은 그룹의
+      // 형제(이미 detach됨)를 참조해 insertBefore가 NotFoundError를 던지며
+      // 2번째 슬라이스부터 전부 유실되던 버그가 있었다 (v3.0.1 하네스 검증에서 발견).
+      const marker = document.createComment("fdp-slice-marker")
+      clone.insertBefore(marker, group[0])
       for (const el of group) {
-        originalParents.push({ el, nextSibling: el.nextSibling })
         groupWrapper.appendChild(el)
       }
       clone.appendChild(groupWrapper)
@@ -177,12 +185,12 @@ export async function exportNodeAsSlicedJpg(
         totalBytes += blob.size
         fileCount += 1
       } finally {
-        // 원래 위치로 복원
+        // 원래 위치로 복원 — marker 앞에 순서대로 재삽입 후 marker 제거
         clone.removeChild(groupWrapper)
-        for (const { el, nextSibling } of originalParents) {
-          if (nextSibling) clone.insertBefore(el, nextSibling)
-          else clone.appendChild(el)
+        for (const el of group) {
+          clone.insertBefore(el, marker)
         }
+        clone.removeChild(marker)
       }
 
       if (i < groups.length - 1) {

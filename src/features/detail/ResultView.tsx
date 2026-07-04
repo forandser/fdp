@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useContext, useMemo, useRef, useState } from "react"
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { t } from "@/lib/i18n"
 import type { CopyOutput, CopyKeyPoint, TrustInfo } from "@/lib/ai/types"
 import type { SectionId } from "@/lib/ai/section-regenerate"
@@ -316,7 +316,7 @@ function ValuePropStrip({ isMobile, trust }: { isMobile: boolean; trust?: TrustI
           key={`vp-${i}`}
           style={{
             textAlign: "center",
-            fontSize: isMobile ? 13 : 23,
+            fontSize: isMobile ? 14 : 26,
             fontWeight: 800,
             fontFamily: BODY_FONT,
             letterSpacing: 0.5,
@@ -361,6 +361,32 @@ export function ResultView({
   // (780/831/860/1000)은 전부 이미지 매체 = 데스크톱 취급.
   // 임계값 500 = 폰 프리셋(≤414)과 쿠팡(780) 사이.
   const isMobile = previewWidth < 500
+
+  /**
+   * v3.0.1 scale-to-fit 미리보기 — 아트보드는 항상 실제 폭(previewWidth)으로
+   * 렌더하고, 화면 컬럼이 좁으면 transform: scale로 축소해서 보여준다.
+   * 예전에는 maxWidth:100%로 아트보드 자체가 512px 등으로 눌려 재배치되어
+   * "미리보기와 JPG 결과물이 다르다"는 문제의 원인이었다 (하네스 실측으로 확인).
+   * transform은 캡처 노드(captureRef)의 조상에만 걸리므로 JPG에는 영향 없음.
+   */
+  const previewOuterRef = useRef<HTMLDivElement>(null)
+  const [previewScale, setPreviewScale] = useState(1)
+  const [artboardHeight, setArtboardHeight] = useState(0)
+  useEffect(() => {
+    const outer = previewOuterRef.current
+    const art = captureRef.current
+    if (!outer || !art) return
+    const update = () => {
+      const w = outer.clientWidth
+      setPreviewScale(w > 0 ? Math.min(1, w / previewWidth) : 1)
+      setArtboardHeight(art.offsetHeight)
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(outer)
+    ro.observe(art)
+    return () => ro.disconnect()
+  }, [previewWidth])
 
   const keyPoints: CopyKeyPoint[] = useMemo(() => {
     if (copy.keyPoints && copy.keyPoints.length >= 1) return copy.keyPoints.slice(0, 3)
@@ -490,19 +516,36 @@ export function ResultView({
           }}
         >
           {t.detail.result.inlineEdit.hint}
+          {previewScale < 0.999 && (
+            <span style={{ marginLeft: 8, color: MUTE }}>
+              · 실제 {previewWidth}px를 {Math.round(previewScale * 100)}%로 축소해 보는 중 (저장은 원본 크기)
+            </span>
+          )}
         </p>
 
-        <div style={{ display: "flex", justifyContent: "center", width: "100%" }}>
+        {/* scale-to-fit: 아트보드는 실제 폭으로 렌더, 화면에는 축소 표시 (v3.0.1) */}
+        <div ref={previewOuterRef} style={{ width: "100%" }}>
+          <div
+            style={{
+              height: artboardHeight > 0 ? artboardHeight * previewScale : undefined,
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                transform: `scale(${previewScale})`,
+                transformOrigin: "top left",
+                width: previewWidth,
+              }}
+            >
           <div
             ref={captureRef}
             className={`fdp-print ${enhance ? "fdp-photo-enhance" : ""}`}
             style={{
               width: previewWidth,
-              maxWidth: "100%",
               background: "#FFFFFF",
               borderRadius: 12,
               boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
-              transition: "width 0.2s",
               overflow: "hidden",
               color: INK,
               fontFamily:
@@ -752,6 +795,8 @@ export function ResultView({
             <DotDivider />
             <CautionsBlock cautions={copy.cautions ?? []} isMobile={isMobile} />
           </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -812,7 +857,15 @@ export function ResultView({
         )}
 
         {/* v2.1 심플: 주요 액션 2개만 상단에 */}
-        <ExportPanel targetRef={captureRef} baseName={sanitizedName} />
+        <ExportPanel
+          targetRef={captureRef}
+          baseName={sanitizedName}
+          blockedReason={
+            copy.headline.trim().length === 0
+              ? "카피가 아직 비어 있어요. 3단계에서 카피를 생성(또는 직접 입력)한 뒤 저장해 주세요."
+              : undefined
+          }
+        />
 
         <ActionButton onClick={onRetry}>{t.detail.result.retry}</ActionButton>
 
@@ -1322,6 +1375,8 @@ function HeroBlock({
           />
         ) : (
           <div
+            // 사진 없음 안내는 편집 화면 전용 — JPG에 거대한 빈 사각형이 찍히지 않게 캡처 제외
+            data-edit-chrome
             style={{
               width: "100%",
               aspectRatio: "1",
@@ -1773,6 +1828,8 @@ function SpecBlock({
         </div>
       ) : (
         <div
+          // 빈 스펙 안내는 편집 화면 전용 — JPG 캡처 제외
+          data-edit-chrome
           style={{
             background: "#FFFFFF",
             borderRadius: 12,

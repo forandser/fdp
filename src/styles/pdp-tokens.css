@@ -44,12 +44,12 @@
   --pdp-color-trust-fresh: #52C41A; /* 신선도 — 녹색 */
 }
 
-/* 본문 기본 — iOS 줌 방지 */
-.fdp-print p,
-.fdp-print li,
-.fdp-print span:not([class*="badge"]):not([class*="chip"]):not([class*="label"]) {
-  font-size: max(var(--pdp-font-body), 14px);
-}
+/*
+ * (v3.0.1에서 삭제) "iOS 줌 방지" 규칙이 아트보드 안 모든 p/li/span을 16px로
+ * 강제해 인라인 편집 텍스트(헤드라인·스토리·POINT·FAQ 등)의 큰 폰트를 전부
+ * 뭉개던 버그의 원인이었다. iOS 자동 줌은 <input>/<textarea>의 16px 미만에서만
+ * 발생하므로 표시용 텍스트에는 애초에 불필요했다.
+ */
 
 /* 인쇄 시 sticky CTA 숨김 */
 @media print {

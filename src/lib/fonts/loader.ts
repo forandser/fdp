@@ -6,6 +6,7 @@
  */
 
 import { findFont } from "./registry"
+import { assetUrl } from "./asset-base"
 
 const loadedFamilies = new Set<string>()
 const loadingPromises = new Map<string, Promise<void>>()
@@ -24,7 +25,7 @@ export async function loadFont(family: string): Promise<void> {
 
   const loadPromise = (async () => {
     for (const w of meta.weights) {
-      const face = new FontFace(meta.family, `url(${w.url}) format("woff2")`, {
+      const face = new FontFace(meta.family, `url(${assetUrl(w.url)}) format("woff2")`, {
         weight: String(w.weight),
         style: "normal",
         display: "swap",

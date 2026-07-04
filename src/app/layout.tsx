@@ -1,5 +1,6 @@
 import type { Metadata } from "next"
 import { ko } from "@/lib/i18n/ko"
+import { FONT_FACE_CSS } from "@/lib/fonts/font-face-css"
 import "./globals.css"
 
 export const metadata: Metadata = {
@@ -15,7 +16,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ko">
-      <body>{children}</body>
+      <body>
+        {/* @font-face 주입 — globals.css 정적 선언은 basePath(/fdp)를 몰라 404였음 */}
+        <style dangerouslySetInnerHTML={{ __html: FONT_FACE_CSS }} />
+        {children}
+      </body>
     </html>
   )
 }
