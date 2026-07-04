@@ -32,7 +32,17 @@ import {
   estimateCountLabel,
 } from "@/domain/fruit-facts"
 import { resolveAccent, DEFAULT_ACCENT, type AccentPalette } from "./fruit-accent"
-import { PackIcon, FLOW_STEP_ICONS } from "./LineIcons"
+import {
+  PackIcon,
+  FLOW_STEP_ICONS,
+  HarvestIcon,
+  SortIcon,
+  DeliverIcon,
+  ColdIcon,
+  SealIcon,
+  ShieldIcon,
+  type LineIconProps,
+} from "./LineIcons"
 
 /**
  * v2.8: 과일별 축색 Context.
@@ -320,6 +330,267 @@ function DotDivider() {
   return <div aria-hidden style={{ height: 8, background: "#FFFFFF" }} />
 }
 
+/* ============================================================ */
+/* v3.4 색 세계 · 곡선 전환 · 타이틀 장치 (실물 레퍼런스 기반)    */
+/* ------------------------------------------------------------ */
+/* 아래 소형 컴포넌트/헬퍼는 모두 인라인 SVG + hex 상수만 사용해  */
+/* html-to-image(toCanvas) 캡처와 100% 호환된다.                  */
+/* (backdrop-filter/filter/mask/position:fixed 없음)             */
+/* ============================================================ */
+
+/**
+ * accent.soft보다 한 단계 더 옅은 "베일 틴트" — 흰 카드가 그 위에 떠 보이게.
+ * soft는 #FFFxxx / #FxxFxx 계열(마지막 두 자리가 밝음)이라, 그 hex를 흰색과
+ * 약 50% 섞은 아주 옅은 톤을 결정적으로 만든다. (레퍼런스: 복숭아 blush 바탕)
+ * export 시엔 이 함수가 반환한 구체 hex가 인라인되므로 CSS 변수 문제 없음.
+ */
+function veilTint(soft: string): string {
+  // #RRGGBB → 흰색(255)과 평균. soft가 이미 매우 밝아 결과도 매우 옅다.
+  const hex = soft.replace("#", "")
+  if (hex.length !== 6) return "#FFFFFF"
+  const mix = (i: number) => {
+    const c = parseInt(hex.slice(i, i + 2), 16)
+    const m = Math.round((c + 255) / 2)
+    return m.toString(16).padStart(2, "0")
+  }
+  return `#${mix(0)}${mix(2)}${mix(4)}`
+}
+
+/**
+ * 곡선 섹션 전환 divider — 위 섹션(topColor) 바닥에서 아래 섹션(fillColor)이
+ * 완만한 아치로 솟아오른다. 인라인 SVG path 하나(레퍼런스 지시 2).
+ * height는 곡선 깊이. flip=true면 아래로 파인 곡선(돔 대신 골).
+ */
+function CurveDivider({
+  topColor,
+  fillColor,
+  height = 64,
+}: {
+  topColor: string
+  fillColor: string
+  height?: number
+}) {
+  return (
+    <div aria-hidden style={{ background: topColor, lineHeight: 0 }}>
+      <svg
+        width="100%"
+        viewBox="0 0 860 80"
+        preserveAspectRatio="none"
+        style={{ display: "block", width: "100%", height }}
+      >
+        {/* 아래 섹션 색이 완만한 아치로 위로 밀고 올라옴 */}
+        <path d="M0,80 C215,8 645,8 860,80 L860,80 L0,80 Z" fill={fillColor} />
+      </svg>
+    </div>
+  )
+}
+
+/**
+ * 흰 돔 곡선 전환 — 틴트 배경에서 흰 반원 돔이 솟아오르고, 그 정점에
+ * accent 원(라벨/번호)이 얹힌다 (proj3 키위 레퍼런스, 지시 2 WHY 진입부).
+ * label 문자열(짧게)을 돔 정점 원 안에 넣는다.
+ */
+function DomeTransition({
+  tintColor,
+  accent,
+  label,
+  isMobile,
+}: {
+  tintColor: string
+  accent: AccentPalette
+  label: string
+  isMobile: boolean
+}) {
+  const circle = isMobile ? 56 : 88
+  // v3.4 fix(이슈1): 'WHY'(BlackHanSans 36px)가 88px 원을 좌우로 뚫고 링과 겹쳤다.
+  // BlackHanSans 대문자는 글자당 폭이 커(≈0.75em) 3글자 "WHY"의 실폭이 원 안지름을
+  // 넘겼다. 라벨 길이에 맞춰 폰트를 계산해 좌우 여백(안지름의 ~78%)을 확보한다:
+  //   fontSize ≈ (원 안지름 * 0.78) / (글자수 * 0.75).  원지름의 ~55%를 상한으로 둔다.
+  const border = isMobile ? 3 : 4
+  const inner = circle - border * 2
+  const labelLen = Math.max(1, label.trim().length)
+  const labelFont = Math.round(
+    Math.min(circle * 0.55, (inner * 0.78) / (labelLen * 0.75)),
+  )
+  return (
+    <div aria-hidden style={{ background: tintColor, position: "relative", lineHeight: 0 }}>
+      <svg
+        width="100%"
+        viewBox="0 0 860 120"
+        preserveAspectRatio="none"
+        style={{ display: "block", width: "100%", height: isMobile ? 60 : 96 }}
+      >
+        {/* 흰 돔이 틴트 위로 봉긋 */}
+        <path d="M0,120 C160,120 250,20 430,20 C610,20 700,120 860,120 Z" fill="#FFFFFF" />
+      </svg>
+      {/* 돔 정점의 accent 원 + 라벨 (텍스트라 aria 노출 유지 위해 별도 div) */}
+      <div
+        style={{
+          position: "absolute",
+          left: "50%",
+          bottom: isMobile ? -circle / 2 : -circle / 2,
+          transform: "translateX(-50%)",
+          width: circle,
+          height: circle,
+          borderRadius: "50%",
+          background: accent.soft,
+          border: `${border}px solid ${accent.accent}`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          overflow: "hidden",
+          color: accent.dark,
+          fontSize: labelFont,
+          fontWeight: 400,
+          fontFamily: DISPLAY_FONT,
+          lineHeight: 1,
+          letterSpacing: -1,
+        }}
+      >
+        <span
+          style={{
+            maxWidth: "84%",
+            overflow: "hidden",
+            whiteSpace: "nowrap",
+            textOverflow: "clip",
+          }}
+        >
+          {label}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 리본 배너 — 다크 리본 + 좌우 접힌 꼬리 (지시 3, CSS 삼각형 꼬리로 구현).
+ * 섹션 제목 위 라벨용. accent 색 리본.
+ */
+function RibbonLabel({
+  text,
+  accent,
+  isMobile,
+}: {
+  text: string
+  accent: AccentPalette
+  isMobile: boolean
+}) {
+  const tail = isMobile ? 12 : 18
+  const padY = isMobile ? 8 : 13
+  const padX = isMobile ? 18 : 30
+  return (
+    <span
+      style={{
+        position: "relative",
+        display: "inline-block",
+        marginLeft: tail,
+        marginRight: tail,
+      }}
+    >
+      {/* 왼쪽 꼬리 (접힌 삼각형) */}
+      <span
+        aria-hidden
+        style={{
+          position: "absolute",
+          left: -tail,
+          top: 0,
+          bottom: 0,
+          width: 0,
+          height: 0,
+          borderTop: `${(padY * 2 + (isMobile ? 20 : 34)) / 2}px solid ${accent.dark}`,
+          borderBottom: `${(padY * 2 + (isMobile ? 20 : 34)) / 2}px solid ${accent.dark}`,
+          borderLeft: `${tail}px solid transparent`,
+        }}
+      />
+      {/* 오른쪽 꼬리 */}
+      <span
+        aria-hidden
+        style={{
+          position: "absolute",
+          right: -tail,
+          top: 0,
+          bottom: 0,
+          width: 0,
+          height: 0,
+          borderTop: `${(padY * 2 + (isMobile ? 20 : 34)) / 2}px solid ${accent.dark}`,
+          borderBottom: `${(padY * 2 + (isMobile ? 20 : 34)) / 2}px solid ${accent.dark}`,
+          borderRight: `${tail}px solid transparent`,
+        }}
+      />
+      {/* 본체 */}
+      <span
+        style={{
+          position: "relative",
+          display: "inline-block",
+          background: accent.accent,
+          color: "#FFFFFF",
+          padding: `${padY}px ${padX}px`,
+          fontSize: isMobile ? 15 : 26,
+          fontWeight: 800,
+          letterSpacing: 1.5,
+          fontFamily: BODY_FONT,
+          lineHeight: isMobile ? "20px" : "34px",
+        }}
+      >
+        {text}
+      </span>
+    </span>
+  )
+}
+
+/**
+ * 기울어진 스티커 배지 — accent 배경 원형/알약을 -3deg 회전 (chamoe-03 · 지시 3).
+ * 사실 데이터(brix 등)만 넣는다. 호출부가 검증한 문구만 전달.
+ */
+function TiltSticker({
+  text,
+  accent,
+  isMobile,
+}: {
+  text: string
+  accent: AccentPalette
+  isMobile: boolean
+}) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        transform: "rotate(-3deg)",
+        background: accent.accent,
+        color: "#FFFFFF",
+        padding: isMobile ? "10px 22px" : "16px 36px",
+        borderRadius: 12,
+        fontSize: isMobile ? 22 : 40,
+        fontWeight: 400,
+        fontFamily: DISPLAY_FONT,
+        letterSpacing: -0.5,
+        lineHeight: 1.1,
+        boxShadow: `0 4px 12px ${accent.accent}55`,
+      }}
+    >
+      {text}
+    </span>
+  )
+}
+
+/**
+ * copy.spec에서 당도(brix) 숫자를 안전하게 추출. 없으면 null.
+ * 스티커 배지는 이 값이 있을 때만 노출 — 사실 데이터만.
+ */
+function extractBrix(copy: CopyOutput): number | null {
+  for (const s of copy.spec) {
+    if (/(당도|Brix|brix)/.test(s.label) && s.value) {
+      const m = s.value.trim().match(/(\d+(?:\.\d+)?)/)
+      if (m) {
+        const n = Number(m[1])
+        if (Number.isFinite(n) && n > 0) return n
+      }
+    }
+  }
+  return null
+}
+
 /**
  * 부분 밑줄 형광펜 — 콜아웃 문장 안에서 앞쪽 "핵심 구(2~3어절)"를 골라
  * accent 물결 밑줄 + 살짝 두꺼운 글씨로 강조한다.
@@ -452,82 +723,144 @@ function ValuePropStrip({ isMobile, trust }: { isMobile: boolean; trust?: TrustI
   const accent = useAccent()
   const vp = t.detail.result.valueProp
 
-  // 강한 주장(체크된 것만) 후보를 앞에 채우고, 4칸이 안 차면 안전 문구로 보충한다.
-  const strong: string[] = []
-  if (trust?.sameDayHarvest) strong.push(vp.sameDayHarvest)
-  if (trust?.coldChain) strong.push(vp.coldChain)
-  else if (trust?.sealedPackage) strong.push(vp.sealed)
-  if (trust?.refundGuarantee) strong.push(vp.refund)
+  // v3.4(지시4): 다크 밴드 → 연한 틴트 위 흰 라운드 카드 1장에 라인 아이콘 3개 +
+  // 점선 세로 구분선(peach-s04). 각 항목에 의미가 맞는 LineIcon을 짝지어 브랜드감을 준다.
+  // 강한 주장(체크된 것만) 우선 → 안전 문구로 3칸 채움(중복 없이). 카드는 항상 3칸.
+  type VpItem = { label: string; Icon: (p: LineIconProps) => React.JSX.Element }
+  const strong: VpItem[] = []
+  if (trust?.sameDayHarvest) strong.push({ label: vp.sameDayHarvest, Icon: HarvestIcon })
+  if (trust?.coldChain) strong.push({ label: vp.coldChain, Icon: ColdIcon })
+  else if (trust?.sealedPackage) strong.push({ label: vp.sealed, Icon: SealIcon })
+  if (trust?.refundGuarantee) strong.push({ label: vp.refund, Icon: ShieldIcon })
 
   // 검증 불필요한 안전 문구 (항상 참인 일반적 신선식품 표현)
-  const safe: string[] = [vp.directFromFarm, vp.carefulSort, vp.freshPack]
+  const safe: VpItem[] = [
+    { label: vp.directFromFarm, Icon: HarvestIcon },
+    { label: vp.carefulSort, Icon: SortIcon },
+    { label: vp.freshPack, Icon: PackIcon },
+  ]
 
-  // 강한 주장 우선 + 안전 문구로 4칸 채움 (중복 없이)
-  const items: string[] = []
-  for (const s of strong) {
-    if (items.length >= 4) break
-    if (!items.includes(s)) items.push(s)
+  const items: VpItem[] = []
+  const seen = new Set<string>()
+  for (const it of [...strong, ...safe]) {
+    if (items.length >= 3) break
+    if (seen.has(it.label)) continue
+    seen.add(it.label)
+    items.push(it)
   }
-  for (const s of safe) {
-    if (items.length >= 4) break
-    if (!items.includes(s)) items.push(s)
-  }
+
+  const iconSize = isMobile ? 46 : 78
 
   return (
     <div
       style={{
-        display: "grid",
-        gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))`,
-        background: INK,
-        color: "#FFFFFF",
-        padding: isMobile ? "18px 0" : "32px 0",
+        background: veilTint(accent.soft),
+        padding: isMobile ? "36px 20px" : "72px 44px",
       }}
     >
-      {items.map((label, i) => (
-        <div
-          key={`vp-${i}`}
-          style={{
-            textAlign: "center",
-            fontSize: isMobile ? 14 : 26,
-            fontWeight: 800,
-            fontFamily: BODY_FONT,
-            letterSpacing: 0.5,
-            borderLeft: i > 0 ? "1px solid rgba(255,255,255,0.15)" : "none",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: isMobile ? 6 : 10,
-          }}
-        >
-          <span aria-hidden style={{ color: accent.accent, fontWeight: 900 }}>✓</span>
-          <span>{label}</span>
-        </div>
-      ))}
+      <div
+        style={{
+          background: "#FFFFFF",
+          borderRadius: 22,
+          border: `1px solid ${accent.soft}`,
+          boxShadow: `0 6px 24px ${accent.accent}14`,
+          padding: isMobile ? "28px 12px" : "52px 28px",
+          display: "grid",
+          gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))`,
+        }}
+      >
+        {items.map(({ label, Icon }, i) => (
+          <div
+            key={`vp-${i}`}
+            style={{
+              textAlign: "center",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: isMobile ? 12 : 20,
+              padding: isMobile ? "4px 8px" : "8px 18px",
+              // 점선 세로 구분선(peach-s04) — 첫 칸 제외
+              borderLeft: i > 0 ? `2px dotted ${accent.soft}` : "none",
+            }}
+          >
+            <Icon color={accent.accent} size={iconSize} />
+            <span
+              style={{
+                fontSize: isMobile ? 15 : 26,
+                fontWeight: 800,
+                fontFamily: BODY_FONT,
+                letterSpacing: -0.2,
+                color: INK,
+                lineHeight: 1.35,
+                wordBreak: "keep-all",
+              }}
+            >
+              {label}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
 
 /**
- * CTA pill — Hero와 하단에서 공유(리서치: CTA 2회 반복).
- * 동일 문구를 같은 스타일로 두 번 노출한다. 폰트 이미지 매체 대형(모바일 20 / 데스크톱 36).
+ * v3.4(지시8): 검은 알약 CTA 제거 — JPG인데 "클릭 버튼"으로 오해되던 다크 pill을
+ * 버튼처럼 보이지 않는 캡션/리본 스타일로 교체. 채워진 알약·검정 배경 없이,
+ * accent 물결 밑줄이 들어간 강조 문구로 시선만 모은다 (Hero·하단 공용 — 하단은 제목형 변주 문구).
  */
 function CtaPill({ text, isMobile }: { text: string; isMobile: boolean }) {
+  const accent = useAccent()
+  const { lead, mark, tail } = splitPhraseEmphasis(text)
   return (
     <div
       style={{
         display: "inline-flex",
         alignItems: "center",
-        padding: isMobile ? "16px 30px" : "22px 48px",
-        borderRadius: 999,
-        background: INK,
-        color: "#FFFFFF",
-        fontSize: isMobile ? 20 : 36,
-        fontWeight: 800,
-        fontFamily: BODY_FONT,
-        letterSpacing: -0.3,
+        justifyContent: "center",
+        gap: isMobile ? 8 : 12,
+        fontSize: isMobile ? 22 : 40,
+        fontWeight: 400,
+        fontFamily: DISPLAY_FONT,
+        letterSpacing: -0.8,
+        color: INK,
+        lineHeight: 1.25,
+        wordBreak: "keep-all",
+        textAlign: "center",
       }}
     >
-      {text}
+      {/* 좌측 잎사귀형 accent 점 — 버튼이 아니라 캡션임을 시각적으로 알린다 */}
+      <span
+        aria-hidden
+        style={{
+          flexShrink: 0,
+          width: isMobile ? 10 : 16,
+          height: isMobile ? 10 : 16,
+          borderRadius: "50%",
+          background: accent.accent,
+        }}
+      />
+      <span>
+        {mark ? (
+          <>
+            {lead}
+            <span
+              style={{
+                color: accent.dark,
+                textDecoration: "underline wavy",
+                textDecorationColor: accent.accent,
+                textDecorationThickness: isMobile ? 2 : 3,
+                textUnderlineOffset: isMobile ? 5 : 8,
+              }}
+            >
+              {mark}
+            </span>
+            {tail}
+          </>
+        ) : (
+          text
+        )}
+      </span>
     </div>
   )
 }
@@ -761,13 +1094,25 @@ export function ResultView({
     return !!(key && FRUIT_FACTS[key]?.pairings?.length)
   }, [productName])
 
-  /** CTA 문구 — Hero와 하단에서 동일하게 반복(리서치: CTA 2회). */
+  /**
+   * CTA 문구 — Hero와 하단 2회 노출(리서치: CTA 2회).
+   * v3.4 fix(이슈4): 히어로 직후와 하단이 완전히 똑같은 "~를 만나보세요"로 2번 찍혀
+   * 반복으로 읽히던 문제 — 하단은 같은 데이터(producer/name)를 쓰되 제목형 변주로 바꾼다.
+   * 조사 변경 수준(만나보세요 → 소개합니다)만, 입력에 없는 사실은 지어내지 않는다.
+   */
   const ctaText = useMemo(() => {
     const name = productName.trim()
     const producer = trust?.producerName?.trim()
     return producer
       ? `${producer} 농가를 만나보세요`
       : `신선한 ${name || "이 상품"}, 지금 담아보세요`
+  }, [productName, trust?.producerName])
+  const ctaTextBottom = useMemo(() => {
+    const name = productName.trim()
+    const producer = trust?.producerName?.trim()
+    return producer
+      ? `${producer} 농가를 소개합니다`
+      : `신선한 ${name || "이 상품"}, 여기 있습니다`
   }, [productName, trust?.producerName])
 
   return (
@@ -853,6 +1198,7 @@ export function ResultView({
               headlineCandidates={headlineCandidates}
               onRegenCandidates={renderRegen("headlineCandidates")}
               ctaText={ctaText}
+              brix={extractBrix(copy)}
             />
 
             {/* 배송 약속 밴드 — Hero CTA 직후 (리서치: 배송 약속 상단 +27.1%) */}
@@ -871,9 +1217,15 @@ export function ResultView({
               </div>
             )}
 
-            <DotDivider />
+            {/* v3.4(지시2): 흰 돔 곡선 전환 — 틴트에서 흰 돔이 솟고 정점에 WHY 원 */}
+            <DomeTransition
+              tintColor={veilTint(accent.soft)}
+              accent={accent}
+              label="WHY"
+              isMobile={isMobile}
+            />
 
-            {/* v2.9: WHY 카드 (수플린 레퍼런스 — Hero 다음) */}
+            {/* v2.9: WHY 카드 (수플린 레퍼런스 — Hero 다음). 돔이 흰 배경으로 착지. */}
             <WhyBrandCard
               productName={productName}
               image={imagePlan.whyBrand}
@@ -922,15 +1274,18 @@ export function ResultView({
               </div>
             )}
 
-            <DotDivider />
-
             {/* 2b. PROBLEM ARC — 문제 제기→해결 서사 아크 (실물 키위 레퍼런스).
                    WHY 카드 다음, Story 앞. problemArc 없으면(구버전 카피) 미노출. */}
-            {copy.problemArc && copy.problemArc.problems.length > 0 && (
+            {copy.problemArc && copy.problemArc.problems.length > 0 ? (
               <>
+                {/* v3.4(지시2): 흰 → 틴트 곡선 전환 */}
+                <CurveDivider topColor="#FFFFFF" fillColor={veilTint(accent.soft)} height={isMobile ? 44 : 64} />
                 <ProblemArcBlock arc={copy.problemArc} isMobile={isMobile} />
-                <DotDivider />
+                {/* 틴트 → 흰(STORY) 곡선 전환 (아래로 파인 곡선처럼 보이도록 색 반전) */}
+                <CurveDivider topColor={veilTint(accent.soft)} fillColor="#FFFFFF" height={isMobile ? 44 : 64} />
               </>
+            ) : (
+              <DotDivider />
             )}
 
             {/* 3. STORY (형광펜 강조 — 첫 감각 문장 자동 강조) */}
@@ -1098,7 +1453,8 @@ export function ResultView({
               </div>
             )}
 
-            {/* CTA 반복 — 교환·환불 안내 뒤, 주의 박스 앞 (리서치: CTA 2회 반복) */}
+            {/* CTA 반복 — 교환·환불 안내 뒤, 주의 박스 앞 (리서치: CTA 2회 반복).
+                하단은 히어로와 동일 데이터의 제목형 변주(이슈4) — 같은 문구 2회 반복 방지. */}
             <div
               style={{
                 display: "flex",
@@ -1107,7 +1463,7 @@ export function ResultView({
                 background: "#FFFFFF",
               }}
             >
-              <CtaPill text={ctaText} isMobile={isMobile} />
+              <CtaPill text={ctaTextBottom} isMobile={isMobile} />
             </div>
 
             {/* 10. CAUTIONS — 신선식품 면책 박스 자동 표시 (cautions 비어 있어도 노출) */}
@@ -1264,12 +1620,13 @@ function WhyBrandCard({
   const accent = useAccent()
   const name = productName.trim()
   return (
-    <div style={{ padding: isMobile ? "48px 24px" : "96px 44px", background: BG_SOFT }}>
+    // 상단 여백 확대: 돔 정점 원(overhang)이 이 섹션 위로 걸치므로 그만큼 비워둔다.
+    <div style={{ padding: isMobile ? "52px 24px 48px" : "96px 44px", background: "#FFFFFF" }}>
       <div
         style={{
-          background: "#FFFFFF",
-          borderRadius: 16,
-          border: `1px solid ${LINE}`,
+          background: accent.soft,
+          borderRadius: 22,
+          border: `1px solid ${accent.soft}`,
           padding: isMobile ? "40px 26px" : "72px 56px",
           textAlign: "center",
         }}
@@ -1529,6 +1886,7 @@ function HeroBlock({
   headlineCandidates,
   onRegenCandidates,
   ctaText,
+  brix,
 }: {
   heroImage?: UploadedImage
   copy: CopyOutput
@@ -1545,6 +1903,8 @@ function HeroBlock({
   onRegenCandidates: React.ReactNode
   /** Hero·하단 공용 CTA 문구 (ResultView에서 계산해 내려줌). */
   ctaText: string
+  /** 당도(brix) — 입력 스펙에서 추출. 있을 때만 기울어진 스티커 배지 노출(지시3, 사실 데이터). */
+  brix: number | null
 }) {
   const accent = useAccent()
   const name = productName.trim()
@@ -1633,6 +1993,19 @@ function HeroBlock({
 
       {/* 대표 이미지 */}
       <div style={{ position: "relative", background: accent.soft }}>
+        {/* 기울어진 당도 스티커(지시3) — brix 입력이 있을 때만. 사실 데이터만. */}
+        {brix != null && (
+          <div
+            style={{
+              position: "absolute",
+              top: isMobile ? 14 : 26,
+              right: isMobile ? 14 : 26,
+              zIndex: 2,
+            }}
+          >
+            <TiltSticker text={`${brix} Brix`} accent={accent} isMobile={isMobile} />
+          </div>
+        )}
         {heroImage ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -1791,32 +2164,87 @@ function ProblemArcBlock({
   const accent = useAccent()
   const problems = arc.problems.slice(0, 3)
   if (problems.length === 0) return null
+
+  // v3.4(지시3): Q&A 2줄 위계 (chamoe-03 "이게 참외야? 꿀이야? → 아니 꿀참외야!").
+  // answer 필드가 없어 사실을 지어내지 않는다 — 원문 재배치만으로 위계를 만든다.
+  //  (a) 물음표가 여럿이면 마지막 절만 큰 accent(= 핵심 질문), 앞 절들은 작은 잉크 리드.
+  //  (b) v3.4 fix(이슈2): 물음표가 1개인 질문(대부분)도 리드/메인이 분리되게 —
+  //      쉼표가 있으면 마지막 쉼표 뒤를, 없으면 어절 기준 뒷부분(≈절반, 최소 마지막
+  //      어절)을 큰 accent 메인으로 올리고 앞부분을 작은 잉크 리드로 내린다.
+  //      어절이 1개뿐이면 분리하지 않는다(전체를 메인으로).
+  const q = arc.question.trim()
+  const qParts = q.split(/(?<=\?)/).map((s) => s.trim()).filter(Boolean)
+  let qLead = ""
+  let qMain = q
+  if (qParts.length >= 2) {
+    qLead = qParts.slice(0, -1).join(" ")
+    qMain = qParts[qParts.length - 1]
+  } else {
+    // 한 절짜리 질문 — 쉼표 우선, 없으면 어절 기준으로 앞(리드)/뒤(메인) 분리.
+    const commaIdx = q.lastIndexOf(",")
+    if (commaIdx > 0 && commaIdx < q.length - 1) {
+      qLead = q.slice(0, commaIdx + 1).trim()
+      qMain = q.slice(commaIdx + 1).trim()
+    } else {
+      const words = q.split(/\s+/).filter(Boolean)
+      if (words.length >= 2) {
+        // 뒷부분(핵심 구)을 메인으로 — 어절의 뒤 절반(올림), 최소 1어절.
+        const mainCount = Math.max(1, Math.ceil(words.length / 2))
+        const splitAt = words.length - mainCount
+        qLead = words.slice(0, splitAt).join(" ")
+        qMain = words.slice(splitAt).join(" ")
+      }
+    }
+  }
+
   return (
     <div
       style={{
         padding: isMobile ? "56px 24px" : "112px 56px",
-        background: BG_SOFT,
+        background: veilTint(accent.soft),
       }}
     >
-      {/* 공감 질문 — BlackHanSans 대형 중앙 */}
-      <h2
+      {/* 공감 질문 — 2줄 위계: 작은 잉크 리드(질문) + 큰 accent 핵심(답/포인트) */}
+      <div
         style={{
-          fontSize: isMobile ? 28 : 50,
-          fontWeight: 400,
-          margin: 0,
           textAlign: "center",
-          color: INK,
-          lineHeight: 1.28,
-          letterSpacing: -1,
-          fontFamily: DISPLAY_FONT,
           maxWidth: 760,
           marginLeft: "auto",
           marginRight: "auto",
-          wordBreak: "keep-all",
         }}
       >
-        {arc.question}
-      </h2>
+        {qLead && (
+          <p
+            style={{
+              margin: 0,
+              marginBottom: isMobile ? 8 : 14,
+              fontSize: isMobile ? 18 : 32,
+              fontWeight: 800,
+              color: INK,
+              lineHeight: 1.35,
+              fontFamily: BODY_FONT,
+              letterSpacing: -0.3,
+              wordBreak: "keep-all",
+            }}
+          >
+            {qLead}
+          </p>
+        )}
+        <h2
+          style={{
+            fontSize: isMobile ? 30 : 54,
+            fontWeight: 400,
+            margin: 0,
+            color: accent.dark,
+            lineHeight: 1.24,
+            letterSpacing: -1,
+            fontFamily: DISPLAY_FONT,
+            wordBreak: "keep-all",
+          }}
+        >
+          {qMain}
+        </h2>
+      </div>
 
       {/* "{n}가지 이유" pill 배지 (accent) */}
       <div
@@ -1928,28 +2356,15 @@ function StoryBlock({
         position: "relative",
       }}
     >
-      {/* v2.5: 큰따옴표 삭제 → STORY 캡션 라벨로 대체 (스마트스토어 톤) */}
+      {/* v3.4(지시3): STORY 검정 캡션 → accent 리본 배너(좌우 접힌 꼬리)로 교체 */}
       {hasStory && (
         <div
           style={{
             textAlign: "center",
-            marginBottom: isMobile ? 28 : 36,
+            marginBottom: isMobile ? 30 : 40,
           }}
         >
-          <span
-            style={{
-              display: "inline-block",
-              padding: isMobile ? "7px 16px" : "10px 22px",
-              background: INK,
-              color: "#FFFFFF",
-              fontSize: isMobile ? 14 : 24,
-              fontWeight: 800,
-              letterSpacing: 3,
-              fontFamily: BODY_FONT,
-            }}
-          >
-            STORY
-          </span>
+          <RibbonLabel text="STORY" accent={accent} isMobile={isMobile} />
         </div>
       )}
 
@@ -2131,6 +2546,22 @@ function SensoryPunchBlock({
   )
 }
 
+/**
+ * v3.4(지시6) 갤러리 컬러 바 캡션용 중립 안전 문구 풀.
+ * 사실 주장(당도·산지·수확일 등) 금지 — 사진 성격만 담담히 서술.
+ * 사진마다 서로 다른 문구를 순서대로 배정해 반복을 피한다.
+ */
+const GALLERY_SAFE_CAPTIONS = [
+  "산지에서 갓 담은 모습",
+  "받아보시는 그대로",
+  "정성껏 골라 담았어요",
+  "식탁에 올리기 좋은 크기",
+  "가까이서 본 결과 빛깔",
+  "한 알 한 알 신경 썼어요",
+  "포장 전 마지막 점검",
+  "이렇게 보내드립니다",
+]
+
 function GalleryBlock({
   images,
   productName,
@@ -2138,10 +2569,16 @@ function GalleryBlock({
   images: UploadedImage[]
   productName: string
 }) {
+  const accent = useAccent()
   // v2.6: 첫 이미지 대형 통 이미지 + 나머지는 2열 그리드 (아보카도·복숭아 페이지 톤)
   // v3.0: 5장 고정 제거 — 중앙 배정기(imagePlan.gallery)가 남은 사진 수에 맞춰
   // 최대 8장까지 넘겨준다. 여기선 그대로 전부 렌더(featured 1 + grid 나머지).
   const [featured, ...rest] = images
+
+  // v3.4(지시6): 각 사진 하단 accent 컬러 바 캡션. 사진 순서대로 서로 다른 안전 문구.
+  const captionFor = (idx: number) =>
+    GALLERY_SAFE_CAPTIONS[idx % GALLERY_SAFE_CAPTIONS.length]
+
   return (
     <div
       style={{
@@ -2155,6 +2592,7 @@ function GalleryBlock({
       {featured && (
         <div
           style={{
+            position: "relative",
             background: "#FFFFFF",
             borderRadius: 8,
             overflow: "hidden",
@@ -2172,6 +2610,26 @@ function GalleryBlock({
               display: "block",
             }}
           />
+          {/* 컬러 타이틀 바 (accent, 흰 글씨) */}
+          <div
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: accent.accent,
+              color: "#FFFFFF",
+              padding: "14px 22px",
+              fontSize: 28,
+              fontWeight: 800,
+              fontFamily: BODY_FONT,
+              letterSpacing: -0.3,
+              textAlign: "center",
+              wordBreak: "keep-all",
+            }}
+          >
+            {captionFor(0)}
+          </div>
         </div>
       )}
       {rest.length > 0 && (
@@ -2186,6 +2644,7 @@ function GalleryBlock({
             <div
               key={img.id}
               style={{
+                position: "relative",
                 background: "#FFFFFF",
                 borderRadius: 6,
                 overflow: "hidden",
@@ -2202,6 +2661,25 @@ function GalleryBlock({
                   display: "block",
                 }}
               />
+              <div
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  background: accent.accent,
+                  color: "#FFFFFF",
+                  padding: rest.length === 1 ? "12px 18px" : "9px 12px",
+                  fontSize: rest.length === 1 ? 24 : 18,
+                  fontWeight: 800,
+                  fontFamily: BODY_FONT,
+                  letterSpacing: -0.3,
+                  textAlign: "center",
+                  wordBreak: "keep-all",
+                }}
+              >
+                {captionFor(i + 1)}
+              </div>
             </div>
           ))}
         </div>
@@ -2371,6 +2849,20 @@ function BrixScaleBar({
   )
 }
 
+/**
+ * v3.4(지시8): 스펙 라벨용 미니 라인 아이콘 — 라벨 키워드로 매핑, 미매칭은 PackIcon.
+ * 기존 LineIcons(손그림 라인) 재사용 → 브랜드 톤 통일, toCanvas 호환.
+ */
+function specLabelIcon(label: string): (p: LineIconProps) => React.JSX.Element {
+  if (/(당도|Brix|brix|맛|향|달)/.test(label)) return HarvestIcon
+  if (/(산지|원산지|재배|농장|생산)/.test(label)) return HarvestIcon
+  if (/(보관|냉장|냉동|저온|콜드)/.test(label)) return ColdIcon
+  if (/(중량|무게|크기|용량|수량|개수)/.test(label)) return SortIcon
+  if (/(포장|배송|택배|발송)/.test(label)) return DeliverIcon
+  if (/(품종|등급|규격|선별)/.test(label)) return SortIcon
+  return PackIcon
+}
+
 function SpecBlock({
   copy,
   productName,
@@ -2388,133 +2880,168 @@ function SpecBlock({
 }) {
   const accent = useAccent()
   const specCount = copy.spec.length
-  // 4개 이상이면 2열, 3개면 1열(좁은 모바일)/2열(데스크탑) 자동 — 항상 2열로 통일하되 홀수 시 마지막 카드가 가득 차도록 grid auto-fit 흉내
-  const columns = specCount <= 1 ? "1fr" : "repeat(2, minmax(0, 1fr))"
 
   // 당도 기준선 바 — fruit-facts 매칭 시에만 사용할 기준값.
   const brixFact = FRUIT_FACTS[detectFruitFactKey(productName) ?? ""]
 
   // (개수 환산은 크기 블록이 전담 — v3.1-b에서 스펙 쪽 중복 행 삭제)
 
+  // v3.4 fix(이슈3): 당도 카드(대형 숫자 + Brix 기준선 바)는 세로로 훨씬 길어,
+  // 같은 2열 행에 놓인 옆 카드(중량 등)에 ~400px 빈 공간을 만들었다.
+  // → 기준선 바가 실제로 붙는 "키 큰 당도 카드"만 행에서 빼 풀폭으로 올리고,
+  //   나머지 카드끼리 2열 그리드를 유지한다. (바가 안 붙는 평범한 당도 카드는 그대로 그리드에 남음)
+  const isTallBrix = (s: CopyOutput["spec"][number]): boolean => {
+    if (!/(당도|Brix|brix)/.test(s.label) || !s.value) return false
+    const m = s.value.trim().match(/^(\d+(?:\.\d+)?)\s*([A-Za-z가-힣]+)?/)
+    if (!m) return false
+    const brixValue = Number(m[1])
+    return !!brixFact && Number.isFinite(brixValue) && brixValue >= brixFact.goodBrix
+  }
+  // 풀폭으로 뺄 당도 카드 인덱스(첫 매칭 1개만) + 그리드에 남을 나머지.
+  const featuredIdx = copy.spec.findIndex(isTallBrix)
+  const gridSpecs = copy.spec
+    .map((s, i) => ({ s, i }))
+    .filter(({ i }) => i !== featuredIdx)
+  // 그리드 열 수 — 남은 카드가 1개면 1열, 아니면 2열.
+  const columns = gridSpecs.length <= 1 ? "1fr" : "repeat(2, minmax(0, 1fr))"
+
+  // 스펙 카드 1장 렌더 (풀폭·그리드 공용). i는 원본 copy.spec 인덱스(편집 경로용).
+  const renderCard = (s: CopyOutput["spec"][number], i: number) => {
+    const isSweetness = /(당도|Brix|brix)/.test(s.label)
+    const sweetnessMatch = isSweetness && s.value
+      ? s.value.trim().match(/^(\d+(?:\.\d+)?)\s*([A-Za-z가-힣]+)?/)
+      : null
+    return (
+      <div
+        key={`spec-${i}`}
+        style={{
+          background: "#FFFFFF",
+          border: `1px solid ${LINE}`,
+          borderRadius: 14,
+          padding: isMobile ? "24px 24px" : "32px 34px",
+          display: "flex",
+          flexDirection: "column",
+          gap: isMobile ? 12 : 16,
+          minWidth: 0,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: isMobile ? 7 : 10,
+            fontSize: isMobile ? 15 : 24,
+            color: SUB,
+            fontWeight: 700,
+            fontFamily: BODY_FONT,
+            letterSpacing: 0.5,
+          }}
+        >
+          {/* v3.4(지시8): 라벨 앞 미니 라인 아이콘 */}
+          {(() => {
+            const MiniIcon = specLabelIcon(s.label)
+            return <MiniIcon color={accent.accent} size={isMobile ? 20 : 30} />
+          })()}
+          <span>{s.label}</span>
+        </div>
+        {isSweetness && sweetnessMatch ? (
+          (() => {
+            const brixValue = Number(sweetnessMatch[1])
+            // 기준선 바는 fact 매칭 + brix가 "맛있다 기준" 이상일 때만 (불리한 시각화 방지).
+            const showScale =
+              !!brixFact &&
+              Number.isFinite(brixValue) &&
+              brixValue >= brixFact.goodBrix
+            return (
+              <>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "baseline",
+                    gap: isMobile ? 6 : 10,
+                    lineHeight: 1,
+                    color: accent.accent,
+                    fontFamily: DISPLAY_FONT,
+                  }}
+                >
+                  {/* v2.5: 당도 대형 숫자 — 임무D 확대(모바일 64 / 데스크톱 108, 시각 앵커) */}
+                  <span style={{ fontSize: isMobile ? 64 : 108, fontWeight: 400, letterSpacing: -3 }}>
+                    {sweetnessMatch[1]}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: isMobile ? 15 : 26,
+                      fontWeight: 800,
+                      color: accent.dark,
+                      fontFamily: BODY_FONT,
+                      letterSpacing: 1,
+                    }}
+                  >
+                    {sweetnessMatch[2] ?? "Brix"}
+                  </span>
+                </div>
+                {showScale && brixFact && (
+                  <BrixScaleBar
+                    brix={brixValue}
+                    goodBrix={brixFact.goodBrix}
+                    brixCeiling={brixFact.brixCeiling}
+                    isMobile={isMobile}
+                  />
+                )}
+              </>
+            )
+          })()
+        ) : (
+          <div
+            style={{
+              fontSize: isMobile ? 22 : 40,
+              fontWeight: 800,
+              color: INK,
+              lineHeight: 1.35,
+              wordBreak: "keep-all",
+              fontFamily: BODY_FONT,
+              letterSpacing: -0.3,
+            }}
+          >
+            <EditableResultText
+              copy={copy}
+              onChange={onCopyChange}
+              path={["spec", i, "value"]}
+              maxLength={100}
+              placeholder={s.label}
+            />
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div
       style={{
         padding: isMobile ? "44px 24px" : "96px 44px",
-        background: BG_SOFT,
+        background: veilTint(accent.soft),
       }}
     >
       <SectionTitle title={t.detail.result.spec} regen={onRegen} isMobile={isMobile} />
 
       {specCount > 0 ? (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: columns,
-            gap: isMobile ? 10 : 16,
-          }}
-        >
-          {/* v2.3: 이모지 아이콘 삭제, 카드 테두리 얇은 회색, 라벨/값 리듬 통일 */}
-          {copy.spec.map((s, i) => {
-            const isSweetness = /(당도|Brix|brix)/.test(s.label)
-            const sweetnessMatch = isSweetness && s.value
-              ? s.value.trim().match(/^(\d+(?:\.\d+)?)\s*([A-Za-z가-힣]+)?/)
-              : null
-            return (
-              <div
-                key={`spec-${i}`}
-                style={{
-                  background: "#FFFFFF",
-                  border: `1px solid ${LINE}`,
-                  borderRadius: 14,
-                  padding: isMobile ? "24px 24px" : "32px 34px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: isMobile ? 12 : 16,
-                  minWidth: 0,
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: isMobile ? 15 : 24,
-                    color: SUB,
-                    fontWeight: 700,
-                    fontFamily: BODY_FONT,
-                    letterSpacing: 0.5,
-                  }}
-                >
-                  {s.label}
-                </div>
-                {isSweetness && sweetnessMatch ? (
-                  (() => {
-                    const brixValue = Number(sweetnessMatch[1])
-                    // 기준선 바는 fact 매칭 + brix가 "맛있다 기준" 이상일 때만 (불리한 시각화 방지).
-                    const showScale =
-                      !!brixFact &&
-                      Number.isFinite(brixValue) &&
-                      brixValue >= brixFact.goodBrix
-                    return (
-                      <>
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "baseline",
-                            gap: isMobile ? 6 : 10,
-                            lineHeight: 1,
-                            color: accent.accent,
-                            fontFamily: DISPLAY_FONT,
-                          }}
-                        >
-                          {/* v2.5: 당도 대형 숫자 — 임무D 확대(모바일 64 / 데스크톱 108, 시각 앵커) */}
-                          <span style={{ fontSize: isMobile ? 64 : 108, fontWeight: 400, letterSpacing: -3 }}>
-                            {sweetnessMatch[1]}
-                          </span>
-                          <span
-                            style={{
-                              fontSize: isMobile ? 15 : 26,
-                              fontWeight: 800,
-                              color: accent.dark,
-                              fontFamily: BODY_FONT,
-                              letterSpacing: 1,
-                            }}
-                          >
-                            {sweetnessMatch[2] ?? "Brix"}
-                          </span>
-                        </div>
-                        {showScale && brixFact && (
-                          <BrixScaleBar
-                            brix={brixValue}
-                            goodBrix={brixFact.goodBrix}
-                            brixCeiling={brixFact.brixCeiling}
-                            isMobile={isMobile}
-                          />
-                        )}
-                      </>
-                    )
-                  })()
-                ) : (
-                  <div
-                    style={{
-                      fontSize: isMobile ? 22 : 40,
-                      fontWeight: 800,
-                      color: INK,
-                      lineHeight: 1.35,
-                      wordBreak: "keep-all",
-                      fontFamily: BODY_FONT,
-                      letterSpacing: -0.3,
-                    }}
-                  >
-                    <EditableResultText
-                      copy={copy}
-                      onChange={onCopyChange}
-                      path={["spec", i, "value"]}
-                      maxLength={100}
-                      placeholder={s.label}
-                    />
-                  </div>
-                )}
-              </div>
-            )
-          })}
+        <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 10 : 16 }}>
+          {/* 키 큰 당도 카드(기준선 바 포함)는 풀폭 — 옆 카드 여백 덩어리 제거(이슈3). */}
+          {featuredIdx >= 0 && renderCard(copy.spec[featuredIdx], featuredIdx)}
+          {/* 나머지 스펙은 2열 그리드 유지 */}
+          {gridSpecs.length > 0 && (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: columns,
+                gap: isMobile ? 10 : 16,
+              }}
+            >
+              {/* v2.3: 이모지 아이콘 삭제, 카드 테두리 얇은 회색, 라벨/값 리듬 통일 */}
+              {gridSpecs.map(({ s, i }) => renderCard(s, i))}
+            </div>
+          )}
         </div>
       ) : (
         <div
@@ -2754,6 +3281,29 @@ function KeyPointsBig({
   )
 }
 
+/**
+ * storage 원문을 STEP 타임라인용 단계 배열로 분해 (지시7, peach-s08).
+ * 지어내지 않고 셀러 원문만 쓴다: 줄바꿈 우선, 없으면 문장부호로 분할.
+ * 최대 3단계. 분할 결과가 1개뿐이면 단일 STEP으로 렌더(타임라인 점 1개).
+ */
+function splitStorageSteps(storage: string): string[] {
+  const text = (storage ?? "").trim()
+  if (!text) return []
+  // 1) 줄바꿈 기준
+  let parts = text
+    .split(/\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  // 2) 한 줄뿐이면 문장부호(.!?) 기준으로 재분할
+  if (parts.length < 2) {
+    parts = text
+      .split(/(?<=[.!?。])\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+  }
+  return parts.slice(0, 3)
+}
+
 function StorageBlock({
   copy,
   onCopyChange,
@@ -2765,6 +3315,12 @@ function StorageBlock({
   onRegen: React.ReactNode
   isMobile: boolean
 }) {
+  const accent = useAccent()
+  // v3.4(지시7): storage 원문을 STEP 01/02/03 세로 타임라인으로 재구성.
+  // 편집은 아래 EditableResultText(편집 전용 chrome)에서 그대로 하고,
+  // JPG에는 원문에서 파생한 STEP 타임라인 카드만 찍힌다 (StoryBlock과 동일한 방식).
+  const steps = useMemo(() => splitStorageSteps(copy.storage), [copy.storage])
+
   return (
     <div
       style={{
@@ -2773,20 +3329,127 @@ function StorageBlock({
       }}
     >
       <SectionTitle title={t.detail.result.storage} regen={onRegen} isMobile={isMobile} />
+
+      {steps.length > 0 && (
+        <div
+          style={{
+            border: `1px solid ${accent.soft}`,
+            borderRadius: 22,
+            padding: isMobile ? "28px 22px" : "52px 48px",
+            background: "#FFFFFF",
+          }}
+        >
+          {steps.map((s, i) => {
+            const last = i === steps.length - 1
+            const dot = isMobile ? 20 : 30
+            return (
+              <div
+                key={`storage-step-${i}`}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: `${isMobile ? 84 : 132}px 1fr`,
+                  columnGap: isMobile ? 12 : 22,
+                }}
+              >
+                {/* 왼쪽: STEP 라벨 + 점 + 세로 연결선 */}
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "flex-start",
+                    position: "relative",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: isMobile ? 18 : 30,
+                      fontWeight: 400,
+                      color: accent.accent,
+                      fontFamily: DISPLAY_FONT,
+                      letterSpacing: -0.5,
+                      lineHeight: 1,
+                    }}
+                  >
+                    STEP {String(i + 1).padStart(2, "0")}
+                  </span>
+                  {/* 점 (아웃라인 원) */}
+                  <span
+                    aria-hidden
+                    style={{
+                      marginTop: isMobile ? 6 : 10,
+                      width: dot,
+                      height: dot,
+                      borderRadius: "50%",
+                      background: "#FFFFFF",
+                      border: `${isMobile ? 3 : 4}px solid ${accent.accent}`,
+                      flexShrink: 0,
+                    }}
+                  />
+                  {/* 세로 연결선 (마지막 단계 제외) */}
+                  {!last && (
+                    <span
+                      aria-hidden
+                      style={{
+                        position: "absolute",
+                        left: (dot - (isMobile ? 2 : 3)) / 2,
+                        top: (isMobile ? 24 : 40) + dot,
+                        bottom: 0,
+                        width: isMobile ? 2 : 3,
+                        background: accent.soft,
+                      }}
+                    />
+                  )}
+                </div>
+                {/* 오른쪽: 단계 본문 */}
+                <p
+                  style={{
+                    margin: 0,
+                    paddingBottom: last ? 0 : isMobile ? 28 : 48,
+                    fontSize: isMobile ? 18 : 32,
+                    color: INK,
+                    lineHeight: 1.6,
+                    fontWeight: 500,
+                    fontFamily: BODY_FONT,
+                    letterSpacing: -0.3,
+                    wordBreak: "keep-all",
+                    whiteSpace: "pre-line",
+                  }}
+                >
+                  {s}
+                </p>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* 편집 전용 — 실제 storage 텍스트 편집 진입(JPG 제외). steps는 여기 원문에서 파생. */}
       <div
+        data-edit-chrome
         style={{
-          padding: isMobile ? "24px 24px" : "40px 44px",
-          background: "#FFFFFF",
-          borderRadius: 6,
-          border: `1px solid ${LINE}`,
+          marginTop: steps.length > 0 ? (isMobile ? 16 : 24) : 0,
+          padding: isMobile ? "20px 22px" : "28px 34px",
+          background: BG_SOFT,
+          borderRadius: 10,
+          border: `1px dashed ${LINE}`,
         }}
       >
-        {/* v2.2: 값 유무 상관 없이 항상 EditableResultText — 편집 진입 가능 */}
         <p
           style={{
-            fontSize: isMobile ? 18 : 32,
+            margin: "0 0 8px",
+            fontSize: isMobile ? 12 : 14,
+            color: MUTE,
+            fontWeight: 700,
+            fontFamily: BODY_FONT,
+          }}
+        >
+          보관법 편집 (줄바꿈으로 STEP 구분)
+        </p>
+        <p
+          style={{
+            fontSize: isMobile ? 16 : 22,
             color: INK,
-            lineHeight: 1.7,
+            lineHeight: 1.6,
             whiteSpace: "pre-line",
             margin: 0,
             fontFamily: BODY_FONT,
@@ -2799,7 +3462,7 @@ function StorageBlock({
             multiline
             maxLength={500}
             preserveWhitespace
-            placeholder="보관법을 알려주시면 셀러 신뢰가 올라가요"
+            placeholder="보관법을 알려주시면 셀러 신뢰가 올라가요 (줄바꿈으로 단계 구분)"
           />
         </p>
       </div>
@@ -3054,7 +3717,7 @@ function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: b
     { title: "문 앞 도착", desc: "완충 포장으로 신선하게 문 앞까지" },
   ]
   return (
-    <div style={{ padding: isMobile ? "52px 24px" : "104px 44px", background: BG_SOFT }}>
+    <div style={{ padding: isMobile ? "52px 24px" : "104px 44px", background: veilTint(accent.soft) }}>
       <div style={{ textAlign: "center", marginBottom: isMobile ? 32 : 48 }}>
         <div
           style={{
@@ -3496,58 +4159,101 @@ function ReviewsBlock({
 }) {
   const accent = useAccent()
   return (
-    <div style={{ padding: isMobile ? "48px 24px" : "104px 44px", background: BG_SOFT }}>
+    <div style={{ padding: isMobile ? "48px 24px" : "104px 44px", background: veilTint(accent.soft) }}>
       <SectionTitle title={t.detail.result.reviews.title} isMobile={isMobile} />
       <div
         style={{
           display: "flex",
           flexDirection: "column",
-          gap: isMobile ? 14 : 22,
+          // 발췌 박스가 카드 위로 걸치므로 카드 간 간격을 넉넉히.
+          gap: isMobile ? 26 : 40,
         }}
       >
-        {reviews.map((r, i) => (
-          <div
-            key={`review-${i}`}
-            style={{
-              background: "#FFFFFF",
-              borderRadius: 16,
-              border: `1px solid ${LINE}`,
-              padding: isMobile ? "24px 24px" : "40px 44px",
-              display: "flex",
-              flexDirection: "column",
-              gap: isMobile ? 12 : 18,
-            }}
-          >
-            {/* 별 5개 — 항상 5점(셀러가 대표 후기로 고른 것). accent 색 채움. */}
-            <div
-              aria-hidden
-              style={{
-                display: "flex",
-                gap: isMobile ? 3 : 5,
-                fontSize: isMobile ? 20 : 32,
-                color: accent.accent,
-                lineHeight: 1,
-              }}
-            >
-              {"★★★★★"}
+        {reviews.map((r, i) => {
+          // v3.4(지시5): highlight가 본문에 실제 포함될 때만 발췌 오버랩 박스(proj1).
+          // accent 아웃라인 + 흰 배경 박스를 살짝 회전·겹침. 지어내지 않고 원문 발췌만.
+          const hi = r.highlight?.trim()
+          const showPull = !!hi && r.text.includes(hi)
+          const tilt = i % 2 === 0 ? "rotate(-1.5deg)" : "rotate(1.5deg)"
+          return (
+            <div key={`review-${i}`} style={{ position: "relative" }}>
+              <div
+                style={{
+                  background: "#FFFFFF",
+                  borderRadius: 16,
+                  border: `1px solid ${accent.soft}`,
+                  boxShadow: `0 4px 16px ${accent.accent}10`,
+                  padding: isMobile ? "24px 24px" : "40px 44px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: isMobile ? 12 : 18,
+                }}
+              >
+                {/* 별 5개 — 항상 5점(셀러가 대표 후기로 고른 것). accent 색 채움. */}
+                <div
+                  aria-hidden
+                  style={{
+                    display: "flex",
+                    gap: isMobile ? 3 : 5,
+                    fontSize: isMobile ? 20 : 32,
+                    color: accent.accent,
+                    lineHeight: 1,
+                  }}
+                >
+                  {"★★★★★"}
+                </div>
+                {/* 후기 본문 — highlight가 본문에 포함되면 그 부분만 형광펜 강조. */}
+                <p
+                  style={{
+                    fontSize: isMobile ? 20 : 34,
+                    color: INK,
+                    lineHeight: 1.6,
+                    margin: 0,
+                    fontFamily: BODY_FONT,
+                    fontWeight: 500,
+                    wordBreak: "keep-all",
+                    whiteSpace: "pre-line",
+                  }}
+                >
+                  <ReviewBody text={r.text} highlight={r.highlight} accent={accent} />
+                </p>
+              </div>
+
+              {/* 발췌 오버랩 박스 — 카드 오른쪽 아래에 살짝 겹쳐 회전 배치 (proj1) */}
+              {showPull && (
+                <div
+                  style={{
+                    position: "absolute",
+                    right: isMobile ? 12 : 28,
+                    bottom: isMobile ? -18 : -26,
+                    transform: tilt,
+                    maxWidth: "78%",
+                    background: "#FFFFFF",
+                    border: `2px solid ${accent.accent}`,
+                    borderRadius: 10,
+                    padding: isMobile ? "10px 16px" : "16px 26px",
+                    boxShadow: `0 6px 18px ${accent.accent}22`,
+                    zIndex: 2,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: isMobile ? 16 : 28,
+                      fontWeight: 800,
+                      color: accent.dark,
+                      lineHeight: 1.35,
+                      fontFamily: BODY_FONT,
+                      letterSpacing: -0.3,
+                      wordBreak: "keep-all",
+                    }}
+                  >
+                    {hi}
+                  </span>
+                </div>
+              )}
             </div>
-            {/* 후기 본문 — highlight가 본문에 포함되면 그 부분만 형광펜 강조. */}
-            <p
-              style={{
-                fontSize: isMobile ? 20 : 34,
-                color: INK,
-                lineHeight: 1.6,
-                margin: 0,
-                fontFamily: BODY_FONT,
-                fontWeight: 500,
-                wordBreak: "keep-all",
-                whiteSpace: "pre-line",
-              }}
-            >
-              <ReviewBody text={r.text} highlight={r.highlight} accent={accent} />
-            </p>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
@@ -3602,6 +4308,7 @@ function FarmStoryBlock({
   isMobile: boolean
   trust?: TrustInfo
 }) {
+  const accent = useAccent()
   // trust에 농부 정보 있으면 ProducerCard로, 없으면 placeholder.
   const hasProducer = !!(trust?.producerName || trust?.producerRegion || trust?.farmerYears)
   const farmerMeta = hasProducer
@@ -3637,9 +4344,9 @@ function FarmStoryBlock({
       <div
         style={{
           padding: isMobile ? "32px 26px" : "56px 60px",
-          background: BG_SOFT,
+          background: accent.soft,
           borderRadius: 14,
-          border: `1px solid ${LINE}`,
+          border: `1px solid ${accent.soft}`,
           position: "relative",
         }}
       >
