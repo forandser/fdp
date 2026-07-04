@@ -96,14 +96,6 @@ export function emptyCopy(): CopyOutput {
   }
 }
 
-/** 빈 문자열이면 placeholder 회색 텍스트를 렌더. */
-function Placeholder({ text }: { text: string }) {
-  return (
-    <span style={{ color: PLACEHOLDER, fontWeight: 400, fontStyle: "italic" }}>
-      여기에 {text}가 들어갑니다
-    </span>
-  )
-}
 
 /** v2.4: 섹션 구분자 — 사과 이모지·빨강 점 제거, 여백만. */
 function DotDivider() {
@@ -251,6 +243,12 @@ export function ResultView({
   /** v2.8: 과일별 축색 팔레트 — 상품명 기반 자동 전환. */
   const accent = useMemo(() => resolveAccent(productName), [productName])
 
+  /** v2.9: 즐기는 법 블록 노출 여부 — 과일 매칭 + pairings 있을 때만. */
+  const hasRecipe = useMemo(() => {
+    const key = detectFruitFactKey(productName)
+    return !!(key && FRUIT_FACTS[key]?.pairings?.length)
+  }, [productName])
+
   return (
     <AccentContext.Provider value={accent}>
     <div
@@ -328,13 +326,46 @@ export function ResultView({
               />
             </div>
 
-            {/* v2.3: mini POINT 카드 제거된 헤더만 (KeyPointsBig와 중복 방지) */}
-            <WhyHeader productName={productName} isMobile={isMobile} />
+            {/* v2.9: HERO를 최상단으로 (수플린 레퍼런스 — 헤드/이미지/CTA가 먼저) */}
+            <HeroBlock
+              heroImage={heroImage}
+              copy={copy}
+              productName={productName}
+              origin={origin}
+              trust={trust}
+              onCopyChange={onCopyChange}
+              onRegenHeadline={renderRegen("headline")}
+              onRegenSub={renderRegen("subheadline")}
+              isMobile={isMobile}
+              factPlaceholder={factPlaceholder}
+            />
+
+            {/* v2.5: 가치 제안 스트립 (산지직송·당일수확·100%환불·신선보장) */}
+            <ValuePropStrip isMobile={isMobile} />
+
+            {/* 2a. FreshnessTimeline — 수확일 + fruit-facts 보관 일수 (v1.8) */}
+            {freshnessProps && (
+              <div style={{ padding: "16px 20px" }}>
+                <FreshnessTimeline
+                  harvestDate={freshnessProps.harvestDate}
+                  daysGood={freshnessProps.daysGood}
+                />
+              </div>
+            )}
+
+            <DotDivider />
+
+            {/* v2.9: WHY 카드 (수플린 레퍼런스 — Hero 다음) */}
+            <WhyBrandCard
+              productName={productName}
+              image={heroImage}
+              isMobile={isMobile}
+            />
 
             {/* 1a. TRUST BADGES */}
             {trust && <TrustBadgesRow trust={trust} />}
 
-            {/* 1b. CertCaption — 공식 인증 above-fold (v1.8) */}
+            {/* 1b. CertCaption — 공식 인증 (v1.8) */}
             {trust && (trust.gapNumber?.trim() || trust.organicNumber?.trim() || trust.pesticideFreeNumber?.trim()) && (
               <div
                 style={{
@@ -370,32 +401,6 @@ export function ResultView({
                     producerRegion={trust.producerRegion}
                   />
                 )}
-              </div>
-            )}
-
-            <DotDivider />
-
-            {/* 2. HERO + HEADLINE BIG TITLE */}
-            <HeroBlock
-              heroImage={heroImage}
-              copy={copy}
-              onCopyChange={onCopyChange}
-              onRegenHeadline={renderRegen("headline")}
-              onRegenSub={renderRegen("subheadline")}
-              isMobile={isMobile}
-              factPlaceholder={factPlaceholder}
-            />
-
-            {/* v2.5: 가치 제안 스트립 (산지직송·당일수확·100%환불·신선보장) */}
-            <ValuePropStrip isMobile={isMobile} />
-
-            {/* 2a. FreshnessTimeline — 수확일 + fruit-facts 보관 일수 (v1.8) */}
-            {freshnessProps && (
-              <div style={{ padding: "0 20px 16px" }}>
-                <FreshnessTimeline
-                  harvestDate={freshnessProps.harvestDate}
-                  daysGood={freshnessProps.daysGood}
-                />
               </div>
             )}
 
@@ -479,6 +484,14 @@ export function ResultView({
                   onRegen={renderRegen("storage")}
                   isMobile={isMobile}
                 />
+              </>
+            )}
+
+            {/* v2.9: 7a. 즐기는 법 (수플린 RECIPE 레퍼런스, 과일 매칭 시만) */}
+            {hasRecipe && (
+              <>
+                <DotDivider />
+                <RecipeBlock productName={productName} images={images} isMobile={isMobile} />
               </>
             )}
 
@@ -662,54 +675,208 @@ export function ResultView({
 /* Section blocks                                                */
 /* ============================================================ */
 
-function WhyHeader({
+/**
+ * v2.9 WHY 카드 (수플린 "WHY 베르데아 일까요?" 레퍼런스).
+ * 흰 카드 안: WHY {상품명}일까요? 헤딩 + 중앙 이미지 + 공정 라벨 2개.
+ *
+ * 라벨은 keyPoints(상품 특징, KeyPointsBig에서 노출)와 겹치지 않게
+ * 서비스/공정 관점(손 선별 / 안전 포장) — 고정 안전 문구.
+ */
+function WhyBrandCard({
   productName,
+  image,
   isMobile,
 }: {
   productName: string
+  image?: UploadedImage
   isMobile: boolean
 }) {
   const accent = useAccent()
+  const name = productName.trim()
   return (
-    <div
-      style={{
-        padding: isMobile ? "36px 20px" : "44px 40px",
-        background: "#FFFFFF",
-        borderBottom: `1px solid ${LINE}`,
-      }}
-    >
-      {/* v2.5: 큰 상품명 + 축색 강조구 대비 (스마트스토어 잘 팔리는 톤) */}
-      <div style={{ textAlign: "center", marginBottom: 32 }}>
+    <div style={{ padding: isMobile ? "36px 20px" : "48px 40px", background: BG_SOFT }}>
+      <div
+        style={{
+          background: "#FFFFFF",
+          borderRadius: 16,
+          border: `1px solid ${LINE}`,
+          padding: isMobile ? "32px 22px" : "44px 40px",
+          textAlign: "center",
+        }}
+      >
+        <h2
+          style={{
+            fontSize: isMobile ? 26 : 34,
+            fontWeight: 400,
+            margin: 0,
+            marginBottom: 24,
+            lineHeight: 1.2,
+            color: INK,
+            fontFamily: DISPLAY_FONT,
+            letterSpacing: -1,
+          }}
+        >
+          WHY <span style={{ color: accent.accent }}>{name || "이 상품"}</span>일까요?
+        </h2>
+
+        {image && (
+          <div
+            style={{
+              width: isMobile ? 200 : 280,
+              maxWidth: "100%",
+              margin: "0 auto 28px",
+              borderRadius: 12,
+              overflow: "hidden",
+              boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={image.url}
+              alt=""
+              style={{ width: "100%", aspectRatio: "1", objectFit: "cover", display: "block" }}
+            />
+          </div>
+        )}
+
+        {/* v2.9-b: 공정 라벨(손 선별/안전 포장) 삭제 — 배송·포장 블록과 중복(리뷰 지적).
+            맛 자신감 한 줄로 대체 (다른 블록과 안 겹치는 각도). */}
+        <p
+          style={{
+            fontSize: isMobile ? 15 : 18,
+            fontWeight: 700,
+            color: INK,
+            margin: 0,
+            lineHeight: 1.6,
+            fontFamily: BODY_FONT,
+            letterSpacing: -0.3,
+            wordBreak: "keep-all",
+          }}
+        >
+          한 번 드셔보면, <span style={{ color: accent.accent }}>왜 여기서 사는지</span> 아실 거예요.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * v2.9 즐기는 법 (수플린 RECIPE 1/2/3 레퍼런스).
+ * fruit-facts.pairings 기반 3개 페어링 카드 + 이미지 슬롯.
+ * 과일 미매칭 or pairings 없으면 렌더 안 함 (환각 방지 — 없으면 안 만든다).
+ */
+function RecipeBlock({
+  productName,
+  images,
+  isMobile,
+}: {
+  productName: string
+  images: UploadedImage[]
+  isMobile: boolean
+}) {
+  const accent = useAccent()
+  const key = detectFruitFactKey(productName)
+  const pairings = key ? FRUIT_FACTS[key]?.pairings ?? [] : []
+  const items = pairings.slice(0, 3)
+  if (items.length === 0) return null
+
+  const name = productName.trim() || "이 상품"
+  return (
+    <div style={{ padding: isMobile ? "44px 20px" : "56px 40px", background: "#FFFFFF" }}>
+      <div style={{ textAlign: "center", marginBottom: isMobile ? 24 : 32 }}>
         <div
           style={{
-            fontSize: isMobile ? 11 : 12,
+            fontSize: isMobile ? 12 : 13,
             color: accent.accent,
             fontWeight: 800,
-            letterSpacing: 3,
-            marginBottom: 14,
+            letterSpacing: 2,
+            marginBottom: 8,
             fontFamily: BODY_FONT,
           }}
         >
-          WHY BUY HERE
+          HOW TO ENJOY
         </div>
         <h2
           style={{
-            fontSize: isMobile ? 34 : 52,
+            fontSize: isMobile ? 26 : 38,
             fontWeight: 400,
             margin: 0,
-            lineHeight: 1.15,
             color: INK,
             fontFamily: DISPLAY_FONT,
             letterSpacing: -1.5,
+            lineHeight: 1.15,
           }}
         >
-          {productName || <Placeholder text="상품명을 입력해 주세요" />}
-          <br />
-          <span style={{ color: accent.accent }}>{t.detail.result.whatsDifferentTitle}</span>
+          {name} <span style={{ color: accent.accent }}>이렇게 즐겨보세요</span>
         </h2>
       </div>
 
-      {/* v2.3: mini POINT 카드 삭제 — 아래 KeyPointsBig와 중복이라 정리 */}
+      <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 16 : 20 }}>
+        {items.map((pairing, i) => {
+          const img = images.length > 0 ? images[i % images.length] : undefined
+          return (
+            <div
+              key={`recipe-${i}`}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: isMobile ? 14 : 20,
+                background: "#FFFFFF",
+                border: `1px solid ${LINE}`,
+                borderRadius: 12,
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  flexShrink: 0,
+                  width: isMobile ? 96 : 130,
+                  height: isMobile ? 96 : 130,
+                  background: accent.soft,
+                }}
+              >
+                {img && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={img.url}
+                    alt=""
+                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                  />
+                )}
+              </div>
+              <div style={{ flex: 1, minWidth: 0, padding: isMobile ? "0 14px 0 0" : "0 20px 0 0" }}>
+                <div
+                  style={{
+                    fontSize: isMobile ? 10 : 11,
+                    color: accent.accent,
+                    fontWeight: 800,
+                    letterSpacing: 1.5,
+                    marginBottom: 4,
+                    fontFamily: BODY_FONT,
+                  }}
+                >
+                  IDEA {String(i + 1).padStart(2, "0")}
+                </div>
+                {/* v2.9-b: "{pairing}와 함께" 삭제 — pairings에 용도(선물·이유식)가
+                    섞여 조사(선물→선물과)·의미가 깨짐. pairing만 깔끔히 노출. */}
+                <div
+                  style={{
+                    fontSize: isMobile ? 17 : 20,
+                    fontWeight: 800,
+                    color: INK,
+                    fontFamily: BODY_FONT,
+                    letterSpacing: -0.3,
+                    lineHeight: 1.3,
+                    wordBreak: "keep-all",
+                  }}
+                >
+                  {pairing}
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -717,6 +884,9 @@ function WhyHeader({
 function HeroBlock({
   heroImage,
   copy,
+  productName,
+  origin,
+  trust,
   onCopyChange,
   onRegenHeadline,
   onRegenSub,
@@ -725,6 +895,9 @@ function HeroBlock({
 }: {
   heroImage?: UploadedImage
   copy: CopyOutput
+  productName: string
+  origin?: string
+  trust?: TrustInfo
   onCopyChange: (next: CopyOutput) => void
   onRegenHeadline: React.ReactNode
   onRegenSub: React.ReactNode
@@ -732,9 +905,88 @@ function HeroBlock({
   factPlaceholder?: { headline: string; sub: string; highlightBox: string } | null
 }) {
   const accent = useAccent()
+  const name = productName.trim()
+  const originText = origin?.trim()
+  const producer = trust?.producerName?.trim()
+  const ctaText = producer
+    ? `${producer} 농가를 만나보세요`
+    : `신선한 ${name || "이 상품"}, 지금 담아보세요`
   return (
     <div style={{ background: "#FFFFFF" }}>
-      <div style={{ position: "relative" }}>
+      {/* v2.9: 상단 캡션 + 대형 헤드 (수플린 레퍼런스 — 헤드가 이미지 위) */}
+      <div
+        style={{
+          padding: isMobile ? "36px 20px 24px" : "48px 40px 28px",
+          textAlign: "center",
+          background: accent.soft,
+        }}
+      >
+        {(name || originText) && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexWrap: "wrap",
+              gap: 8,
+              marginBottom: 16,
+            }}
+          >
+            {name && (
+              <span
+                style={{
+                  fontSize: isMobile ? 13 : 14,
+                  color: SUB,
+                  fontWeight: 600,
+                  fontFamily: BODY_FONT,
+                }}
+              >
+                오늘도 신선한 {name}
+              </span>
+            )}
+            {originText && (
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  padding: "4px 12px",
+                  borderRadius: 999,
+                  background: accent.accent,
+                  color: "#FFFFFF",
+                  fontSize: isMobile ? 11 : 12,
+                  fontWeight: 800,
+                  letterSpacing: 0.5,
+                  fontFamily: BODY_FONT,
+                }}
+              >
+                From. {originText}
+              </span>
+            )}
+          </div>
+        )}
+        <h1
+          style={{
+            fontSize: isMobile ? 48 : 76,
+            fontWeight: 400,
+            margin: 0,
+            color: INK,
+            lineHeight: 1.08,
+            letterSpacing: -2,
+            fontFamily: DISPLAY_FONT,
+          }}
+        >
+          <EditableResultText
+            copy={copy}
+            onChange={onCopyChange}
+            path={["headline"]}
+            maxLength={40}
+            placeholder={factPlaceholder?.headline ?? "여기에 상품 헤드라인을 적어보세요"}
+          />
+        </h1>
+      </div>
+
+      {/* 대표 이미지 */}
+      <div style={{ position: "relative", background: accent.soft }}>
         {heroImage ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -764,43 +1016,26 @@ function HeroBlock({
             여기에 대표 이미지가 들어갑니다
           </div>
         )}
-        {/* 하단 흰색 그라데이션 오버레이 — 텍스트와 자연스럽게 연결 */}
-        <div
-          aria-hidden
-          style={{
-            position: "absolute",
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: "35%",
-            background:
-              "linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 70%, #FFFFFF 100%)",
-            pointerEvents: "none",
-          }}
-        />
-        {/* v2.2: FRESH PICK 영어 라벨 삭제 — 이미지에 방해되고 뜬금없음 */}
       </div>
 
+      {/* 하단: 설명 서브카피 + CTA pill */}
       <div
         style={{
-          padding: isMobile ? "16px 20px 40px" : "20px 40px 48px",
+          padding: isMobile ? "28px 24px 36px" : "36px 40px 44px",
           textAlign: "center",
-          marginTop: -40,
-          position: "relative",
         }}
       >
-        {/* v2.5: 스마트스토어 임팩트 톤 — 서브 캡션 스타일(작고 굵음) + 대형 헤드 대비 */}
+        {/* v2.9: 서브카피 — 대문자 액센트 → 설명형 회색 (수플린 톤) */}
         <p
           style={{
-            fontSize: isMobile ? 13 : 14,
-            color: accent.accent,
+            fontSize: isMobile ? 15 : 17,
+            color: SUB,
             margin: 0,
-            marginBottom: 18,
-            lineHeight: 1.4,
+            marginBottom: 20,
+            lineHeight: 1.6,
             fontFamily: BODY_FONT,
-            fontWeight: 800,
-            letterSpacing: 2,
-            textTransform: "uppercase",
+            fontWeight: 500,
+            wordBreak: "keep-all",
           }}
         >
           <EditableResultText
@@ -811,25 +1046,24 @@ function HeroBlock({
             placeholder={factPlaceholder?.sub ?? "여기에 서브 카피를 적어보세요"}
           />
         </p>
-        <h1
+
+        {/* CTA pill (수플린 "○○를 선택하세요!" 레퍼런스) */}
+        <div
           style={{
-            fontSize: isMobile ? 52 : 84,
-            fontWeight: 400,
-            margin: 0,
-            color: INK,
-            lineHeight: 1.05,
-            letterSpacing: -2,
-            fontFamily: DISPLAY_FONT,
+            display: "inline-flex",
+            alignItems: "center",
+            padding: isMobile ? "12px 24px" : "14px 30px",
+            borderRadius: 999,
+            background: INK,
+            color: "#FFFFFF",
+            fontSize: isMobile ? 15 : 17,
+            fontWeight: 800,
+            fontFamily: BODY_FONT,
+            letterSpacing: -0.3,
           }}
         >
-          <EditableResultText
-            copy={copy}
-            onChange={onCopyChange}
-            path={["headline"]}
-            maxLength={40}
-            placeholder={factPlaceholder?.headline ?? "여기에 상품 헤드라인을 적어보세요"}
-          />
-        </h1>
+          {ctaText}
+        </div>
 
         {(onRegenHeadline || onRegenSub) && (
           <div
