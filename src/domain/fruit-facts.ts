@@ -664,6 +664,24 @@ export function estimateCountLabel(weight: string, avgWeightG: number): string |
 }
 
 /**
+ * 지역명이 아닌 일반어 토큰 — 산지 정합 검사에서 제외(오탐 방지).
+ * regions "수입 (칠레)", "북미 (수입)"의 core 토큰이 "수입"이 되는데, "수입"은
+ * 카피에 흔한 일반어라 산지 지역명으로 취급하지 않는다.
+ */
+const NON_PLACE_REGION_TOKENS = new Set(["수입"])
+
+/**
+ * regions 항목에서 대표 시·군 토큰(소문자)을 뽑는다.
+ * "제주 서귀포" → "제주", "함안 (지리적 표시)" → "함안".
+ * 2자 미만이거나 비지역 일반어("수입")면 null(검사 제외).
+ */
+function regionCoreLower(region: string): string | null {
+  const core = (region.replace(/\s*\(.*?\)\s*/g, " ").trim().split(/\s+/)[0] ?? "").trim()
+  if (core.length < 2 || NON_PLACE_REGION_TOKENS.has(core)) return null
+  return core.toLowerCase()
+}
+
+/**
  * 후킹 후보(hookHeadline)가 상품명과 사실 정합한지 검사한다.
  *
  * 사용자 분노 사례: 상품명 "부유단감"인데 헤드라인 후보에 "22 Brix까지 농익은 차랑"이
@@ -678,18 +696,25 @@ export function estimateCountLabel(weight: string, avgWeightG: number): string |
  *     품종의 brixMin~brixMax 범위 안이어야 통과. 상품명에 품종이 없으면
  *     과일 전체 범위(모든 varieties의 최소~최대)로 판정.
  *
+ * 3. 산지명 필터 (허위 표시 방지) — 후보에 이 과일 regions의 지역명이 들어 있는데
+ *    그 지역명이 입력 산지(origin)에 없으면 제외. origin 미입력이면 지역명 포함 후보 전부 제외.
+ *    "국내산" 입력에 참고 데이터 '담양'이 후보로 노출된 허위 표시 사고 재발 방지.
+ *
  * @param fact       매칭된 과일 fact
  * @param productName 셀러가 입력한 상품명 (품종 단서 추출용)
  * @param headline   검사할 후킹 후보
+ * @param origin     셀러가 입력한 산지 (선택). 지역명 정합 판정 기준.
  * @returns 통과하면 true, 사실 불일치면 false
  */
 export function isHookHeadlineCompatible(
   fact: FruitFact,
   productName: string,
   headline: string,
+  origin?: string,
 ): boolean {
   const nameLower = productName.toLowerCase()
   const hookLower = headline.toLowerCase()
+  const originLower = (origin ?? "").trim().toLowerCase()
 
   // 상품명에 실제로 등장한 이 과일의 품종명들.
   const namedInProduct = fact.varieties.filter((v) =>
@@ -702,6 +727,17 @@ export function isHookHeadlineCompatible(
     if (!hookLower.includes(vLower)) continue
     // 후보가 이 품종을 언급함. 상품명에도 그 품종이 있어야 통과.
     if (!nameLower.includes(vLower)) return false
+  }
+
+  // 3) 산지명 필터 — 후보에 이 과일 regions 지역명이 있는데 입력 산지에 없으면 탈락.
+  //    regions "제주 서귀포"처럼 복합명은 핵심 시·군 토큰(첫 단어, 괄호 주석 제외)으로 판정.
+  for (const region of fact.regions) {
+    const core = regionCoreLower(region)
+    if (!core) continue
+    if (!hookLower.includes(core)) continue
+    // 후보가 이 지역명을 언급함. 입력 산지에도 그 지역명이 있어야 통과.
+    // origin이 비었으면(미입력) 지역명 포함 후보는 전부 탈락.
+    if (!originLower.includes(core)) return false
   }
 
   // 2) Brix 수치 필터 — 후보에 든 숫자가 Brix 문맥이면 범위 검증.
@@ -722,5 +758,33 @@ export function isHookHeadlineCompatible(
     if (value < lo || value > hi) return false
   }
 
+  return true
+}
+
+/**
+ * 헤드라인 후보의 산지 정합만 검사한다 (품종·Brix는 검사하지 않음).
+ *
+ * isHookHeadlineCompatible의 산지 필터(규칙 3)만 떼어낸 버전.
+ * AI가 생성한 후보에 적용할 때 사용 — AI 후보의 품종·수치는 프롬프트(규칙 55)가
+ * 책임지므로 여기서는 산지 지역명(허위 표시)만 차단한다.
+ *
+ * 규칙: 후보에 이 과일 regions의 지역명(핵심 시·군 토큰)이 들어 있는데 입력 산지에
+ * 없으면 false. origin 미입력이면 지역명 포함 후보는 전부 false.
+ *
+ * @returns 산지 정합이면 true, 불일치면 false
+ */
+export function isHeadlineOriginCompatible(
+  fact: FruitFact,
+  headline: string,
+  origin?: string,
+): boolean {
+  const hookLower = headline.toLowerCase()
+  const originLower = (origin ?? "").trim().toLowerCase()
+  for (const region of fact.regions) {
+    const core = regionCoreLower(region)
+    if (!core) continue
+    if (!hookLower.includes(core)) continue
+    if (!originLower.includes(core)) return false
+  }
   return true
 }

@@ -27,10 +27,12 @@ import {
   detectFruitFactKey,
   FRUIT_FACTS,
   isHookHeadlineCompatible,
+  isHeadlineOriginCompatible,
   getAvgWeightG,
   estimateCountLabel,
 } from "@/domain/fruit-facts"
 import { resolveAccent, DEFAULT_ACCENT, type AccentPalette } from "./fruit-accent"
+import { PackIcon, FLOW_STEP_ICONS } from "./LineIcons"
 
 /**
  * v2.8: 과일별 축색 Context.
@@ -250,14 +252,21 @@ const FREE_CANDIDATE_MAX = 3
  * 품종 인식 필터: fruit-facts 무료 후보(hookHeadlines)는 상품명과 사실 정합한
  * 것만 합류한다. 상품명 "부유단감"에 다른 품종("차랑")이나 그 품종 Brix(22)가
  * 든 후보가 노출되던 문제(사용자 분노 사례)를 isHookHeadlineCompatible로 차단.
- * 필터는 무료 후보에만 적용 — AI 후보는 프롬프트(규칙 55)가 책임진다.
+ *
+ * 산지 정합 필터: 후보에 이 과일 regions 지역명이 들어 있는데 입력 산지(origin)에
+ * 없으면 제외한다. origin 미입력이면 지역명 포함 후보는 전부 제외. "국내산" 입력에
+ * 참고 데이터 '담양'이 후보 칩으로 노출된 허위 표시 사고 재발 방지 — 무료 후보뿐
+ * 아니라 AI 후보에도 적용(AI가 규칙 56을 어겨 지역명을 넣어도 칩 단계에서 차단).
  */
 export function buildDisplayCandidates(
   copy: CopyOutput,
   productName: string,
+  origin?: string,
 ): string[] {
   const out: string[] = []
   const seen = new Set<string>()
+  const key = detectFruitFactKey(productName)
+  const fact = key ? FRUIT_FACTS[key] : undefined
   const push = (raw: string) => {
     const s = raw.trim()
     if (!s) return
@@ -267,19 +276,21 @@ export function buildDisplayCandidates(
     if (out.length < MAX_HEADLINE_CANDIDATES) out.push(s)
   }
 
-  for (const c of copy.headlineCandidates ?? []) push(c)
+  // AI 후보 — 품종·수치는 프롬프트(규칙 55) 책임이므로 산지 정합만 추가로 차단.
+  // (규칙 56 위반으로 지역명이 새어 나와도 칩 단계에서 걸러 허위 표시 방지.)
+  for (const c of copy.headlineCandidates ?? []) {
+    if (fact && !isHeadlineOriginCompatible(fact, c, origin)) continue
+    push(c)
+  }
 
-  // 무료 후보 합류 — fruit-facts 매칭 시 hookHeadlines 중 사실 정합한 것만 추가.
-  // 필터를 먼저 통과시킨 뒤 slice — 앞쪽 후보가 걸러져도 FREE_CANDIDATE_MAX개를 채운다.
-  const key = detectFruitFactKey(productName)
-  if (key) {
-    const fact = FRUIT_FACTS[key]
-    if (fact) {
-      const compatible = fact.hookHeadlines.filter((h) =>
-        isHookHeadlineCompatible(fact, productName, h),
-      )
-      for (const h of compatible.slice(0, FREE_CANDIDATE_MAX)) push(h)
-    }
+  // 무료 후보 합류 — fruit-facts 매칭 시 hookHeadlines 중 사실 정합한 것만 추가
+  // (품종·Brix·산지 전부 검사). 필터를 먼저 통과시킨 뒤 slice — 앞쪽 후보가
+  // 걸러져도 FREE_CANDIDATE_MAX개를 채운다.
+  if (fact) {
+    const compatible = fact.hookHeadlines.filter((h) =>
+      isHookHeadlineCompatible(fact, productName, h, origin),
+    )
+    for (const h of compatible.slice(0, FREE_CANDIDATE_MAX)) push(h)
   }
 
   return out
@@ -307,6 +318,57 @@ export function emptyCopy(): CopyOutput {
 /** v2.4: 섹션 구분자 — 사과 이모지·빨강 점 제거, 여백만. */
 function DotDivider() {
   return <div aria-hidden style={{ height: 8, background: "#FFFFFF" }} />
+}
+
+/**
+ * 부분 밑줄 형광펜 — 콜아웃 문장 안에서 앞쪽 "핵심 구(2~3어절)"를 골라
+ * accent 물결 밑줄 + 살짝 두꺼운 글씨로 강조한다.
+ *
+ * 규칙(원문 변경 금지, 결정적):
+ *  1. 어절(공백) 단위로 자른다.
+ *  2. 첫 감각어(SENSORY_WORDS)가 등장하는 어절을 찾는다.
+ *     - 있으면 그 어절부터 최대 3어절을 강조 구간으로 잡는다.
+ *     - 없으면 앞 2어절을 강조(안전한 결정적 폴백).
+ *  3. 어절이 2개 미만이면 강조 없이 전체를 그냥 반환(과도 방지).
+ *
+ * 반환: { lead, mark, tail } — lead/tail 원문 그대로, mark가 밑줄 강조 구간.
+ *        강조할 게 없으면 mark 빈 문자열.
+ */
+export function splitPhraseEmphasis(
+  sentence: string,
+): { lead: string; mark: string; tail: string } {
+  const text = sentence ?? ""
+  if (!text.trim()) return { lead: text, mark: "", tail: "" }
+
+  // 공백(연속 포함)으로 어절 분리하되 구분자를 살려 원문 재조립이 가능하게.
+  const tokens = text.match(/\S+|\s+/g) ?? [text]
+  // 실제 단어(공백 아님)의 토큰 인덱스만 모은다.
+  const wordIdx: number[] = []
+  tokens.forEach((tk, i) => {
+    if (tk.trim().length > 0) wordIdx.push(i)
+  })
+  if (wordIdx.length < 2) return { lead: text, mark: "", tail: "" }
+
+  const isSensory = (s: string) => SENSORY_WORDS.some((w) => s.includes(w))
+
+  // 감각어가 든 첫 단어의 "단어 순번"(0-based)을 찾는다.
+  let startWord = 0
+  const foundAt = wordIdx.findIndex((ti) => isSensory(tokens[ti]))
+  if (foundAt >= 0) startWord = foundAt
+
+  // 강조 어절 수: 감각어 시작이면 최대 3, 폴백(앞 2어절)이면 2.
+  const spanWords = foundAt >= 0 ? 3 : 2
+  const endWord = Math.min(wordIdx.length - 1, startWord + spanWords - 1)
+
+  // 강조 구간의 토큰 범위 [markStartTok, markEndTok] (포함).
+  const markStartTok = wordIdx[startWord]
+  const markEndTok = wordIdx[endWord]
+
+  const lead = tokens.slice(0, markStartTok).join("")
+  const mark = tokens.slice(markStartTok, markEndTok + 1).join("")
+  const tail = tokens.slice(markEndTok + 1).join("")
+  if (!mark.trim()) return { lead: text, mark: "", tail: "" }
+  return { lead, mark, tail }
 }
 
 /** 감각어 사전 — 형광펜 강조 문장 자동 감지용(맛·향·식감 표현). */
@@ -507,7 +569,29 @@ function DeliveryPromiseBand({ isMobile, trust }: { isMobile: boolean; trust?: T
           wordBreak: "keep-all",
         }}
       >
-        {text}
+        {/* 부분 밑줄 형광펜 — 배송 약속 문장 앞 핵심 구를 accent 물결 밑줄로 강조. */}
+        {(() => {
+          const { lead, mark, tail } = splitPhraseEmphasis(text)
+          if (!mark) return text
+          return (
+            <>
+              {lead}
+              <span
+                style={{
+                  fontWeight: 900,
+                  color: accent.dark,
+                  textDecoration: "underline wavy",
+                  textDecorationColor: accent.accent,
+                  textDecorationThickness: 2,
+                  textUnderlineOffset: isMobile ? 4 : 6,
+                }}
+              >
+                {mark}
+              </span>
+              {tail}
+            </>
+          )
+        })()}
       </span>
     </div>
   )
@@ -606,10 +690,10 @@ export function ResultView({
   const sanitizedName =
     productName.replace(/[^\p{L}\p{N}_-]+/gu, "_").slice(0, 60) || "detail"
 
-  /** 식약처 자동 검수 — 결과 카피 기준으로 매번 계산. */
+  /** 식약처 자동 검수 — 결과 카피 기준으로 매번 계산. productName·origin으로 산지 불일치도 검출. */
   const complianceReport = useMemo(
-    () => checkComplianceReport(copy, trust),
-    [copy, trust],
+    () => checkComplianceReport(copy, trust, productName, origin),
+    [copy, trust, productName, origin],
   )
 
   /** 카피 품질 점수 — v1.9. */
@@ -664,8 +748,8 @@ export function ResultView({
    * 비어 있으면(구버전 저장본/생성 실패 + 미매칭) 칩 영역 자체를 렌더하지 않는다.
    */
   const headlineCandidates = useMemo(
-    () => buildDisplayCandidates(copy, productName),
-    [copy, productName],
+    () => buildDisplayCandidates(copy, productName, origin),
+    [copy, productName, origin],
   )
 
   /** v2.8: 과일별 축색 팔레트 — 상품명 기반 자동 전환. */
@@ -840,6 +924,15 @@ export function ResultView({
 
             <DotDivider />
 
+            {/* 2b. PROBLEM ARC — 문제 제기→해결 서사 아크 (실물 키위 레퍼런스).
+                   WHY 카드 다음, Story 앞. problemArc 없으면(구버전 카피) 미노출. */}
+            {copy.problemArc && copy.problemArc.problems.length > 0 && (
+              <>
+                <ProblemArcBlock arc={copy.problemArc} isMobile={isMobile} />
+                <DotDivider />
+              </>
+            )}
+
             {/* 3. STORY (형광펜 강조 — 첫 감각 문장 자동 강조) */}
             <StoryBlock
               copy={copy}
@@ -1000,6 +1093,7 @@ export function ResultView({
                         : undefined
                   }
                   sameDayShipping={trust.sameDayHarvest}
+                  accentColor={accent.accent}
                 />
               </div>
             )}
@@ -1673,6 +1767,143 @@ function HeroBlock({
   )
 }
 
+/**
+ * ProblemArcBlock — 문제 제기→해결 서사 아크 (실물 키위 상세페이지 레퍼런스).
+ *
+ * WHY 카드 다음, Story 앞에 배치. "왜 내가 고른 과일은 늘 맛이 아쉬울까?" 공감 질문으로
+ * 서사 긴장을 만들고, 이어지는 keyPoints(POINT 카드)가 그 problems의 해결책이 되게 한다.
+ *
+ * 구성:
+ *  - 공감 질문 (BlackHanSans 46~52px 중앙)
+ *  - "{n}가지 이유" pill 배지 (accent)
+ *  - 문제 카드 세로 스택 — 번호 01/02/03 + 문제 한 줄 (34px). 사진 슬롯 없음(텍스트 카드).
+ *
+ * problemArc가 없으면(구버전 카피) 호출부에서 렌더하지 않는다(게이팅).
+ * 지어내는 것 없이 copy.problemArc 원문 그대로 — 스타일만.
+ */
+function ProblemArcBlock({
+  arc,
+  isMobile,
+}: {
+  arc: NonNullable<CopyOutput["problemArc"]>
+  isMobile: boolean
+}) {
+  const accent = useAccent()
+  const problems = arc.problems.slice(0, 3)
+  if (problems.length === 0) return null
+  return (
+    <div
+      style={{
+        padding: isMobile ? "56px 24px" : "112px 56px",
+        background: BG_SOFT,
+      }}
+    >
+      {/* 공감 질문 — BlackHanSans 대형 중앙 */}
+      <h2
+        style={{
+          fontSize: isMobile ? 28 : 50,
+          fontWeight: 400,
+          margin: 0,
+          textAlign: "center",
+          color: INK,
+          lineHeight: 1.28,
+          letterSpacing: -1,
+          fontFamily: DISPLAY_FONT,
+          maxWidth: 760,
+          marginLeft: "auto",
+          marginRight: "auto",
+          wordBreak: "keep-all",
+        }}
+      >
+        {arc.question}
+      </h2>
+
+      {/* "{n}가지 이유" pill 배지 (accent) */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          marginTop: isMobile ? 24 : 36,
+          marginBottom: isMobile ? 28 : 44,
+        }}
+      >
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            padding: isMobile ? "8px 20px" : "12px 30px",
+            borderRadius: 999,
+            background: accent.accent,
+            color: "#FFFFFF",
+            fontSize: isMobile ? 15 : 26,
+            fontWeight: 800,
+            letterSpacing: 0.5,
+            fontFamily: BODY_FONT,
+          }}
+        >
+          {problems.length}가지 이유
+        </span>
+      </div>
+
+      {/* 문제 카드 세로 스택 — 번호 + 문제 한 줄. 사진 없음(텍스트 카드). */}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: isMobile ? 14 : 20,
+          maxWidth: 720,
+          margin: "0 auto",
+        }}
+      >
+        {problems.map((p, i) => (
+          <div
+            key={`pa-${i}`}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: isMobile ? 16 : 26,
+              background: "#FFFFFF",
+              border: `1px solid ${LINE}`,
+              borderRadius: 14,
+              padding: isMobile ? "20px 22px" : "32px 40px",
+            }}
+          >
+            {/* 번호 01/02/03 — accent, BlackHanSans */}
+            <span
+              aria-hidden
+              style={{
+                flexShrink: 0,
+                fontSize: isMobile ? 32 : 54,
+                fontWeight: 400,
+                color: accent.accent,
+                fontFamily: DISPLAY_FONT,
+                lineHeight: 1,
+                letterSpacing: -1,
+              }}
+            >
+              {String(i + 1).padStart(2, "0")}
+            </span>
+            {/* 문제 한 줄 */}
+            <span
+              style={{
+                fontSize: isMobile ? 20 : 34,
+                fontWeight: 700,
+                color: INK,
+                lineHeight: 1.4,
+                fontFamily: BODY_FONT,
+                letterSpacing: -0.3,
+                wordBreak: "keep-all",
+              }}
+            >
+              {p}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function StoryBlock({
   copy,
   onCopyChange,
@@ -1785,7 +2016,33 @@ function StoryBlock({
                 boxShadow: `inset 0 -0.5em 0 ${accent.soft}`,
               }}
             >
-              {storyHi.highlight}
+              {/*
+                부분 밑줄 형광펜 — 콜아웃 문장 안에서 첫 감각어 포함 2~3어절만
+                accent 물결 밑줄 + 더 두꺼운 글씨로 재강조. 원문(storyHi.highlight)은
+                그대로 두고 스타일만. wordwrap을 깨지 않게 mark만 감싼다.
+              */}
+              {(() => {
+                const { lead, mark, tail } = splitPhraseEmphasis(storyHi.highlight)
+                if (!mark) return storyHi.highlight
+                return (
+                  <>
+                    {lead}
+                    <span
+                      style={{
+                        fontWeight: 900,
+                        color: accent.accent,
+                        textDecoration: "underline wavy",
+                        textDecorationColor: accent.accent,
+                        textDecorationThickness: 2,
+                        textUnderlineOffset: isMobile ? 5 : 8,
+                      }}
+                    >
+                      {mark}
+                    </span>
+                    {tail}
+                  </>
+                )
+              })()}
             </span>
           </div>
         )}
@@ -2306,6 +2563,24 @@ function KeyPointsBig({
           textAlign: "center",
         }}
       >
+        {/* problemArc가 있으면 문제→해결 연결 전환 캡션 (accent). 헤더 위에 얹어 서사 이음. */}
+        {copy.problemArc && copy.problemArc.problems.length > 0 && (
+          <p
+            style={{
+              margin: 0,
+              marginBottom: isMobile ? 14 : 20,
+              fontSize: isMobile ? 17 : 26,
+              fontWeight: 800,
+              color: accent.accent,
+              letterSpacing: -0.3,
+              fontFamily: BODY_FONT,
+              lineHeight: 1.4,
+              wordBreak: "keep-all",
+            }}
+          >
+            그래서 이렇게 준비했어요
+          </p>
+        )}
         {/* 임무D: 섹션 헤드 — 히어로급 임팩트 (모바일 42 / 데스크톱 76) */}
         <h2
           style={{
@@ -2807,63 +3082,122 @@ function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: b
         </h2>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-        {steps.map((step, i) => (
+      {/*
+        가로 스텝 그래픽 — 아이콘 원 4개를 한 줄에 배치하고 원 사이를 accent
+        연결선으로 잇는다. 좁은 폭(모바일)에서는 2x2 그리드로 접어 연결선을
+        숨긴다(가로 2칸이라 선이 어색해짐). 원=상대 위치라 연결선은 원 뒤
+        절대배치 레이어로 깔아 원 중심을 정확히 관통시킨다.
+      */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: isMobile ? "1fr 1fr" : `repeat(${steps.length}, 1fr)`,
+          gap: isMobile ? "28px 12px" : 0,
+          position: "relative",
+        }}
+      >
+        {/* 데스크톱 연결선 — 아이콘 원 중심(top = 원 반지름) 높이에 가로선 1줄.
+            첫 원 중심 ~ 마지막 원 중심까지만 그어 양끝이 삐져나오지 않게. */}
+        {!isMobile && (
           <div
-            key={step.title}
+            aria-hidden
             style={{
-              display: "flex",
-              alignItems: "flex-start",
-              gap: isMobile ? 16 : 28,
-              padding: isMobile ? "20px 0" : "32px 0",
-              borderBottom: i < steps.length - 1 ? `1px solid ${LINE}` : "none",
+              position: "absolute",
+              top: 44, // 원 지름 88의 절반
+              left: `${100 / (steps.length * 2)}%`,
+              right: `${100 / (steps.length * 2)}%`,
+              height: 2,
+              background: accent.accent,
+              opacity: 0.35,
+              zIndex: 0,
             }}
-          >
+          />
+        )}
+        {steps.map((step, i) => {
+          const Icon = FLOW_STEP_ICONS[i] ?? FLOW_STEP_ICONS[FLOW_STEP_ICONS.length - 1]
+          const circle = isMobile ? 72 : 88
+          return (
             <div
-              aria-hidden
+              key={step.title}
               style={{
-                flexShrink: 0,
-                width: isMobile ? 48 : 72,
-                height: isMobile ? 48 : 72,
-                borderRadius: "50%",
-                background: accent.accent,
-                color: "#FFFFFF",
+                position: "relative",
+                zIndex: 1,
                 display: "flex",
+                flexDirection: "column",
                 alignItems: "center",
-                justifyContent: "center",
-                fontSize: isMobile ? 24 : 38,
-                fontWeight: 400,
-                fontFamily: DISPLAY_FONT,
+                textAlign: "center",
+                padding: isMobile ? "0 4px" : "0 10px",
               }}
             >
-              {i + 1}
-            </div>
-            <div style={{ flex: 1, minWidth: 0, paddingTop: isMobile ? 4 : 8 }}>
+              {/* 아이콘 원 + 작은 번호 배지 */}
+              <div style={{ position: "relative", marginBottom: isMobile ? 14 : 20 }}>
+                <div
+                  aria-hidden
+                  style={{
+                    width: circle,
+                    height: circle,
+                    borderRadius: "50%",
+                    background: "#FFFFFF",
+                    border: `2.5px solid ${accent.accent}`,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    boxShadow: "0 2px 10px rgba(0,0,0,0.06)",
+                  }}
+                >
+                  <Icon color={accent.accent} size={isMobile ? 36 : 46} />
+                </div>
+                {/* 작은 번호 — 원 좌상단에 겹쳐 붙는 accent 배지 */}
+                <div
+                  aria-hidden
+                  style={{
+                    position: "absolute",
+                    top: isMobile ? -6 : -8,
+                    left: isMobile ? -6 : -8,
+                    width: isMobile ? 24 : 30,
+                    height: isMobile ? 24 : 30,
+                    borderRadius: "50%",
+                    background: accent.accent,
+                    color: "#FFFFFF",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: isMobile ? 14 : 18,
+                    fontWeight: 800,
+                    fontFamily: BODY_FONT,
+                    lineHeight: 1,
+                  }}
+                >
+                  {i + 1}
+                </div>
+              </div>
               <div
                 style={{
-                  fontSize: isMobile ? 20 : 30,
+                  fontSize: isMobile ? 19 : 28,
                   fontWeight: 800,
                   color: INK,
-                  marginBottom: isMobile ? 6 : 10,
+                  marginBottom: isMobile ? 5 : 9,
                   fontFamily: BODY_FONT,
                   letterSpacing: -0.3,
+                  wordBreak: "keep-all",
                 }}
               >
                 {step.title}
               </div>
               <div
                 style={{
-                  fontSize: isMobile ? 18 : 26,
+                  fontSize: isMobile ? 15 : 24,
                   color: SUB,
-                  lineHeight: 1.6,
+                  lineHeight: 1.5,
                   fontFamily: BODY_FONT,
+                  wordBreak: "keep-all",
                 }}
               >
                 {step.desc}
               </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
@@ -2888,6 +3222,9 @@ function PackagingBlock({
       <div style={{ textAlign: "center", marginBottom: isMobile ? 32 : 48 }}>
         <div
           style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: isMobile ? 6 : 10,
             fontSize: isMobile ? 14 : 24,
             color: accent.accent,
             fontWeight: 800,
@@ -2896,6 +3233,7 @@ function PackagingBlock({
             fontFamily: BODY_FONT,
           }}
         >
+          <PackIcon color={accent.accent} size={isMobile ? 20 : 30} />
           PACKAGE
         </div>
         <h2

@@ -164,5 +164,13 @@ export function mergeSection(
   if (nextCandidates && nextCandidates.length > 0) {
     merged.headlineCandidates = nextCandidates
   }
+  // problemArc도 옵셔널 — 섹션 재생성 patch엔 없으므로 current 값을 보존한다.
+  // (이 처리가 없으면 아무 섹션이나 재생성할 때 서사 아크가 사라진다.)
+  const nextProblemArc = "problemArc" in patch
+    ? patch.problemArc
+    : current.problemArc
+  if (nextProblemArc && nextProblemArc.problems.length > 0) {
+    merged.problemArc = nextProblemArc
+  }
   return merged
 }

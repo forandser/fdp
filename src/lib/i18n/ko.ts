@@ -75,6 +75,7 @@ export const ko = {
       weightPh: "예) 4kg 한 박스",
       origin: "산지",
       originPh: "예) 경북 영천",
+      originDemoHint: "⚠️ 예시값 — 실제 산지로 바꿔주세요",
       variety: "품종",
       varietyPh: "예) 천도 / 신비 등",
       brix: "당도(Brix)",

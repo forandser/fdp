@@ -5,7 +5,7 @@
  * 화이트리스트 키만 복사 (prototype pollution 방어 포함).
  */
 
-import type { CopyOutput, CopySpec, CopyFAQ, CopyKeyPoint } from "./types"
+import type { CopyOutput, CopySpec, CopyFAQ, CopyKeyPoint, CopyProblemArc } from "./types"
 
 const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"])
 
@@ -16,7 +16,12 @@ const LIMITS = {
   keyPointTitle: 18,
   keyPointBody: 120,
   highlightBox: 30,
+  problemArcQuestion: 44,
+  problemArcProblem: 28,
 } as const
+
+/** problemArc.problems 최대 개수 (keyPoints 3개와 1:1 호응 — 2~3개). */
+const MAX_PROBLEM_ARC_PROBLEMS = 3
 
 /** 헤드라인 후보 최대 개수 (AI 5개 + fruit-facts 무료 합류분 여유 = 8). */
 export const MAX_HEADLINE_CANDIDATES = 8
@@ -272,6 +277,23 @@ function pickFAQ(v: unknown): CopyFAQ[] {
   return out
 }
 
+/**
+ * 문제 제기 서사 아크 검증 — 공감 질문 + 문제 2~3개.
+ * question 또는 problems(1개 이상)가 없으면 undefined 반환(옵셔널 — 블록 미노출).
+ * 각 필드 상한으로 자르고, problems는 빈 문자열 제거 후 최대 3개.
+ */
+export function pickProblemArc(v: unknown): CopyProblemArc | undefined {
+  if (!isObject(v)) return undefined
+  if (Object.keys(v).some((k) => FORBIDDEN_KEYS.has(k))) return undefined
+  const question = trimTo(safeString(v.question), LIMITS.problemArcQuestion)
+  const problems = safeStringArray(v.problems)
+    .map((p) => trimTo(p, LIMITS.problemArcProblem))
+    .filter(Boolean)
+    .slice(0, MAX_PROBLEM_ARC_PROBLEMS)
+  if (!question || problems.length === 0) return undefined
+  return { question, problems }
+}
+
 /** 응답 텍스트에서 코드펜스 제거 후 JSON 파싱 시도. */
 export function extractJson(text: string): unknown {
   if (!text) throw new Error("EMPTY_RESPONSE")
@@ -290,11 +312,14 @@ export function validateCopyOutput(raw: unknown): CopyOutput {
   if (!isObject(raw)) throw new Error("RESPONSE_NOT_OBJECT")
 
   const headlineCandidates = pickHeadlineCandidates(raw.headlineCandidates)
+  const problemArc = pickProblemArc(raw.problemArc)
 
   return {
     headline: trimTo(safeString(raw.headline), LIMITS.headline),
     // 옵셔널 — 후보 없으면 키 자체를 넣지 않아 하위호환 유지.
     ...(headlineCandidates ? { headlineCandidates } : {}),
+    // 옵셔널 — 서사 아크 없으면(구버전/생성 실패) 키 생략 → 블록 미노출.
+    ...(problemArc ? { problemArc } : {}),
     subheadline: trimTo(safeString(raw.subheadline), LIMITS.subheadline),
     story: safeString(raw.story),
     spec: pickSpec(raw.spec),

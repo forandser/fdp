@@ -17,9 +17,11 @@ interface DisclosureBlockProps {
 
 export function DisclosureBlock({ report, defaultOpen }: DisclosureBlockProps) {
   const hasViolations = report && report.violations.length > 0
+  const originMismatches = report?.originMismatches ?? []
+  const hasOriginMismatch = originMismatches.length > 0
 
   // v2.6: 위반 없으면 아무 것도 안 그림 (안내 문구 삭제 지시)
-  if (!hasViolations) return null
+  if (!hasViolations && !hasOriginMismatch) return null
 
   return (
     <div
@@ -35,6 +37,49 @@ export function DisclosureBlock({ report, defaultOpen }: DisclosureBlockProps) {
         color: "#495057",
       }}
     >
+      {/* 산지 불일치(허위 표시 위험) — 최고 심각도. 접지 않고 항상 펼쳐 강조. */}
+      {hasOriginMismatch && (
+        <div
+          style={{
+            marginBottom: hasViolations ? 12 : 0,
+            padding: "10px 12px",
+            background: "#FFE3E3",
+            border: "1px solid #C92A2A",
+            borderRadius: 6,
+          }}
+        >
+          <div
+            style={{
+              color: "#C92A2A",
+              fontWeight: 800,
+              marginBottom: 6,
+            }}
+          >
+            🚨 산지 불일치 (허위 표시 위험) {originMismatches.length}건
+          </div>
+          <p style={{ margin: "0 0 8px", fontSize: 12, color: "#495057" }}>
+            입력하신 산지에 없는 지역명이 카피에 들어갔어요. 원산지를 잘못 표기하면
+            법적 위험이 있어요. 실제 산지가 맞는지 확인하고, 아니면 지워주세요.
+          </p>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
+            {originMismatches.slice(0, 8).map((m, i) => (
+              <li key={`om-${i}`} style={{ marginBottom: 4 }}>
+                <strong style={{ color: "#C92A2A" }}>&ldquo;{m.region}&rdquo;</strong>
+                <span style={{ color: "#868E96" }}> ({m.field})</span>
+                <br />
+                <span style={{ color: "#868E96", fontSize: 11 }}>
+                  입력 산지: {m.origin}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {originMismatches.length > 8 && (
+            <p style={{ margin: "6px 0 0", fontSize: 11, color: "#868E96" }}>
+              ... 외 {originMismatches.length - 8}건
+            </p>
+          )}
+        </div>
+      )}
       {hasViolations && report && (
         <details open={defaultOpen} style={{ marginTop: 10 }}>
           <summary

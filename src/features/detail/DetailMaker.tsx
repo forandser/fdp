@@ -105,6 +105,12 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   const [productName, setProductName] = useState("")
   const [variety, setVariety] = useState("")
   const [origin, setOrigin] = useState("")
+  /**
+   * 산지가 "예시 채우기"로 채워졌는지 표시 — 실제 산지가 아닌 참고 지역명이므로
+   * 셀러가 실제 산지로 바꾸도록 힌트를 띄운다(허위 표시 방지). 사용자가 직접
+   * 산지를 수정하면 해제한다.
+   */
+  const [originFromDemo, setOriginFromDemo] = useState(false)
   const [weight, setWeight] = useState("")
   const [brix, setBrix] = useState("")
   const [sizeGrade, setSizeGrade] = useState("")
@@ -178,7 +184,11 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
     const fact = FRUIT_FACTS[key]
     const firstVariety = fact.varieties[0]
     if (!variety.trim() && firstVariety) setVariety(firstVariety.name)
-    if (!origin.trim() && fact.regions[0]) setOrigin(fact.regions[0])
+    // 산지는 빈 칸일 때만 예시 지역명으로 채우고, 예시값임을 표시(실제 산지로 교체 유도).
+    if (!origin.trim() && fact.regions[0]) {
+      setOrigin(fact.regions[0])
+      setOriginFromDemo(true)
+    }
     if (!weight.trim()) {
       const kg =
         fact.category === "fruit"
@@ -765,10 +775,17 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
             <input
               type="text"
               value={origin}
-              onChange={(e) => setOrigin(e.target.value)}
+              onChange={(e) => {
+                setOrigin(e.target.value)
+                // 사용자가 직접 손대면 예시값 힌트 해제.
+                if (originFromDemo) setOriginFromDemo(false)
+              }}
               placeholder={t.detail.field.originPh}
               style={inputStyle}
             />
+            {originFromDemo && origin.trim() && (
+              <p style={demoHintStyle}>{t.detail.field.originDemoHint}</p>
+            )}
           </Field>
           <Field label={t.detail.field.variety}>
             <input
@@ -1487,4 +1504,12 @@ const inputStyle: React.CSSProperties = {
   background: "var(--color-bg-surface)",
   color: "var(--color-neutral-900)",
   fontFamily: "inherit",
+}
+
+/** 예시 채우기로 채워진 산지 값 옆 경고 힌트 — 실제 산지로 교체 유도(허위 표시 방지). */
+const demoHintStyle: React.CSSProperties = {
+  fontSize: "var(--font-size-xs)",
+  color: "var(--color-danger)",
+  fontWeight: 700,
+  marginTop: 4,
 }

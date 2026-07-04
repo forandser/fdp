@@ -6,6 +6,7 @@
  */
 
 import { checkForbiddenAll, TIER_TO_CLAUSE } from "./forbidden-words"
+import { detectFruitFactKey, FRUIT_FACTS } from "@/domain/fruit-facts"
 import type { CopyOutput, TrustInfo } from "./types"
 
 export interface ComplianceViolation {
@@ -18,6 +19,19 @@ export interface ComplianceViolation {
   suggestion?: string
 }
 
+/**
+ * 산지 불일치 위반 — 허위 표시(원산지표시법) 위험, 최고 심각도.
+ * fruit-facts 참고 지역명이 카피에 등장하는데 입력 산지에는 없을 때 검출.
+ */
+export interface OriginMismatch {
+  /** 카피에 잘못 등장한 참고 지역명 (예: "담양"). */
+  region: string
+  /** 어느 필드에서 발견됐는지. */
+  field: string
+  /** 입력된 산지 문자열 (비었으면 "미입력"). */
+  origin: string
+}
+
 export interface ComplianceReport {
   violations: ComplianceViolation[]
   tier1Count: number
@@ -27,6 +41,84 @@ export interface ComplianceReport {
   tier5Count: number
   /** 인증 텍스트가 인증번호 없이 등장한 케이스 별도 추적. */
   certViolations: { cert: string; reason: string }[]
+  /**
+   * 산지 불일치(허위 표시 위험) — 최고 심각도. fruit-facts.regions 지역명이
+   * 카피에 등장하는데 입력 산지에 포함되지 않은 경우. 자동 치환하지 않고
+   * 검출·경고만 한다(셀러가 직접 판단). 없으면 빈 배열.
+   */
+  originMismatches: OriginMismatch[]
+}
+
+/**
+ * 지역명이 아닌 일반어 토큰 — 오탐 방지 제외 목록.
+ * fruit-facts regions에 "수입 (칠레)", "북미 (수입)" 같은 항목이 있어 core 토큰이
+ * "수입"이 되는데, "수입"은 카피 본문("수입 절차" 등)에 흔히 나오는 일반어라 제외한다.
+ */
+const NON_PLACE_REGION_TOKENS = new Set(["수입"])
+
+/**
+ * 참고 지역명이 입력 산지에 "포함"되는지 판정.
+ * "제주"는 "제주 서귀포"처럼 복합 지역명일 수 있어 공백/괄호 앞 토큰(핵심 시·군)만 본다.
+ * 예: fact region "제주 서귀포" → core "제주". origin "제주산"에 "제주"가 있으면 정합.
+ * "수입" 같은 비지역 일반어는 빈 문자열로 반환해 검사에서 제외.
+ */
+function regionCoreToken(region: string): string {
+  // 괄호 주석 제거 후 첫 공백 앞 토큰 = 대표 시·군명.
+  const noParen = region.replace(/\s*\(.*?\)\s*/g, " ").trim()
+  const first = (noParen.split(/\s+/)[0] ?? "").trim()
+  return NON_PLACE_REGION_TOKENS.has(first) ? "" : first
+}
+
+/**
+ * 산지 불일치 검출 — fruit-facts 참고 지역명이 카피에 실제 산지처럼 등장하는데
+ * 입력 산지(origin)에 그 지역명이 포함되지 않으면 위반으로 본다.
+ *
+ * 배경: 셀러가 origin을 "국내산"으로 입력했는데 AI가 딸기 regions의 "담양"을
+ * 승격시켜 "새벽 5시에 딴 담양 설향" 같은 카피를 만든 허위 표시 사고.
+ *
+ * 규칙:
+ *  - 매칭된 과일의 regions 각 지역명의 핵심 토큰(예: "제주 서귀포"→"제주")을
+ *    카피 전 필드에서 찾는다.
+ *  - 그 토큰이 입력 origin 문자열에 들어 있으면 정합(셀러가 실제로 그 산지를 입력).
+ *  - origin에 없는데 카피에 등장하면 → 허위 표시 위험으로 검출.
+ *  - origin이 비어 있으면(미입력) 어떤 지역명 등장도 위반.
+ */
+export function detectOriginMismatches(
+  output: CopyOutput,
+  productName: string,
+  origin?: string,
+): OriginMismatch[] {
+  const key = detectFruitFactKey(productName)
+  if (!key) return []
+  const fact = FRUIT_FACTS[key]
+  if (!fact || fact.regions.length === 0) return []
+
+  const originText = (origin ?? "").trim()
+  const originLower = originText.toLowerCase()
+
+  // 검사할 참고 지역명(핵심 토큰). 2자 미만은 오탐 위험이라 제외.
+  const regionTokens = fact.regions
+    .map(regionCoreToken)
+    .filter((r) => r.length >= 2)
+
+  // origin에 이미 포함된 토큰은 정합 — 검사 대상에서 제외.
+  const suspectTokens = regionTokens.filter(
+    (tok) => !originLower.includes(tok.toLowerCase()),
+  )
+  if (suspectTokens.length === 0) return []
+
+  const out: OriginMismatch[] = []
+  const seen = new Set<string>()
+  for (const { field, text } of flattenCopy(output)) {
+    for (const tok of suspectTokens) {
+      if (!text.includes(tok)) continue
+      const dedupeKey = `${field}::${tok}`
+      if (seen.has(dedupeKey)) continue
+      seen.add(dedupeKey)
+      out.push({ region: tok, field, origin: originText || "미입력" })
+    }
+  }
+  return out
 }
 
 /** CopyOutput 안의 각 텍스트 필드를 (field-name, text) pair로 평탄화. */
@@ -61,10 +153,18 @@ function flattenCopy(output: CopyOutput): { field: string; text: string }[] {
   return out
 }
 
-/** 카피 위반 자동 리포트. */
+/** 카피 위반 자동 리포트.
+ *
+ * @param output     검사할 카피
+ * @param trust      셀러 인증/신뢰 정보 (인증 표현 정당화 판정)
+ * @param productName fruit-facts 매칭용 상품명 (산지 불일치 검출). 하위호환 옵셔널.
+ * @param origin     입력 산지 문자열 (산지 불일치 판정 기준). 하위호환 옵셔널.
+ */
 export function checkComplianceReport(
   output: CopyOutput,
   trust?: TrustInfo,
+  productName?: string,
+  origin?: string,
 ): ComplianceReport {
   const violations: ComplianceViolation[] = []
   const fields = flattenCopy(output)
@@ -87,6 +187,23 @@ export function checkComplianceReport(
         field,
       })
     }
+  }
+
+  // 산지 불일치(허위 표시 위험) — 참고 지역명이 입력 산지와 다르게 카피에 등장.
+  // 기존 검수 심각도 체계 최고 등급(Tier1)으로 violations에 합류해 검수 UI에 뜨게 한다.
+  // 자동 치환은 하지 않음 — 검출·경고가 목적(셀러가 직접 판단).
+  const originMismatches =
+    productName != null
+      ? detectOriginMismatches(output, productName, origin)
+      : []
+  for (const mm of originMismatches) {
+    violations.push({
+      tier: 1,
+      clause: "원산지표시법 (허위 표시 위험 — 참고 지역명을 실제 산지로 표기)",
+      matched: mm.region,
+      field: mm.field,
+      suggestion: `입력 산지("${mm.origin}")에 없는 지역명이에요. 실제 산지가 맞는지 확인하고, 아니면 "${mm.region}"을 지워주세요.`,
+    })
   }
 
   // 카운트 집계
@@ -122,6 +239,7 @@ export function checkComplianceReport(
     tier4Count,
     tier5Count,
     certViolations,
+    originMismatches,
   }
 }
 

@@ -126,6 +126,22 @@ export interface CopyKeyPoint {
   body: string
 }
 
+/**
+ * 문제 제기 → 해결 서사 아크 (실물 키위 상세페이지 레퍼런스 패턴).
+ * "왜 내가 고른 {과일}은 늘 맛이 아쉬울까?" 공감 질문 → 구매 실패의 실제 원인 2~3개.
+ * 이어지는 keyPoints가 이 problems의 1:1 해결책이 되어 페이지에 서사 긴장을 만든다.
+ *
+ * 하위호환: 구버전 저장본/생성 실패 시 undefined — ProblemArcBlock 자체를 숨긴다.
+ * 사실 정합: problems는 그 과일 구매 실패의 실제 원인(수확 시점·유통 기간·보관 등)만.
+ * fruit-facts cautions/storage 범위 안에서. 지어내기 금지.
+ */
+export interface CopyProblemArc {
+  /** 공감 질문 — "왜 (마트/내가 고른) {과일}은 ~할까?" 형식의 구매자 실패 경험 공감형 (20~40자). */
+  question: string
+  /** 구매 실패의 실제 원인 2~3개. 각 20자 내외 한 줄. keyPoints(해결책)와 1:1 호응. */
+  problems: string[]
+}
+
 export interface CopyOutput {
   /** 1차 헤드라인 — 가운데 큰 한글 (예: "썬프레 천도 복숭아") */
   headline: string
@@ -159,6 +175,12 @@ export interface CopyOutput {
   recommendFor: string[]
   /** 농가 한 줄 소개 (선택, 셀러가 입력한 farmIntro 기반으로 정제) */
   farmStory: string
+  /**
+   * 문제 제기 → 해결 서사 아크 (선택). WHY 카드 다음, Story 앞의 ProblemArcBlock이 렌더.
+   * 공감 질문 + 구매 실패의 실제 원인 2~3개. keyPoints가 그 해결책으로 호응.
+   * 하위호환: 구버전 저장본엔 없음(undefined) — 블록 미노출.
+   */
+  problemArc?: CopyProblemArc
 }
 
 export interface UsageInfo {
