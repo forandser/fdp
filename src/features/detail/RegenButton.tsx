@@ -22,6 +22,10 @@ interface RegenButtonProps {
   alwaysVisible?: boolean
   /** 절대 위치 띄움용 — 부모가 position: relative 컨테이너를 만든 경우. */
   floating?: boolean
+  /** 라벨 오버라이드 (기본: "🔄 다시"). 예: 헤드라인 후보 재생성 = "후보 새로 받기". */
+  label?: string
+  /** 진행 중 라벨 오버라이드 (기본: "다시 만드는 중..."). */
+  busyLabel?: string
 }
 
 export function RegenButton({
@@ -56,6 +60,7 @@ export function RegenButton({
   return (
     <button
       type="button"
+      data-edit-chrome
       onClick={handleClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
@@ -138,6 +143,7 @@ export function RegenHoverGroup({
       style={{ position: "relative" }}
     >
       <div
+        data-edit-chrome
         style={{
           position: "absolute",
           top: 0,

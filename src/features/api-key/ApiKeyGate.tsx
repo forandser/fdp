@@ -1,7 +1,11 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { getKeySource, type KeyStoragePolicy } from "@/lib/ai/key-source"
+import {
+  getKeySource,
+  type KeyStoragePolicy,
+  type GateReentryReason,
+} from "@/lib/ai/key-source"
 import { getAIProvider } from "@/lib/ai/provider"
 import type { DiagnosticResult } from "@/lib/ai/types"
 import { t } from "@/lib/i18n"
@@ -23,6 +27,7 @@ export function ApiKeyGate({ onSuccess }: ApiKeyGateProps) {
   const [diagnostic, setDiagnostic] = useState<DiagnosticResult | null>(null)
   const [progressStep, setProgressStep] = useState<1 | 2 | 3>(1)
   const [formatWarning, setFormatWarning] = useState(false)
+  const [reentryReason, setReentryReason] = useState<GateReentryReason>("first_visit")
 
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -34,6 +39,14 @@ export function ApiKeyGate({ onSuccess }: ApiKeyGateProps) {
       }
     }
   }, [])
+
+  // 게이트가 왜 (다시) 떴는지 조회 — localStorage 접근이므로 마운트 후 실행
+  useEffect(() => {
+    setReentryReason(getKeySource().getReentryReason())
+  }, [])
+
+  const reentryMessage =
+    reentryReason === "first_visit" ? null : t.apiKey.reentry[reentryReason]
 
   const trimmedKey = key.trim()
   const keyValid = API_KEY_PATTERN.test(trimmedKey) && trimmedKey.length >= API_KEY_MIN_LEN
@@ -125,6 +138,26 @@ export function ApiKeyGate({ onSuccess }: ApiKeyGateProps) {
         </p>
       </div>
 
+      {reentryMessage && (
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            padding: 12,
+            background: "var(--color-bg-subtle)",
+            border: "1px solid var(--color-neutral-100)",
+            borderRadius: "var(--radius-xs)",
+            color: "var(--color-neutral-700)",
+            fontSize: "var(--font-size-sm)",
+            lineHeight: 1.55,
+            marginBottom: "var(--space-7)",
+          }}
+        >
+          <span aria-hidden>ℹ️</span>
+          <span>{reentryMessage}</span>
+        </div>
+      )}
+
       <div style={{ marginBottom: "var(--space-7)" }}>
         <label
           htmlFor="api-key-input"
@@ -191,33 +224,119 @@ export function ApiKeyGate({ onSuccess }: ApiKeyGateProps) {
         >
           {t.apiKey.storage.title}
         </legend>
-        {(["forever", "days_30", "days_7", "session"] as KeyStoragePolicy[]).map((p) => (
-          <label
-            key={p}
+
+        {/* 기본(권장) 저장 방식 — 눈에 띄는 안내 카드 */}
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            padding: 12,
+            border:
+              policy === "forever"
+                ? "1px solid var(--color-primary-600)"
+                : "1px solid var(--color-neutral-100)",
+            background:
+              policy === "forever" ? "var(--color-primary-50)" : "var(--color-bg-surface)",
+            borderRadius: "var(--radius-xs)",
+          }}
+        >
+          <span aria-hidden style={{ fontSize: 18, lineHeight: 1.4 }}>
+            🔐
+          </span>
+          <div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                marginBottom: 4,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: "var(--font-size-md)",
+                  fontWeight: 700,
+                  color: "var(--color-neutral-900)",
+                }}
+              >
+                {t.apiKey.storage.foreverTitle}
+              </span>
+              <span
+                style={{
+                  padding: "2px 8px",
+                  borderRadius: 999,
+                  background: "var(--color-primary-600)",
+                  color: "var(--color-text-on-primary)",
+                  fontSize: 11,
+                  fontWeight: 700,
+                }}
+              >
+                {t.apiKey.storage.recommendedBadge}
+              </span>
+            </div>
+            <p
+              style={{
+                fontSize: "var(--font-size-sm)",
+                color: "var(--color-neutral-500)",
+                lineHeight: 1.55,
+                margin: 0,
+              }}
+            >
+              {t.apiKey.storage.foreverReassure}
+            </p>
+          </div>
+        </div>
+
+        {/* 나머지 옵션(30일/7일/세션)은 접힌 상태로 숨김 */}
+        <details style={{ marginTop: 10 }}>
+          <summary
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              fontSize: "var(--font-size-sm)",
-              color: "var(--color-neutral-900)",
-              padding: "6px 0",
               cursor: "pointer",
+              fontSize: "var(--font-size-sm)",
+              color: "var(--color-neutral-500)",
+              padding: "4px 0",
             }}
           >
-            <input
-              type="radio"
-              name="storage-policy"
-              value={p}
-              checked={policy === p}
-              onChange={() => setPolicy(p)}
-              disabled={step === "running"}
-            />
-            {p === "forever" && t.apiKey.storage.forever}
-            {p === "session" && t.apiKey.storage.session}
-            {p === "days_7" && t.apiKey.storage.days7}
-            {p === "days_30" && t.apiKey.storage.days30}
-          </label>
-        ))}
+            {t.apiKey.storage.advancedSummary}
+          </summary>
+          <p
+            style={{
+              fontSize: "var(--font-size-sm)",
+              color: "var(--color-neutral-400)",
+              lineHeight: 1.5,
+              margin: "6px 0 4px",
+            }}
+          >
+            {t.apiKey.storage.advancedHint}
+          </p>
+          {(["forever", "days_30", "days_7", "session"] as KeyStoragePolicy[]).map((p) => (
+            <label
+              key={p}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                fontSize: "var(--font-size-sm)",
+                color: "var(--color-neutral-900)",
+                padding: "6px 0",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="radio"
+                name="storage-policy"
+                value={p}
+                checked={policy === p}
+                onChange={() => setPolicy(p)}
+                disabled={step === "running"}
+              />
+              {p === "forever" && t.apiKey.storage.forever}
+              {p === "session" && t.apiKey.storage.session}
+              {p === "days_7" && t.apiKey.storage.days7}
+              {p === "days_30" && t.apiKey.storage.days30}
+            </label>
+          ))}
+        </details>
       </fieldset>
 
       <label

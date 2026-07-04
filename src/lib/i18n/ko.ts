@@ -104,6 +104,14 @@ export const ko = {
     farmIntroLabel: "농가/대표 한 줄 소개 (선택)",
     farmIntroPh: "예) 30년째 청송에서 사과 농사를 이어온 김농부입니다. 매일 아침 직접 따서 보내드립니다.",
     farmIntroHint: "비워두면 AI가 정중한 기본 문구로 채워요.",
+    /** 운영 방식 체크 — 실제로 지키는 약속만 페이지에 표시되도록 게이팅. */
+    trustPromise: {
+      title: "운영 방식 체크 (선택)",
+      hint: "실제로 운영할 때만 체크하세요 — 페이지에 약속으로 표시돼요.",
+      sameDayHarvest: "당일 수확·발송해요",
+      coldChain: "아이스팩·콜드체인 포장이에요",
+      refundGuarantee: "문제 시 100% 환불을 보장해요",
+    },
     suggest: {
       title: "AI 추천 소구점",
       hint: "기본 정보를 보고 한국 농산물 셀러들이 자주 쓰는 표현을 골라드려요. 마음에 드는 것을 눌러 키워드에 추가하세요.",
@@ -175,7 +183,19 @@ export const ko = {
       recommendForTitle: "이런 분께 추천해요",
       farmStoryTitle: "농가의 한 마디",
       deliveryTitle: "배송 안내",
-      deliveryBody: "주문 확인 후 산지에서 수확·선별·포장을 거쳐, 평일 오후 4시 이전 주문은 당일 발송해 드립니다.\n\n아이스팩과 3단 완충 포장으로 문 앞까지 신선하게 도착하며, 도서·산간 지역은 1~2일 정도 더 걸릴 수 있어요.",
+      deliveryBody: "주문 확인 후 가장 신선한 상태로 준비해, 영업일 기준 빠르게 발송해 드려요.\n\n완충 포장으로 문 앞까지 신선하게 도착하며, 도서·산간 지역은 1~2일 정도 더 걸릴 수 있어요.",
+      /** trust.sameDayHarvest 체크 시에만 노출하는 당일 발송 문구. */
+      deliverySameDayNote: "평일 오후 이른 주문은 당일 발송을 도와드려요. (수확·물량 상황에 따라 익일 발송될 수 있어요.)",
+      /** 상단 가치 제안 스트립 라벨 — 강한 주장(체크 시)/안전 문구(기본) 구분. */
+      valueProp: {
+        directFromFarm: "산지 직송",
+        carefulSort: "꼼꼼 선별",
+        freshPack: "신선 포장",
+        sameDayHarvest: "당일 수확",
+        refund: "100% 환불",
+        coldChain: "콜드체인",
+        sealed: "봉인 포장",
+      },
       returnsTitle: "교환·환불 안내",
       returnsBody: "받으신 상품에 파손·변질·오배송이 있다면 수령 당일 사진 1~2장과 함께 카카오톡이나 문자로 알려주세요.\n\n확인되는 즉시 재발송 또는 환불로 처리해 드립니다. 왕복 배송 중 신선도가 크게 저하되어 단순 변심 반품은 어려운 점 양해 부탁드려요.",
       cautionsAutoNotice: "한 그루에서 딴 열매도 색과 크기, 당도가 조금씩 달라요. 자연이 그해에 만든 결과이니 너그럽게 이해 부탁드립니다.",
@@ -212,6 +232,14 @@ export const ko = {
         editLabel: "텍스트 편집",
         hint: "💡 텍스트를 클릭하면 직접 고칠 수 있어요",
       },
+      /** 헤드라인 후보 칩 — 편집 화면 전용(JPG 캡처 제외). */
+      headlineCandidates: {
+        label: "다른 헤드라인 후보",
+        selected: "지금 이 헤드라인이에요",
+        pick: "이 후보로 헤드라인 바꾸기",
+        refresh: "후보 새로 받기",
+        refreshing: "후보 받는 중...",
+      },
     },
     sectionRegen: {
       button: "🔄 다시",
@@ -242,6 +270,21 @@ export const ko = {
       session: "이번 세션만 (가장 안전, 새로고침 시 재입력)",
       days7: "7일 (이 브라우저에 암호화 저장)",
       days30: "30일 (이 브라우저에 암호화 저장)",
+      // 기본(forever) 강조 안내
+      recommendedBadge: "권장",
+      foreverTitle: "이 브라우저에 영구 저장",
+      foreverReassure: "사이트를 업데이트해도 유지돼요. 키는 이 기기에서만 사용되고, 서버로 전송되지 않아요.",
+      // 접힌 고급 옵션
+      advancedSummary: "보안이 걱정되면 저장 기간 줄이기",
+      advancedHint: "공용 PC 등에서 쓰실 때만 선택하세요. 기간이 지나거나 브라우저를 닫으면 키를 다시 입력해야 해요.",
+    },
+    // 게이트가 "다시" 떴을 때 이유별 1줄 안내
+    reentry: {
+      session_policy:
+        "지난번에 '이번 세션만 저장'을 선택하셔서 다시 입력이 필요해요. 이번엔 영구 저장을 권해요.",
+      expired: "설정하신 저장 기간이 지나 다시 입력이 필요해요.",
+      evicted:
+        "브라우저가 저장 공간을 정리하면서 키가 사라진 것 같아요. 다시 입력하시면 영구 저장으로 안전하게 보관할게요.",
     },
     submit: "검증 후 시작",
     verifying: "검증 중...",

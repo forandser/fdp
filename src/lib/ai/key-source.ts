@@ -22,11 +22,39 @@ export interface KeyLoadStatus {
   issue: KeyLoadIssue
 }
 
+/**
+ * 게이트가 "다시" 떴을 때 사용자에게 보여줄 이유.
+ * - first_visit: 이 브라우저에서 키를 저장한 적이 없음 → 안내 없음
+ * - session_policy: 지난번에 "이번 세션만" 선택 → 새로고침으로 사라짐
+ * - expired: 설정한 저장 기간(7/30일)이 지남
+ * - evicted: forever/미만료인데도 키가 사라짐 (브라우저 저장소 정리 등)
+ */
+export type GateReentryReason = "first_visit" | "session_policy" | "expired" | "evicted"
+
 const BROADCAST_CHANNEL_NAME = "fdp:key-events"
 /** localStorage 평문 백업 키 — IDB 손실 시 폴백. */
 const LS_PLAIN_BACKUP = "fdp:key-plain-v1"
 /** localStorage에 키 만료 백업. */
 const LS_EXPIRES_BACKUP = "fdp:key-expires-v1"
+/**
+ * localStorage 키 메타 — 마지막 저장 정책·시각·만료.
+ * 키 원문은 절대 넣지 않는다. 게이트 재등장 이유를 설명하려고
+ * clearKey() 후에도 남긴다(만료/삭제 이력 판별용).
+ */
+const LS_KEY_META = "fdp:key-meta-v1"
+
+interface KeyMeta {
+  policy: KeyStoragePolicy
+  savedAt: number
+  /** forever/session은 null. days_7/days_30만 값이 있음. */
+  expiresAt: number | null
+  /**
+   * 명시적 삭제 시각. null이면 "스스로 사라짐"(만료/eviction).
+   * 값이 있으면 사용자가 직접 삭제했거나 검증 실패로 정리된 것 →
+   * 겁주는 eviction 안내를 띄우지 않는다.
+   */
+  clearedAt: number | null
+}
 
 /**
  * 브라우저 storage persistence 요청 — eviction 차단.
@@ -72,6 +100,35 @@ function lsRemove(key: string): void {
   }
 }
 
+/** 키 메타 저장 (원문은 절대 포함하지 않음). */
+function writeKeyMeta(meta: KeyMeta): void {
+  lsSet(LS_KEY_META, JSON.stringify(meta))
+}
+
+/** 키 메타 조회 (없거나 손상 시 null). */
+function readKeyMeta(): KeyMeta | null {
+  const raw = lsGet(LS_KEY_META)
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as Partial<KeyMeta>
+    if (
+      parsed &&
+      typeof parsed.policy === "string" &&
+      typeof parsed.savedAt === "number"
+    ) {
+      return {
+        policy: parsed.policy as KeyStoragePolicy,
+        savedAt: parsed.savedAt,
+        expiresAt: typeof parsed.expiresAt === "number" ? parsed.expiresAt : null,
+        clearedAt: typeof parsed.clearedAt === "number" ? parsed.clearedAt : null,
+      }
+    }
+  } catch {
+    /* 손상된 메타 — 없는 것으로 취급 */
+  }
+  return null
+}
+
 export interface KeySource {
   /** 현재 사용 가능한 키 (없으면 null) */
   getKey(): Promise<string | null>
@@ -87,6 +144,12 @@ export interface KeySource {
 
   /** 마지막 키 로드 시 발생한 이슈 (직전 getKey 호출 기준) */
   lastIssue(): KeyLoadIssue
+
+  /**
+   * 키가 없어 게이트가 다시 뜬 이유 (사용자 안내용).
+   * 게이트는 키가 없을 때만 뜨므로, 키가 있는 상황은 고려하지 않는다.
+   */
+  getReentryReason(): GateReentryReason
 
   /** 다중 탭에서 키 삭제 시 알림 받기 */
   subscribe(listener: (event: "cleared") => void): () => void
@@ -221,6 +284,8 @@ class BrowserKeySource implements KeySource {
       await idbClearEncryptedKey()
       lsRemove(LS_PLAIN_BACKUP)
       lsRemove(LS_EXPIRES_BACKUP)
+      // 메타는 남긴다 — 새로고침 후 "세션만 저장" 이유 안내용
+      writeKeyMeta({ policy, savedAt: Date.now(), expiresAt: null, clearedAt: null })
       return
     }
     // forever 는 expiresAt=null로 저장 → 만료 검사 통과 → 영구
@@ -248,6 +313,9 @@ class BrowserKeySource implements KeySource {
     } else {
       lsRemove(LS_EXPIRES_BACKUP)
     }
+
+    // 키 메타 기록 (원문 미포함) — 게이트 재등장 이유 안내용
+    writeKeyMeta({ policy, savedAt: Date.now(), expiresAt, clearedAt: null })
   }
 
   async clearKey(): Promise<void> {
@@ -260,9 +328,32 @@ class BrowserKeySource implements KeySource {
     }
     lsRemove(LS_PLAIN_BACKUP)
     lsRemove(LS_EXPIRES_BACKUP)
+    // LS_KEY_META는 의도적으로 남긴다 — 다음 게이트에서 재등장 이유를 설명하려고.
+    // (키 원문은 메타에 없으므로 남겨도 안전)
+    // 단, "명시적 삭제(검증 실패 정리 / 사용자 삭제)"임을 표시해
+    // 겁주는 eviction 안내가 뜨지 않게 한다.
+    const meta = readKeyMeta()
+    if (meta) {
+      writeKeyMeta({ ...meta, clearedAt: Date.now() })
+    }
     const channel = this.ensureChannel()
     channel?.postMessage({ type: "cleared" })
     for (const l of this.listeners) l("cleared")
+  }
+
+  getReentryReason(): GateReentryReason {
+    const meta = readKeyMeta()
+    // 이 브라우저에서 키를 저장한 적이 없음 → 최초 방문 (안내 없음)
+    if (!meta) return "first_visit"
+    // 설정한 저장 기간(7/30일)이 지남 — 가장 우선 (실제 만료 사실)
+    if (meta.expiresAt != null && meta.expiresAt < Date.now()) return "expired"
+    // 사용자가 직접 삭제했거나 검증 실패로 정리된 경우 → 겁주는 안내 없음.
+    // (스스로 사라진 게 아니므로 session/eviction 안내를 띄우지 않는다)
+    if (meta.clearedAt != null) return "first_visit"
+    // 지난번에 "이번 세션만" 선택 → 새로고침으로 사라진 것
+    if (meta.policy === "session") return "session_policy"
+    // forever거나 아직 안 지났는데 키가 사라짐 → 브라우저 저장소 정리 등
+    return "evicted"
   }
 
   async getKeyMask(): Promise<string | null> {

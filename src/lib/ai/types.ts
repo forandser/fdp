@@ -112,6 +112,14 @@ export interface CopyKeyPoint {
 export interface CopyOutput {
   /** 1차 헤드라인 — 가운데 큰 한글 (예: "썬프레 천도 복숭아") */
   headline: string
+  /**
+   * 헤드라인 후보 목록 (선택). 서로 다른 후킹 유형 5개
+   * (산지 고유명사형/정량 수치형/감각 트리거형/시간·시즌형/미니 서사형)을
+   * 카피 생성 시 함께 받아 셀러가 칩으로 즉시 교체할 수 있게 한다.
+   * 하위호환: 구버전 저장본/생성 실패 시 undefined — 칩 영역 자체를 숨긴다.
+   * fruit-facts 매칭 시 무료 hookHeadlines가 합류할 수 있어 최대 8개.
+   */
+  headlineCandidates?: string[]
   /** 서브헤드라인 — 헤드 위 또는 아래 보조 한 줄 */
   subheadline: string
   /** 상품 메인 스토리 단락 (3~5문장) */

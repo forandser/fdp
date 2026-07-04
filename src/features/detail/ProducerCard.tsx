@@ -22,21 +22,21 @@ export function ProducerCard({ name, region, years, photoUrl, oneLine }: Produce
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 14,
-        padding: "16px 14px",
+        gap: 24,
+        padding: "26px 24px",
         background: "#FFFFFF",
         border: "1px solid #E9ECEF",
-        borderRadius: 12,
+        borderRadius: 14,
       }}
     >
       <div
         style={{
           flexShrink: 0,
-          width: 64,
-          height: 64,
+          width: 100,
+          height: 100,
           borderRadius: "50%",
           overflow: "hidden",
-          border: "3px solid #FFFFFF",
+          border: "4px solid #FFFFFF",
           boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
           background: "linear-gradient(135deg, #FFF8E7 0%, #E8F5E9 100%)",
           display: "flex",
@@ -58,22 +58,22 @@ export function ProducerCard({ name, region, years, photoUrl, oneLine }: Produce
       <div style={{ flex: 1, minWidth: 0 }}>
         <div
           style={{
-            fontSize: 16,
+            fontSize: 30,
             fontWeight: 800,
             color: "#212529",
             lineHeight: 1.3,
-            marginBottom: 2,
+            marginBottom: 6,
           }}
         >
           {name} 농가
         </div>
         <div
           style={{
-            fontSize: 12,
+            fontSize: 22,
             color: "#495057",
             display: "flex",
             alignItems: "center",
-            gap: 6,
+            gap: 10,
           }}
         >
           <span>{region}</span>
@@ -83,11 +83,10 @@ export function ProducerCard({ name, region, years, photoUrl, oneLine }: Produce
         {oneLine && (
           <p
             style={{
-              marginTop: 8,
-              fontSize: 13,
+              fontSize: 22,
               color: "#495057",
               lineHeight: 1.5,
-              margin: "8px 0 0",
+              margin: "14px 0 0",
             }}
           >
             “{oneLine}”
@@ -100,7 +99,7 @@ export function ProducerCard({ name, region, years, photoUrl, oneLine }: Produce
 
 function DefaultFarmerSvg() {
   return (
-    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" aria-hidden>
+    <svg width="56" height="56" viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
         d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"
         fill="#52C41A"

@@ -18,6 +18,7 @@ import type { CopyInput, CopyOutput, CopyFAQ, CopySpec } from "./types"
 
 export type SectionId =
   | "headline"
+  | "headlineCandidates"
   | "subheadline"
   | "story"
   | "storage"
@@ -34,6 +35,8 @@ export type SectionId =
  */
 const SECTION_INSTRUCTION: Record<SectionId, string> = {
   headline: "이전 헤드라인과 겹치지 않게 새로운 25자 이내 헤드라인을 만들어주세요.",
+  headlineCandidates:
+    "이전 헤드라인 후보들과 겹치지 않게, 후킹 유형 5개(산지 고유명사형/정량 수치형/감각 트리거형/시간·시즌형/미니 서사형)의 새 헤드라인 후보를 만들어주세요.",
   subheadline: "이전 서브헤드라인과 겹치지 않게 새로운 50자 이내 서브헤드라인을 만들어주세요.",
   story: "이전 스토리와 겹치지 않게 새로운 산지·재배 스토리 3~5문장을 만들어주세요.",
   storage: "이전 보관·먹는 법과 겹치지 않게 새로운 2~3문장 안내를 만들어주세요.",
@@ -51,6 +54,13 @@ function summarizePrevious(currentCopy: CopyOutput, sectionId: SectionId): strin
   switch (sectionId) {
     case "headline":
       return `이전 헤드라인: "${truncate(currentCopy.headline, 40)}"`
+    case "headlineCandidates":
+      return `이전 헤드라인 후보: ${
+        currentCopy.headlineCandidates
+          ?.slice(0, 5)
+          .map((h) => `"${truncate(h, 20)}"`)
+          .join(", ") || "없음"
+      }`
     case "subheadline":
       return `이전 서브: "${truncate(currentCopy.subheadline, 60)}"`
     case "story":
@@ -106,6 +116,9 @@ function pickSection(
   switch (sectionId) {
     case "headline":
       return { headline: output.headline }
+    case "headlineCandidates":
+      // 후보만 부분 재생성 — 후보 배열만 넘긴다 (headline 등 나머지는 그대로 유지).
+      return { headlineCandidates: output.headlineCandidates }
     case "subheadline":
       return { subheadline: output.subheadline }
     case "story":
@@ -127,7 +140,9 @@ export function mergeSection(
   current: CopyOutput,
   patch: Partial<CopyOutput>,
 ): CopyOutput {
-  return {
+  // headlineCandidates는 옵셔널이라 base로 보존 후, patch에 있으면 교체.
+  // (다른 섹션 재생성 시 patch에 후보 키가 없으므로 current 후보가 유지된다.)
+  const merged: CopyOutput = {
     headline: patch.headline ?? current.headline,
     subheadline: patch.subheadline ?? current.subheadline,
     story: patch.story ?? current.story,
@@ -141,4 +156,13 @@ export function mergeSection(
     recommendFor: patch.recommendFor ?? current.recommendFor,
     farmStory: patch.farmStory ?? current.farmStory,
   }
+  // "headlineCandidates"가 patch 키로 존재하면(후보 재생성) 그 값으로 교체.
+  // 그렇지 않으면 기존 후보를 그대로 유지 (옵셔널이라 undefined면 키 생략).
+  const nextCandidates = "headlineCandidates" in patch
+    ? patch.headlineCandidates
+    : current.headlineCandidates
+  if (nextCandidates && nextCandidates.length > 0) {
+    merged.headlineCandidates = nextCandidates
+  }
+  return merged
 }

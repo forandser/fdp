@@ -19,6 +19,10 @@ import { WidthPresetSwitcher, WIDTH_PRESETS, type WidthPresetKey } from "./Width
 // v2.6: WorkJsonExporter 삭제 (사이드바 3개 액션 제거 지시)
 import { checkComplianceReport } from "@/lib/ai/compliance-report"
 import { scoreCopyQuality } from "@/lib/ai/copy-quality-score"
+import {
+  MAX_HEADLINE_CANDIDATES,
+  normalizeHeadlineCandidate,
+} from "@/lib/ai/validate"
 import { detectFruitFactKey, FRUIT_FACTS } from "@/domain/fruit-facts"
 import { resolveAccent, DEFAULT_ACCENT, type AccentPalette } from "./fruit-accent"
 
@@ -78,6 +82,167 @@ const DISPLAY_FONT =
   '"BlackHanSans", "Pretendard", "NotoSansKR", sans-serif'
 const BODY_FONT = '"Pretendard", "NotoSansKR", sans-serif'
 
+/**
+ * v3.0 중앙 이미지 배정기 (임무 C).
+ *
+ * 문제: 예전엔 각 블록이 제각기 images 인덱스를 계산해 같은 사진이 2~3번 붙어 나왔고
+ * (Hero 직후 WhyBrandCard가 hero 사진 재사용, POINT·PACKAGE가 갤러리와 중복),
+ * 갤러리는 5장 고정이라 7장 이상 올린 사진은 어디에도 안 쓰였다.
+ *
+ * 이 함수가 모든 블록의 이미지 슬롯을 한곳에서 결정한다.
+ * 원칙:
+ *  1. hero = images[0] 전용 예약. 다른 슬롯은 사진이 부족할 때만 최후순위로 hero를 재사용.
+ *  2. "아직 안 쓴 사진 우선" — 사진이 슬롯보다 많으면 중복 0,
+ *     적으면 사용 횟수가 가장 적은 사진부터 골라 재사용을 골고루 분산.
+ *  3. 같은 사진 연속 배치 금지 — 직전 슬롯과 같은 사진은 피한다.
+ *     특히 Hero 바로 다음 WhyBrandCard에는 hero 사진을 절대 안 넣는다.
+ *     대체 사진이 없으면 whyBrand는 undefined(텍스트 카드로 렌더).
+ *  4. 갤러리가 남는 사진을 흡수 — 5장 고정 대신 남은 사진 수에 맞춰 유연하게(최대 8장).
+ *  5. 결정적(deterministic) — 같은 입력이면 항상 같은 결과. Math.random 금지.
+ *
+ * 반환: 각 블록이 그대로 쓰는 배정 결과. keyPoints/recipe는 요청 개수만큼의 배열.
+ */
+export interface ImagePlan {
+  hero?: UploadedImage
+  whyBrand?: UploadedImage
+  keyPoints: (UploadedImage | undefined)[]
+  recipe: (UploadedImage | undefined)[]
+  packaging?: UploadedImage
+  gallery: UploadedImage[]
+}
+
+const GALLERY_MAX = 8
+
+export function planImages(
+  images: UploadedImage[],
+  opts: { keyPointCount: number; recipeCount: number },
+): ImagePlan {
+  const keyPointCount = Math.max(0, opts.keyPointCount)
+  const recipeCount = Math.max(0, opts.recipeCount)
+
+  // 사진이 없으면 전부 빈 슬롯 (기존 폴백과 동일: 각 블록이 이미지 없이 렌더).
+  if (images.length === 0) {
+    return {
+      hero: undefined,
+      whyBrand: undefined,
+      keyPoints: Array<UploadedImage | undefined>(keyPointCount).fill(undefined),
+      recipe: Array<UploadedImage | undefined>(recipeCount).fill(undefined),
+      packaging: undefined,
+      gallery: [],
+    }
+  }
+
+  const hero = images[0]
+  // hero를 뺀 후보 풀. 이 풀에서 "안 쓴 사진 우선"으로 특징 슬롯을 채운다.
+  const rest = images.slice(1)
+
+  // 사용 횟수 추적 — key는 image.id. rest에 있는 사진만 카운트한다.
+  const useCount = new Map<string, number>()
+  for (const img of rest) useCount.set(img.id, 0)
+
+  let prevId: string | undefined = hero?.id // 직전 슬롯 = hero (whyBrand가 hero 사진 못 쓰게)
+
+  /**
+   * 특징 슬롯 1칸 배정: rest 중 (사용 횟수 최소) & (직전과 다른) 사진을 고른다.
+   * rest가 비어 있으면 undefined (호출부가 hero 폴백 여부를 결정).
+   * 동점일 땐 원본 순서가 앞선 사진 우선 → 결정적.
+   */
+  const pickFeature = (): UploadedImage | undefined => {
+    if (rest.length === 0) return undefined
+    let best: UploadedImage | undefined
+    let bestCount = Infinity
+    let bestSameAsPrev: UploadedImage | undefined
+    let bestSameCount = Infinity
+    for (const img of rest) {
+      const c = useCount.get(img.id) ?? 0
+      if (img.id === prevId) {
+        // 직전과 같은 사진은 마지막 후보로만 (다른 선택지가 전혀 없을 때).
+        if (c < bestSameCount) {
+          bestSameCount = c
+          bestSameAsPrev = img
+        }
+        continue
+      }
+      if (c < bestCount) {
+        bestCount = c
+        best = img
+      }
+    }
+    const chosen = best ?? bestSameAsPrev
+    if (chosen) {
+      useCount.set(chosen.id, (useCount.get(chosen.id) ?? 0) + 1)
+      prevId = chosen.id
+    }
+    return chosen
+  }
+
+  // whyBrand — Hero 직후. hero 사진 금지. rest 없으면 undefined(텍스트 카드).
+  const whyBrand = pickFeature()
+
+  const keyPoints: (UploadedImage | undefined)[] = []
+  for (let i = 0; i < keyPointCount; i++) {
+    const img = pickFeature()
+    // rest가 아예 없을 때만 hero로 폴백 (직전이 hero면 중복이라 그냥 hero 허용 — 이 경우 사진 1장뿐).
+    keyPoints.push(img ?? hero)
+  }
+
+  const recipe: (UploadedImage | undefined)[] = []
+  for (let i = 0; i < recipeCount; i++) {
+    const img = pickFeature()
+    recipe.push(img ?? hero)
+  }
+
+  // packaging — 갤러리 그리드와 겹치지 않게 특징 슬롯으로 먼저 배정.
+  const packaging = pickFeature() ?? hero
+
+  // 갤러리 — 특징 슬롯에서 "아직 한 번도 안 쓴" rest 사진만 흡수한다.
+  // (hero 및 특징 블록에 이미 노출된 사진은 넣지 않아 블록 간 중복 0 — 임무 C.)
+  // rest가 비거나(사진 1장뿐) 특징 슬롯이 rest를 전부 소진하면 unused가 빈 배열이라
+  // 갤러리도 빈 배열 → 블록 자체가 숨겨진다(line 573 게이트). 7~8장 구간에서
+  // 예전 `rest.slice(...)` 무조건 폴백이 특징+갤러리 전량 중복을 만들던 문제를 제거.
+  const unused = rest.filter((img) => (useCount.get(img.id) ?? 0) === 0)
+  const gallery = unused.slice(0, GALLERY_MAX)
+
+  return { hero, whyBrand, keyPoints, recipe, packaging, gallery }
+}
+
+/** fruit-facts에서 무료로 합류시킬 hookHeadlines 최대 개수 (기획 Should: 2~3개). */
+const FREE_CANDIDATE_MAX = 3
+
+/**
+ * 화면에 노출할 헤드라인 후보 목록을 만든다.
+ *  1. AI가 생성한 copy.headlineCandidates (있으면)
+ *  2. 상품명이 fruit-facts에 매칭되면 그 hookHeadlines 2~3개를 API 비용 없이 합류
+ * 정규화 기준 중복 제거 후 최대 MAX_HEADLINE_CANDIDATES(8)개.
+ * 후보가 하나도 없으면 빈 배열 → 칩 영역 자체를 렌더하지 않는다(하위호환).
+ */
+export function buildDisplayCandidates(
+  copy: CopyOutput,
+  productName: string,
+): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  const push = (raw: string) => {
+    const s = raw.trim()
+    if (!s) return
+    const norm = normalizeHeadlineCandidate(s)
+    if (!norm || seen.has(norm)) return
+    seen.add(norm)
+    if (out.length < MAX_HEADLINE_CANDIDATES) out.push(s)
+  }
+
+  for (const c of copy.headlineCandidates ?? []) push(c)
+
+  // 무료 후보 합류 — fruit-facts 매칭 시 hookHeadlines 일부를 비용 없이 추가.
+  const key = detectFruitFactKey(productName)
+  if (key) {
+    const hooks = FRUIT_FACTS[key]?.hookHeadlines ?? []
+    for (const h of hooks.slice(0, FREE_CANDIDATE_MAX)) push(h)
+  }
+
+  return out
+}
+
 /** 빈 CopyOutput — 미리보기 placeholder/초기값용. */
 export function emptyCopy(): CopyOutput {
   return {
@@ -105,10 +270,37 @@ function DotDivider() {
 /**
  * v2.5 상단 배지 스트립 — 잘 팔리는 스마트스토어 표준 4대 신뢰 요소.
  * Hero 아래에 항상 노출. 검정 배경 + 흰 텍스트 + 얇은 라인 구분.
+ *
+ * 허위광고 방지: 강한 주장("당일 수확"/"100% 환불"/"콜드체인·봉인")은
+ * 셀러가 trust에서 실제로 체크한 경우에만 노출한다. 미체크 슬롯은
+ * 검증이 필요 없는 안전 문구("꼼꼼 선별"/"신선 포장")로 대체해 항상 4칸 유지.
+ * TrustBadgesRow/CheckoutTrustStrip의 기존 게이팅 패턴과 동일한 원칙.
  */
-function ValuePropStrip({ isMobile }: { isMobile: boolean }) {
+function ValuePropStrip({ isMobile, trust }: { isMobile: boolean; trust?: TrustInfo }) {
   const accent = useAccent()
-  const items = ["산지 직송", "당일 수확", "100% 환불", "신선 보장"]
+  const vp = t.detail.result.valueProp
+
+  // 강한 주장(체크된 것만) 후보를 앞에 채우고, 4칸이 안 차면 안전 문구로 보충한다.
+  const strong: string[] = []
+  if (trust?.sameDayHarvest) strong.push(vp.sameDayHarvest)
+  if (trust?.coldChain) strong.push(vp.coldChain)
+  else if (trust?.sealedPackage) strong.push(vp.sealed)
+  if (trust?.refundGuarantee) strong.push(vp.refund)
+
+  // 검증 불필요한 안전 문구 (항상 참인 일반적 신선식품 표현)
+  const safe: string[] = [vp.directFromFarm, vp.carefulSort, vp.freshPack]
+
+  // 강한 주장 우선 + 안전 문구로 4칸 채움 (중복 없이)
+  const items: string[] = []
+  for (const s of strong) {
+    if (items.length >= 4) break
+    if (!items.includes(s)) items.push(s)
+  }
+  for (const s of safe) {
+    if (items.length >= 4) break
+    if (!items.includes(s)) items.push(s)
+  }
+
   return (
     <div
       style={{
@@ -116,7 +308,7 @@ function ValuePropStrip({ isMobile }: { isMobile: boolean }) {
         gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))`,
         background: INK,
         color: "#FFFFFF",
-        padding: isMobile ? "16px 0" : "20px 0",
+        padding: isMobile ? "18px 0" : "32px 0",
       }}
     >
       {items.map((label, i) => (
@@ -124,7 +316,7 @@ function ValuePropStrip({ isMobile }: { isMobile: boolean }) {
           key={`vp-${i}`}
           style={{
             textAlign: "center",
-            fontSize: isMobile ? 12 : 14,
+            fontSize: isMobile ? 13 : 23,
             fontWeight: 800,
             fontFamily: BODY_FONT,
             letterSpacing: 0.5,
@@ -132,7 +324,7 @@ function ValuePropStrip({ isMobile }: { isMobile: boolean }) {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            gap: 6,
+            gap: isMobile ? 6 : 10,
           }}
         >
           <span aria-hidden style={{ color: accent.accent, fontWeight: 900 }}>✓</span>
@@ -164,16 +356,38 @@ export function ResultView({
     const p = WIDTH_PRESETS.find((x) => x.key === widthPreset)
     return p?.width ?? 860
   }, [widthPreset])
-  // 모바일 폭(360/414/780)일 때는 모바일 레이아웃 — 패딩·폰트 크기 축소
-  const isMobile = previewWidth < 900
-
-  const heroImage = images[0]
-  const galleryImages = images.slice(1)
+  // 폰 미리보기(360/414)만 모바일 레이아웃(패딩·폰트 축소).
+  // 쿠팡 780·11번가 831·스토어 860·자사몰 1000 프리셋과 ExportPanel 내보내기 폭
+  // (780/831/860/1000)은 전부 이미지 매체 = 데스크톱 취급.
+  // 임계값 500 = 폰 프리셋(≤414)과 쿠팡(780) 사이.
+  const isMobile = previewWidth < 500
 
   const keyPoints: CopyKeyPoint[] = useMemo(() => {
     if (copy.keyPoints && copy.keyPoints.length >= 1) return copy.keyPoints.slice(0, 3)
     return []
   }, [copy.keyPoints])
+
+  /**
+   * v3.0: 즐기는 법(RecipeBlock)이 실제로 렌더될 때의 이미지 슬롯 수.
+   * RecipeBlock 내부의 pairings.slice(0,3)와 동일한 개수를 미리 계산해
+   * 이미지 배정기가 recipe 슬롯을 정확히 잡게 한다. 미매칭이면 0.
+   */
+  const recipeImageCount = useMemo(() => {
+    const key = detectFruitFactKey(productName)
+    const n = key ? FRUIT_FACTS[key]?.pairings?.length ?? 0 : 0
+    return Math.min(3, n)
+  }, [productName])
+
+  /**
+   * v3.0 중앙 이미지 배정 — 모든 블록이 여기서 나온 imagePlan을 소비한다.
+   * (예전처럼 블록마다 images 인덱스를 따로 계산하지 않는다 → 중복·낭비 제거)
+   */
+  const imagePlan = useMemo(
+    () => planImages(images, { keyPointCount: keyPoints.length, recipeCount: recipeImageCount }),
+    [images, keyPoints.length, recipeImageCount],
+  )
+  const heroImage = imagePlan.hero
+  const galleryImages = imagePlan.gallery
 
   const missing = useMemo(() => {
     const m: string[] = []
@@ -222,11 +436,9 @@ export function ResultView({
     )
   }
 
-  // POINT 큰 카드용 이미지 매핑: 갤러리 이미지를 순환 배치
-  const pointImageFor = (idx: number): UploadedImage | undefined => {
-    if (images.length === 0) return undefined
-    return images[(idx + 1) % images.length] || heroImage
-  }
+  // POINT 큰 카드용 이미지: 중앙 배정기(imagePlan)가 정한 슬롯 사용.
+  const pointImageFor = (idx: number): UploadedImage | undefined =>
+    imagePlan.keyPoints[idx]
 
   /** v1.9: fact 기반 카피 placeholder — 빈 상태일 때 그 과일의 예시 카피를 옅게 노출. */
   const factPlaceholder = useMemo(() => {
@@ -239,6 +451,15 @@ export function ResultView({
       highlightBox: fact.sensoryWords.slice(0, 2).join(" · "),
     }
   }, [productName])
+
+  /**
+   * 헤드라인 후보 칩 목록 — AI 후보 + fruit-facts 무료 후보 합류(중복 제거, 최대 8).
+   * 비어 있으면(구버전 저장본/생성 실패 + 미매칭) 칩 영역 자체를 렌더하지 않는다.
+   */
+  const headlineCandidates = useMemo(
+    () => buildDisplayCandidates(copy, productName),
+    [copy, productName],
+  )
 
   /** v2.8: 과일별 축색 팔레트 — 상품명 기반 자동 전환. */
   const accent = useMemo(() => resolveAccent(productName), [productName])
@@ -299,32 +520,7 @@ export function ResultView({
               }}
             />
 
-            {/* 0. Top thick accent bar with center dot */}
-            <div
-              aria-hidden
-              style={{
-                margin: "28px 20px 24px",
-                position: "relative",
-                height: 6,
-                background: accent.accent,
-                borderRadius: 3,
-              }}
-            >
-              <div
-                style={{
-                  position: "absolute",
-                  top: -5,
-                  left: "50%",
-                  transform: "translateX(-50%)",
-                  width: 16,
-                  height: 16,
-                  borderRadius: "50%",
-                  background: accent.accent,
-                  border: "3px solid #FFFFFF",
-                  boxShadow: `0 0 0 1px ${accent.accent}`,
-                }}
-              />
-            </div>
+            {/* v2.4-b: 슬라이더로 오해되던 굵은 바+중앙 점 장식 삭제 (사용자 지적) */}
 
             {/* v2.9: HERO를 최상단으로 (수플린 레퍼런스 — 헤드/이미지/CTA가 먼저) */}
             <HeroBlock
@@ -338,14 +534,16 @@ export function ResultView({
               onRegenSub={renderRegen("subheadline")}
               isMobile={isMobile}
               factPlaceholder={factPlaceholder}
+              headlineCandidates={headlineCandidates}
+              onRegenCandidates={renderRegen("headlineCandidates")}
             />
 
-            {/* v2.5: 가치 제안 스트립 (산지직송·당일수확·100%환불·신선보장) */}
-            <ValuePropStrip isMobile={isMobile} />
+            {/* v2.5: 가치 제안 스트립 — 강한 주장은 trust 체크 시에만, 미체크는 안전 문구 */}
+            <ValuePropStrip isMobile={isMobile} trust={trust} />
 
             {/* 2a. FreshnessTimeline — 수확일 + fruit-facts 보관 일수 (v1.8) */}
             {freshnessProps && (
-              <div style={{ padding: "16px 20px" }}>
+              <div style={{ padding: isMobile ? "20px 24px" : "28px 44px" }}>
                 <FreshnessTimeline
                   harvestDate={freshnessProps.harvestDate}
                   daysGood={freshnessProps.daysGood}
@@ -358,12 +556,12 @@ export function ResultView({
             {/* v2.9: WHY 카드 (수플린 레퍼런스 — Hero 다음) */}
             <WhyBrandCard
               productName={productName}
-              image={heroImage}
+              image={imagePlan.whyBrand}
               isMobile={isMobile}
             />
 
             {/* 1a. TRUST BADGES */}
-            {trust && <TrustBadgesRow trust={trust} />}
+            {trust && <TrustBadgesRow trust={trust} isMobile={isMobile} />}
 
             {/* 1b. CertCaption — 공식 인증 (v1.8) */}
             {trust && (trust.gapNumber?.trim() || trust.organicNumber?.trim() || trust.pesticideFreeNumber?.trim()) && (
@@ -371,8 +569,8 @@ export function ResultView({
                 style={{
                   display: "flex",
                   flexWrap: "wrap",
-                  gap: 8,
-                  padding: "10px 20px 12px",
+                  gap: isMobile ? 8 : 14,
+                  padding: isMobile ? "12px 24px 16px" : "16px 44px 20px",
                   justifyContent: "center",
                   background: "#FFFFFF",
                 }}
@@ -491,7 +689,7 @@ export function ResultView({
             {hasRecipe && (
               <>
                 <DotDivider />
-                <RecipeBlock productName={productName} images={images} isMobile={isMobile} />
+                <RecipeBlock productName={productName} images={imagePlan.recipe} isMobile={isMobile} />
               </>
             )}
 
@@ -512,7 +710,7 @@ export function ResultView({
 
             {/* v2.8: 8a. 배송 시 구성 (수플린 박스 이미지 레퍼런스) */}
             <PackagingBlock
-              image={galleryImages[galleryImages.length - 1] ?? heroImage}
+              image={imagePlan.packaging}
               weight={weight}
               isMobile={isMobile}
             />
@@ -524,8 +722,8 @@ export function ResultView({
 
             <DotDivider />
 
-            {/* 9. DELIVERY (정형 텍스트 상세) */}
-            <DeliveryBlock isMobile={isMobile} />
+            {/* 9. DELIVERY (정형 텍스트 상세) — 당일 발송 문구는 trust 체크 시에만 */}
+            <DeliveryBlock isMobile={isMobile} trust={trust} />
 
             <DotDivider />
 
@@ -694,22 +892,22 @@ function WhyBrandCard({
   const accent = useAccent()
   const name = productName.trim()
   return (
-    <div style={{ padding: isMobile ? "36px 20px" : "48px 40px", background: BG_SOFT }}>
+    <div style={{ padding: isMobile ? "48px 24px" : "96px 44px", background: BG_SOFT }}>
       <div
         style={{
           background: "#FFFFFF",
           borderRadius: 16,
           border: `1px solid ${LINE}`,
-          padding: isMobile ? "32px 22px" : "44px 40px",
+          padding: isMobile ? "40px 26px" : "72px 56px",
           textAlign: "center",
         }}
       >
         <h2
           style={{
-            fontSize: isMobile ? 26 : 34,
+            fontSize: isMobile ? 30 : 52,
             fontWeight: 400,
             margin: 0,
-            marginBottom: 24,
+            marginBottom: isMobile ? 28 : 40,
             lineHeight: 1.2,
             color: INK,
             fontFamily: DISPLAY_FONT,
@@ -722,9 +920,9 @@ function WhyBrandCard({
         {image && (
           <div
             style={{
-              width: isMobile ? 200 : 280,
+              width: isMobile ? 220 : 360,
               maxWidth: "100%",
-              margin: "0 auto 28px",
+              margin: isMobile ? "0 auto 32px" : "0 auto 44px",
               borderRadius: 12,
               overflow: "hidden",
               boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
@@ -743,7 +941,7 @@ function WhyBrandCard({
             맛 자신감 한 줄로 대체 (다른 블록과 안 겹치는 각도). */}
         <p
           style={{
-            fontSize: isMobile ? 15 : 18,
+            fontSize: isMobile ? 18 : 32,
             fontWeight: 700,
             color: INK,
             margin: 0,
@@ -771,7 +969,8 @@ function RecipeBlock({
   isMobile,
 }: {
   productName: string
-  images: UploadedImage[]
+  /** v3.0: 중앙 배정기가 pairing 순서대로 배정한 이미지(각 슬롯 1장, 없으면 undefined). */
+  images: (UploadedImage | undefined)[]
   isMobile: boolean
 }) {
   const accent = useAccent()
@@ -782,15 +981,15 @@ function RecipeBlock({
 
   const name = productName.trim() || "이 상품"
   return (
-    <div style={{ padding: isMobile ? "44px 20px" : "56px 40px", background: "#FFFFFF" }}>
-      <div style={{ textAlign: "center", marginBottom: isMobile ? 24 : 32 }}>
+    <div style={{ padding: isMobile ? "52px 24px" : "104px 44px", background: "#FFFFFF" }}>
+      <div style={{ textAlign: "center", marginBottom: isMobile ? 32 : 48 }}>
         <div
           style={{
-            fontSize: isMobile ? 12 : 13,
+            fontSize: isMobile ? 13 : 22,
             color: accent.accent,
             fontWeight: 800,
             letterSpacing: 2,
-            marginBottom: 8,
+            marginBottom: isMobile ? 10 : 14,
             fontFamily: BODY_FONT,
           }}
         >
@@ -798,7 +997,7 @@ function RecipeBlock({
         </div>
         <h2
           style={{
-            fontSize: isMobile ? 26 : 38,
+            fontSize: isMobile ? 30 : 50,
             fontWeight: 400,
             margin: 0,
             color: INK,
@@ -811,27 +1010,27 @@ function RecipeBlock({
         </h2>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 16 : 20 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 18 : 28 }}>
         {items.map((pairing, i) => {
-          const img = images.length > 0 ? images[i % images.length] : undefined
+          const img = images[i]
           return (
             <div
               key={`recipe-${i}`}
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: isMobile ? 14 : 20,
+                gap: isMobile ? 16 : 28,
                 background: "#FFFFFF",
                 border: `1px solid ${LINE}`,
-                borderRadius: 12,
+                borderRadius: 16,
                 overflow: "hidden",
               }}
             >
               <div
                 style={{
                   flexShrink: 0,
-                  width: isMobile ? 96 : 130,
-                  height: isMobile ? 96 : 130,
+                  width: isMobile ? 118 : 190,
+                  height: isMobile ? 118 : 190,
                   background: accent.soft,
                 }}
               >
@@ -844,14 +1043,14 @@ function RecipeBlock({
                   />
                 )}
               </div>
-              <div style={{ flex: 1, minWidth: 0, padding: isMobile ? "0 14px 0 0" : "0 20px 0 0" }}>
+              <div style={{ flex: 1, minWidth: 0, padding: isMobile ? "0 18px 0 0" : "0 32px 0 0" }}>
                 <div
                   style={{
-                    fontSize: isMobile ? 10 : 11,
+                    fontSize: isMobile ? 12 : 20,
                     color: accent.accent,
                     fontWeight: 800,
                     letterSpacing: 1.5,
-                    marginBottom: 4,
+                    marginBottom: isMobile ? 6 : 10,
                     fontFamily: BODY_FONT,
                   }}
                 >
@@ -861,7 +1060,7 @@ function RecipeBlock({
                     섞여 조사(선물→선물과)·의미가 깨짐. pairing만 깔끔히 노출. */}
                 <div
                   style={{
-                    fontSize: isMobile ? 17 : 20,
+                    fontSize: isMobile ? 20 : 34,
                     fontWeight: 800,
                     color: INK,
                     fontFamily: BODY_FONT,
@@ -881,6 +1080,114 @@ function RecipeBlock({
   )
 }
 
+/**
+ * 헤드라인 후보 칩 — 편집 화면 전용 UI.
+ *
+ * data-edit-chrome: html-to-jpg.ts가 캡처 클론에서 [data-edit-chrome]을 제거하므로
+ * (line 65: `clone.querySelectorAll("[data-edit-chrome]").forEach((el) => el.remove())`)
+ * 이 칩 영역은 최종 JPG에 절대 찍히지 않는다. 따라서 편집용 작은 크기/보조 색을 써도 안전.
+ *
+ * - 칩 클릭 → onPick(후보) → copy.headline 즉시 교체 (인라인 편집과 공존)
+ * - 현재 headline과 정규화 기준 일치하는 후보는 선택 상태로 표시
+ * - 후보가 없으면 null (칩 영역 자체를 렌더하지 않음 — 하위호환)
+ */
+function HeadlineCandidateChips({
+  candidates,
+  currentHeadline,
+  onPick,
+  onRegenCandidates,
+}: {
+  candidates: string[]
+  currentHeadline: string
+  onPick: (next: string) => void
+  onRegenCandidates: React.ReactNode
+}) {
+  const accent = useAccent()
+  if (candidates.length === 0) return null
+
+  const currentNorm = normalizeHeadlineCandidate(currentHeadline)
+  const c = t.detail.result.headlineCandidates
+
+  return (
+    <div
+      data-edit-chrome
+      style={{
+        marginTop: 18,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 10,
+      }}
+    >
+      <span
+        style={{
+          fontSize: 12,
+          fontWeight: 700,
+          color: MUTE,
+          letterSpacing: 0.3,
+          fontFamily: BODY_FONT,
+        }}
+      >
+        {c.label}
+      </span>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          justifyContent: "center",
+          gap: 8,
+          maxWidth: 640,
+        }}
+      >
+        {candidates.map((cand, i) => {
+          const selected = normalizeHeadlineCandidate(cand) === currentNorm
+          return (
+            <button
+              key={`hc-${i}`}
+              type="button"
+              onClick={() => onPick(cand)}
+              aria-pressed={selected}
+              title={selected ? c.selected : c.pick}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                padding: "6px 13px",
+                borderRadius: 999,
+                fontSize: 13.5,
+                fontWeight: selected ? 700 : 500,
+                fontFamily: BODY_FONT,
+                lineHeight: 1.3,
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+                maxWidth: "100%",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                color: selected ? "#FFFFFF" : SUB,
+                background: selected ? accent.accent : "#FFFFFF",
+                border: `1px solid ${selected ? accent.accent : LINE}`,
+                transition: "background 0.12s ease, border-color 0.12s ease",
+              }}
+            >
+              {selected && (
+                <span aria-hidden style={{ fontSize: 11, fontWeight: 900 }}>
+                  ✓
+                </span>
+              )}
+              <span
+                style={{ overflow: "hidden", textOverflow: "ellipsis" }}
+              >
+                {cand}
+              </span>
+            </button>
+          )
+        })}
+        {onRegenCandidates}
+      </div>
+    </div>
+  )
+}
+
 function HeroBlock({
   heroImage,
   copy,
@@ -892,6 +1199,8 @@ function HeroBlock({
   onRegenSub,
   isMobile,
   factPlaceholder,
+  headlineCandidates,
+  onRegenCandidates,
 }: {
   heroImage?: UploadedImage
   copy: CopyOutput
@@ -903,6 +1212,10 @@ function HeroBlock({
   onRegenSub: React.ReactNode
   isMobile: boolean
   factPlaceholder?: { headline: string; sub: string; highlightBox: string } | null
+  /** AI + fruit-facts 무료 합류 후보(중복 제거·최대 8). 비면 칩 미표시. */
+  headlineCandidates: string[]
+  /** "후보 새로 받기" 재생성 노드 (data-edit-chrome — JPG 제외). */
+  onRegenCandidates: React.ReactNode
 }) {
   const accent = useAccent()
   const name = productName.trim()
@@ -916,7 +1229,7 @@ function HeroBlock({
       {/* v2.9: 상단 캡션 + 대형 헤드 (수플린 레퍼런스 — 헤드가 이미지 위) */}
       <div
         style={{
-          padding: isMobile ? "36px 20px 24px" : "48px 40px 28px",
+          padding: isMobile ? "44px 24px 30px" : "72px 44px 40px",
           textAlign: "center",
           background: accent.soft,
         }}
@@ -928,14 +1241,14 @@ function HeroBlock({
               alignItems: "center",
               justifyContent: "center",
               flexWrap: "wrap",
-              gap: 8,
-              marginBottom: 16,
+              gap: isMobile ? 8 : 12,
+              marginBottom: isMobile ? 18 : 24,
             }}
           >
             {name && (
               <span
                 style={{
-                  fontSize: isMobile ? 13 : 14,
+                  fontSize: isMobile ? 15 : 26,
                   color: SUB,
                   fontWeight: 600,
                   fontFamily: BODY_FONT,
@@ -949,11 +1262,11 @@ function HeroBlock({
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  padding: "4px 12px",
+                  padding: isMobile ? "5px 14px" : "8px 20px",
                   borderRadius: 999,
                   background: accent.accent,
                   color: "#FFFFFF",
-                  fontSize: isMobile ? 11 : 12,
+                  fontSize: isMobile ? 13 : 22,
                   fontWeight: 800,
                   letterSpacing: 0.5,
                   fontFamily: BODY_FONT,
@@ -966,7 +1279,7 @@ function HeroBlock({
         )}
         <h1
           style={{
-            fontSize: isMobile ? 48 : 76,
+            fontSize: isMobile ? 52 : 90,
             fontWeight: 400,
             margin: 0,
             color: INK,
@@ -983,6 +1296,14 @@ function HeroBlock({
             placeholder={factPlaceholder?.headline ?? "여기에 상품 헤드라인을 적어보세요"}
           />
         </h1>
+
+        {/* 헤드라인 후보 칩 — 편집 전용(data-edit-chrome → JPG 캡처 제외). */}
+        <HeadlineCandidateChips
+          candidates={headlineCandidates}
+          currentHeadline={copy.headline}
+          onPick={(next) => onCopyChange({ ...copy, headline: next })}
+          onRegenCandidates={onRegenCandidates}
+        />
       </div>
 
       {/* 대표 이미지 */}
@@ -1009,7 +1330,7 @@ function HeroBlock({
               alignItems: "center",
               justifyContent: "center",
               color: PLACEHOLDER,
-              fontSize: 14,
+              fontSize: isMobile ? 15 : 24,
               fontStyle: "italic",
             }}
           >
@@ -1021,17 +1342,17 @@ function HeroBlock({
       {/* 하단: 설명 서브카피 + CTA pill */}
       <div
         style={{
-          padding: isMobile ? "28px 24px 36px" : "36px 40px 44px",
+          padding: isMobile ? "32px 24px 44px" : "52px 44px 64px",
           textAlign: "center",
         }}
       >
         {/* v2.9: 서브카피 — 대문자 액센트 → 설명형 회색 (수플린 톤) */}
         <p
           style={{
-            fontSize: isMobile ? 15 : 17,
+            fontSize: isMobile ? 17 : 30,
             color: SUB,
             margin: 0,
-            marginBottom: 20,
+            marginBottom: isMobile ? 24 : 32,
             lineHeight: 1.6,
             fontFamily: BODY_FONT,
             fontWeight: 500,
@@ -1052,11 +1373,11 @@ function HeroBlock({
           style={{
             display: "inline-flex",
             alignItems: "center",
-            padding: isMobile ? "12px 24px" : "14px 30px",
+            padding: isMobile ? "14px 28px" : "20px 44px",
             borderRadius: 999,
             background: INK,
             color: "#FFFFFF",
-            fontSize: isMobile ? 15 : 17,
+            fontSize: isMobile ? 17 : 30,
             fontWeight: 800,
             fontFamily: BODY_FONT,
             letterSpacing: -0.3,
@@ -1067,6 +1388,7 @@ function HeroBlock({
 
         {(onRegenHeadline || onRegenSub) && (
           <div
+            data-edit-chrome
             style={{
               display: "flex",
               gap: 8,
@@ -1084,9 +1406,9 @@ function HeroBlock({
             style={{
               display: "flex",
               flexWrap: "wrap",
-              gap: 8,
+              gap: isMobile ? 8 : 12,
               justifyContent: "center",
-              marginTop: 22,
+              marginTop: isMobile ? 24 : 32,
             }}
           >
             {copy.highlightBadges.slice(0, 4).map((b, i) => (
@@ -1095,12 +1417,12 @@ function HeroBlock({
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: 5,
-                  padding: "7px 14px",
+                  gap: isMobile ? 5 : 8,
+                  padding: isMobile ? "8px 16px" : "12px 24px",
                   borderRadius: 999,
                   background: accent.accent,
                   color: "#FFFFFF",
-                  fontSize: isMobile ? 12 : 13,
+                  fontSize: isMobile ? 13 : 22,
                   fontWeight: 700,
                   fontFamily: BODY_FONT,
                   boxShadow: `0 2px 6px ${accent.accent}40`,
@@ -1111,12 +1433,12 @@ function HeroBlock({
                     display: "inline-flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    width: 16,
-                    height: 16,
+                    width: isMobile ? 18 : 26,
+                    height: isMobile ? 18 : 26,
                     borderRadius: "50%",
                     background: "#FFFFFF",
                     color: accent.accent,
-                    fontSize: 10,
+                    fontSize: isMobile ? 11 : 15,
                     fontWeight: 900,
                   }}
                   aria-hidden
@@ -1148,7 +1470,7 @@ function StoryBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "44px 24px" : "56px 56px",
+        padding: isMobile ? "52px 24px" : "104px 56px",
         background: "#FFFFFF",
         position: "relative",
       }}
@@ -1158,16 +1480,16 @@ function StoryBlock({
         <div
           style={{
             textAlign: "center",
-            marginBottom: 24,
+            marginBottom: isMobile ? 28 : 36,
           }}
         >
           <span
             style={{
               display: "inline-block",
-              padding: "6px 14px",
+              padding: isMobile ? "7px 16px" : "10px 22px",
               background: INK,
               color: "#FFFFFF",
-              fontSize: 11,
+              fontSize: isMobile ? 13 : 20,
               fontWeight: 800,
               letterSpacing: 3,
               fontFamily: BODY_FONT,
@@ -1182,13 +1504,13 @@ function StoryBlock({
         style={{
           position: "relative",
           textAlign: "center",
-          maxWidth: 640,
+          maxWidth: 720,
           margin: "0 auto",
         }}
       >
         <p
           style={{
-            fontSize: isMobile ? 18 : 21,
+            fontSize: isMobile ? 18 : 30,
             color: INK,
             lineHeight: 1.85,
             whiteSpace: "pre-line",
@@ -1216,18 +1538,18 @@ function StoryBlock({
       {/* v2.5: highlightBox — 초대형 BlackHanSans 슬로건 + 축색 강조 (임팩트 톤) */}
       <div
         style={{
-          marginTop: 56,
-          padding: isMobile ? "36px 24px" : "56px 32px",
+          marginTop: isMobile ? 56 : 88,
+          padding: isMobile ? "44px 24px" : "80px 40px",
           background: INK,
           textAlign: "center",
-          maxWidth: 720,
+          maxWidth: 760,
           marginLeft: "auto",
           marginRight: "auto",
         }}
       >
         <p
           style={{
-            fontSize: isMobile ? 40 : 60,
+            fontSize: isMobile ? 44 : 84,
             fontWeight: 400,
             color: "#FFFFFF",
             margin: 0,
@@ -1247,7 +1569,7 @@ function StoryBlock({
       </div>
 
       {onRegen && (
-        <div style={{ display: "flex", justifyContent: "center", marginTop: 14 }}>
+        <div data-edit-chrome style={{ display: "flex", justifyContent: "center", marginTop: 14 }}>
           {onRegen}
         </div>
       )}
@@ -1263,8 +1585,9 @@ function GalleryBlock({
   productName: string
 }) {
   // v2.6: 첫 이미지 대형 통 이미지 + 나머지는 2열 그리드 (아보카도·복숭아 페이지 톤)
-  const gallery = images.slice(0, 5)
-  const [featured, ...rest] = gallery
+  // v3.0: 5장 고정 제거 — 중앙 배정기(imagePlan.gallery)가 남은 사진 수에 맞춰
+  // 최대 8장까지 넘겨준다. 여기선 그대로 전부 렌더(featured 1 + grid 나머지).
+  const [featured, ...rest] = images
   return (
     <div
       style={{
@@ -1351,18 +1674,18 @@ function SpecBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "36px 20px" : "48px 40px",
+        padding: isMobile ? "44px 24px" : "96px 44px",
         background: BG_SOFT,
       }}
     >
-      <SectionTitle title={t.detail.result.spec} regen={onRegen} />
+      <SectionTitle title={t.detail.result.spec} regen={onRegen} isMobile={isMobile} />
 
       {specCount > 0 ? (
         <div
           style={{
             display: "grid",
             gridTemplateColumns: columns,
-            gap: 8,
+            gap: isMobile ? 10 : 16,
           }}
         >
           {/* v2.3: 이모지 아이콘 삭제, 카드 테두리 얇은 회색, 라벨/값 리듬 통일 */}
@@ -1377,17 +1700,17 @@ function SpecBlock({
                 style={{
                   background: "#FFFFFF",
                   border: `1px solid ${LINE}`,
-                  borderRadius: 12,
-                  padding: "20px 22px",
+                  borderRadius: 14,
+                  padding: isMobile ? "24px 24px" : "32px 34px",
                   display: "flex",
                   flexDirection: "column",
-                  gap: 10,
+                  gap: isMobile ? 12 : 16,
                   minWidth: 0,
                 }}
               >
                 <div
                   style={{
-                    fontSize: 12,
+                    fontSize: isMobile ? 14 : 22,
                     color: SUB,
                     fontWeight: 700,
                     fontFamily: BODY_FONT,
@@ -1401,19 +1724,19 @@ function SpecBlock({
                     style={{
                       display: "flex",
                       alignItems: "baseline",
-                      gap: 6,
+                      gap: isMobile ? 6 : 10,
                       lineHeight: 1,
                       color: accent.accent,
                       fontFamily: DISPLAY_FONT,
                     }}
                   >
-                    {/* v2.5: 당도 숫자 44→80px (Spec 카드에서 시각 앵커) */}
-                    <span style={{ fontSize: 80, fontWeight: 400, letterSpacing: -3 }}>
+                    {/* v2.5: 당도 대형 숫자 — 임무D 확대(모바일 64 / 데스크톱 108, 시각 앵커) */}
+                    <span style={{ fontSize: isMobile ? 64 : 108, fontWeight: 400, letterSpacing: -3 }}>
                       {sweetnessMatch[1]}
                     </span>
                     <span
                       style={{
-                        fontSize: 14,
+                        fontSize: isMobile ? 15 : 26,
                         fontWeight: 800,
                         color: accent.dark,
                         fontFamily: BODY_FONT,
@@ -1426,7 +1749,7 @@ function SpecBlock({
                 ) : (
                   <div
                     style={{
-                      fontSize: 18,
+                      fontSize: isMobile ? 22 : 40,
                       fontWeight: 800,
                       color: INK,
                       lineHeight: 1.35,
@@ -1452,12 +1775,12 @@ function SpecBlock({
         <div
           style={{
             background: "#FFFFFF",
-            borderRadius: 10,
+            borderRadius: 12,
             border: `1px solid ${LINE}`,
-            padding: "20px",
+            padding: isMobile ? "24px" : "36px",
             textAlign: "center",
             color: PLACEHOLDER,
-            fontSize: 13,
+            fontSize: isMobile ? 15 : 24,
             fontStyle: "italic",
           }}
         >
@@ -1486,14 +1809,14 @@ function KeyPointsBig({
     <div style={{ background: "#FFFFFF" }}>
       <div
         style={{
-          padding: isMobile ? "48px 20px 28px" : "64px 40px 36px",
+          padding: isMobile ? "56px 24px 32px" : "112px 44px 52px",
           textAlign: "center",
         }}
       >
-        {/* v2.5: 섹션 헤드 크기 42→60 (임팩트 강화) */}
+        {/* 임무D: 섹션 헤드 — 히어로급 임팩트 (모바일 42 / 데스크톱 76) */}
         <h2
           style={{
-            fontSize: isMobile ? 38 : 60,
+            fontSize: isMobile ? 42 : 76,
             fontWeight: 400,
             margin: 0,
             color: INK,
@@ -1517,35 +1840,35 @@ function KeyPointsBig({
             key={`kp-big-${i}`}
             style={{
               position: "relative",
-              padding: isMobile ? "40px 24px 56px" : "56px 48px 72px",
+              padding: isMobile ? "48px 24px 64px" : "88px 56px 104px",
               background: bg,
             }}
           >
-            {/* 좌측 세로 6px 축색 바 */}
+            {/* 좌측 세로 축색 바 */}
             <div
               aria-hidden
               style={{
                 position: "absolute",
                 left: isMobile ? 12 : 24,
-                top: isMobile ? 40 : 56,
-                bottom: isMobile ? 56 : 72,
-                width: 6,
+                top: isMobile ? 48 : 88,
+                bottom: isMobile ? 64 : 104,
+                width: isMobile ? 6 : 9,
                 background: accent.accent,
-                borderRadius: 3,
+                borderRadius: 4,
               }}
             />
-            <div style={{ paddingLeft: isMobile ? 12 : 24, position: "relative" }}>
-              {/* v2.5: 배경 숫자 크기·색상 강화 (110→180, 얇은 회색선) */}
+            <div style={{ paddingLeft: isMobile ? 16 : 32, position: "relative" }}>
+              {/* 임무D: 배경 넘버 — 스케일에 맞춰 강화(모바일 150 / 데스크톱 240), 얇은 회색선 */}
               <span
                 aria-hidden
                 style={{
                   position: "absolute",
                   right: 0,
-                  top: -40,
-                  fontSize: isMobile ? 130 : 200,
+                  top: isMobile ? -48 : -60,
+                  fontSize: isMobile ? 150 : 240,
                   fontWeight: 900,
                   color: "transparent",
-                  WebkitTextStroke: `2px ${LINE}`,
+                  WebkitTextStroke: `${isMobile ? 2 : 3}px ${LINE}`,
                   fontFamily: DISPLAY_FONT,
                   lineHeight: 1,
                   letterSpacing: -6,
@@ -1561,13 +1884,13 @@ function KeyPointsBig({
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 8,
-                  padding: "6px 14px",
+                  padding: isMobile ? "7px 16px" : "10px 22px",
                   background: accent.accent,
                   color: "#FFF",
-                  fontSize: isMobile ? 11 : 12,
+                  fontSize: isMobile ? 13 : 22,
                   fontWeight: 800,
                   letterSpacing: 2.5,
-                  marginBottom: 18,
+                  marginBottom: isMobile ? 20 : 28,
                   fontFamily: BODY_FONT,
                   position: "relative",
                   zIndex: 1,
@@ -1577,10 +1900,10 @@ function KeyPointsBig({
               </div>
               <h3
                 style={{
-                  fontSize: isMobile ? 32 : 46,
+                  fontSize: isMobile ? 34 : 56,
                   fontWeight: 400,
                   margin: 0,
-                  marginBottom: 20,
+                  marginBottom: isMobile ? 22 : 28,
                   color: INK,
                   lineHeight: 1.2,
                   fontFamily: DISPLAY_FONT,
@@ -1599,11 +1922,11 @@ function KeyPointsBig({
               </h3>
               <p
                 style={{
-                  fontSize: isMobile ? 16 : 18,
+                  fontSize: isMobile ? 17 : 28,
                   color: SUB,
                   lineHeight: 1.8,
                   margin: 0,
-                  marginBottom: 32,
+                  marginBottom: isMobile ? 32 : 44,
                   whiteSpace: "pre-line",
                   fontFamily: BODY_FONT,
                   fontWeight: 500,
@@ -1677,23 +2000,23 @@ function StorageBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "36px 20px" : "48px 40px",
+        padding: isMobile ? "44px 24px" : "96px 44px",
         background: "#FFFFFF",
       }}
     >
-      <SectionTitle title={t.detail.result.storage} regen={onRegen} />
+      <SectionTitle title={t.detail.result.storage} regen={onRegen} isMobile={isMobile} />
       <div
         style={{
-          padding: isMobile ? "20px 20px" : "26px 30px",
+          padding: isMobile ? "24px 24px" : "40px 44px",
           background: "#FFFFFF",
-          borderRadius: 4,
+          borderRadius: 6,
           border: `1px solid ${LINE}`,
         }}
       >
         {/* v2.2: 값 유무 상관 없이 항상 EditableResultText — 편집 진입 가능 */}
         <p
           style={{
-            fontSize: isMobile ? 15 : 16,
+            fontSize: isMobile ? 16 : 27,
             color: INK,
             lineHeight: 1.85,
             whiteSpace: "pre-line",
@@ -1730,15 +2053,15 @@ function FaqBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "36px 20px" : "48px 40px",
+        padding: isMobile ? "44px 24px" : "96px 44px",
         background: "#FFFFFF",
       }}
     >
-      <SectionTitle title={t.detail.result.faq} regen={onRegen} />
+      <SectionTitle title={t.detail.result.faq} regen={onRegen} isMobile={isMobile} />
       <div
         style={{
           background: "#FFFFFF",
-          borderRadius: 10,
+          borderRadius: 12,
           border: `1px solid ${LINE}`,
           overflow: "hidden",
         }}
@@ -1747,7 +2070,7 @@ function FaqBlock({
           <div
             key={`faq-${i}`}
             style={{
-              padding: isMobile ? "16px 18px" : "20px 24px",
+              padding: isMobile ? "20px 22px" : "32px 38px",
               borderBottom:
                 i < copy.faq.length - 1 ? `1px solid ${LINE}` : "none",
             }}
@@ -1755,11 +2078,11 @@ function FaqBlock({
             {/* v2.4: ▼ 화살표·빨강 Q. 삭제 → Q./A. 미니멀 표기 */}
             <p
               style={{
-                fontSize: isMobile ? 14 : 15,
+                fontSize: isMobile ? 17 : 30,
                 fontWeight: 700,
                 color: INK,
                 margin: 0,
-                marginBottom: 8,
+                marginBottom: isMobile ? 10 : 14,
                 lineHeight: 1.5,
               }}
             >
@@ -1773,7 +2096,7 @@ function FaqBlock({
             </p>
             <p
               style={{
-                fontSize: isMobile ? 13 : 14,
+                fontSize: isMobile ? 16 : 28,
                 color: SUB,
                 lineHeight: 1.75,
                 margin: 0,
@@ -1811,36 +2134,39 @@ function SizeDiagramBlock({
   isMobile: boolean
 }) {
   const accent = useAccent()
+  // 임무D: scale을 0.5/0.75/1.0으로 더 벌려 대·중·소 대비를 명확히.
   const tiers = [
-    { label: "소과", scale: 0.62 },
-    { label: "중과", scale: 0.82 },
+    { label: "소과", scale: 0.5 },
+    { label: "중과", scale: 0.75 },
     { label: "대과", scale: 1 },
   ]
-  const maxSize = isMobile ? 84 : 108
+  // 전체 크기 확대 — 흰 배경에서 뭉개지지 않도록 원을 키운다.
+  const maxSize = isMobile ? 120 : 190
   const name = productName?.trim() || "이 상품"
   return (
-    <div style={{ padding: isMobile ? "44px 20px" : "56px 40px", background: "#FFFFFF" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+    <div style={{ padding: isMobile ? "44px 24px" : "96px 44px", background: "#FFFFFF" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 10 : 14, marginBottom: 8 }}>
         <span
           aria-hidden
           style={{
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
-            width: 26,
-            height: 26,
+            width: isMobile ? 30 : 44,
+            height: isMobile ? 30 : 44,
             borderRadius: "50%",
             background: accent.accent,
             color: "#FFFFFF",
-            fontSize: 14,
+            fontSize: isMobile ? 16 : 24,
             fontWeight: 900,
+            flexShrink: 0,
           }}
         >
           ✓
         </span>
         <h2
           style={{
-            fontSize: isMobile ? 26 : 34,
+            fontSize: isMobile ? 30 : 52,
             fontWeight: 400,
             margin: 0,
             color: INK,
@@ -1853,14 +2179,14 @@ function SizeDiagramBlock({
         </h2>
       </div>
 
-      {/* 상대 크기 3원 + 라벨 */}
+      {/* 상대 크기 3원 + 라벨 — 채움은 3개 동일(등급 오독 방지), 대비는 굵은 테두리로 확보 */}
       <div
         style={{
           display: "flex",
           alignItems: "flex-end",
           justifyContent: "center",
-          gap: isMobile ? 28 : 48,
-          padding: isMobile ? "28px 0 24px" : "36px 0 28px",
+          gap: isMobile ? 32 : 60,
+          padding: isMobile ? "36px 0 32px" : "56px 0 44px",
         }}
       >
         {tiers.map((tier) => {
@@ -1874,13 +2200,14 @@ function SizeDiagramBlock({
                   height: d,
                   borderRadius: "50%",
                   background: accent.soft,
-                  border: `2px solid ${accent.accent}`,
-                  margin: "0 auto 12px",
+                  // 임무D: 테두리 2→4px(모바일 3)로 굵혀 흰 배경 대비 확보. 크기별 색 농도 차이는 두지 않음.
+                  border: `${isMobile ? 3 : 4}px solid ${accent.accent}`,
+                  margin: isMobile ? "0 auto 16px" : "0 auto 22px",
                 }}
               />
               <div
                 style={{
-                  fontSize: isMobile ? 14 : 16,
+                  fontSize: isMobile ? 16 : 26,
                   fontWeight: 800,
                   color: INK,
                   fontFamily: BODY_FONT,
@@ -1897,9 +2224,9 @@ function SizeDiagramBlock({
         <div
           style={{
             textAlign: "center",
-            fontSize: isMobile ? 14 : 15,
+            fontSize: isMobile ? 16 : 26,
             color: SUB,
-            marginBottom: 16,
+            marginBottom: isMobile ? 20 : 28,
             fontFamily: BODY_FONT,
           }}
         >
@@ -1907,19 +2234,20 @@ function SizeDiagramBlock({
         </div>
       )}
 
-      {/* 정직한 편차 안내 */}
+      {/* 정직한 편차 안내 — 경고 톤 회피: 중립 회색 배경/회색 강조로 (accent 제거) */}
       <div
         style={{
-          padding: isMobile ? "14px 16px" : "16px 20px",
-          background: accent.soft,
-          borderRadius: 10,
-          fontSize: isMobile ? 12.5 : 13.5,
+          padding: isMobile ? "18px 20px" : "26px 32px",
+          background: BG_SOFT,
+          border: `1px solid ${LINE}`,
+          borderRadius: 12,
+          fontSize: isMobile ? 15 : 24,
           color: SUB,
           lineHeight: 1.7,
           fontFamily: BODY_FONT,
         }}
       >
-        <strong style={{ color: accent.dark }}>꼭 확인해 주세요</strong>
+        <strong style={{ color: INK }}>꼭 확인해 주세요</strong>
         <br />
         과일 특성상 크기가 일정하지 않아요. 실제 크기와 외형에 다소 차이가 있을 수 있으니 참고 부탁드려요.
       </div>
@@ -1954,14 +2282,14 @@ function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: b
     { title: "문 앞 도착", desc: "완충 포장으로 신선하게 문 앞까지" },
   ]
   return (
-    <div style={{ padding: isMobile ? "44px 20px" : "56px 40px", background: BG_SOFT }}>
-      <div style={{ textAlign: "center", marginBottom: isMobile ? 28 : 36 }}>
+    <div style={{ padding: isMobile ? "52px 24px" : "104px 44px", background: BG_SOFT }}>
+      <div style={{ textAlign: "center", marginBottom: isMobile ? 32 : 48 }}>
         <div
           style={{
-            fontSize: isMobile ? 13 : 15,
+            fontSize: isMobile ? 15 : 26,
             color: SUB,
             fontWeight: 600,
-            marginBottom: 8,
+            marginBottom: isMobile ? 10 : 14,
             fontFamily: BODY_FONT,
           }}
         >
@@ -1969,7 +2297,7 @@ function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: b
         </div>
         <h2
           style={{
-            fontSize: isMobile ? 30 : 44,
+            fontSize: isMobile ? 34 : 60,
             fontWeight: 400,
             margin: 0,
             color: INK,
@@ -1989,8 +2317,8 @@ function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: b
             style={{
               display: "flex",
               alignItems: "flex-start",
-              gap: isMobile ? 14 : 20,
-              padding: isMobile ? "16px 0" : "20px 0",
+              gap: isMobile ? 16 : 28,
+              padding: isMobile ? "20px 0" : "32px 0",
               borderBottom: i < steps.length - 1 ? `1px solid ${LINE}` : "none",
             }}
           >
@@ -1998,28 +2326,28 @@ function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: b
               aria-hidden
               style={{
                 flexShrink: 0,
-                width: isMobile ? 40 : 48,
-                height: isMobile ? 40 : 48,
+                width: isMobile ? 48 : 72,
+                height: isMobile ? 48 : 72,
                 borderRadius: "50%",
                 background: accent.accent,
                 color: "#FFFFFF",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: isMobile ? 20 : 24,
+                fontSize: isMobile ? 24 : 38,
                 fontWeight: 400,
                 fontFamily: DISPLAY_FONT,
               }}
             >
               {i + 1}
             </div>
-            <div style={{ flex: 1, minWidth: 0, paddingTop: 2 }}>
+            <div style={{ flex: 1, minWidth: 0, paddingTop: isMobile ? 4 : 8 }}>
               <div
                 style={{
-                  fontSize: isMobile ? 17 : 20,
+                  fontSize: isMobile ? 20 : 30,
                   fontWeight: 800,
                   color: INK,
-                  marginBottom: 4,
+                  marginBottom: isMobile ? 6 : 10,
                   fontFamily: BODY_FONT,
                   letterSpacing: -0.3,
                 }}
@@ -2028,7 +2356,7 @@ function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: b
               </div>
               <div
                 style={{
-                  fontSize: isMobile ? 13.5 : 15,
+                  fontSize: isMobile ? 15 : 26,
                   color: SUB,
                   lineHeight: 1.6,
                   fontFamily: BODY_FONT,
@@ -2059,15 +2387,15 @@ function PackagingBlock({
 }) {
   const accent = useAccent()
   return (
-    <div style={{ padding: isMobile ? "44px 20px" : "56px 40px", background: "#FFFFFF" }}>
-      <div style={{ textAlign: "center", marginBottom: isMobile ? 24 : 32 }}>
+    <div style={{ padding: isMobile ? "52px 24px" : "104px 44px", background: "#FFFFFF" }}>
+      <div style={{ textAlign: "center", marginBottom: isMobile ? 32 : 48 }}>
         <div
           style={{
-            fontSize: isMobile ? 13 : 15,
+            fontSize: isMobile ? 13 : 22,
             color: accent.accent,
             fontWeight: 800,
             letterSpacing: 2,
-            marginBottom: 8,
+            marginBottom: isMobile ? 10 : 14,
             fontFamily: BODY_FONT,
           }}
         >
@@ -2075,7 +2403,7 @@ function PackagingBlock({
         </div>
         <h2
           style={{
-            fontSize: isMobile ? 28 : 40,
+            fontSize: isMobile ? 30 : 52,
             fontWeight: 400,
             margin: 0,
             color: INK,
@@ -2091,9 +2419,9 @@ function PackagingBlock({
       {image && (
         <div
           style={{
-            borderRadius: 10,
+            borderRadius: 12,
             overflow: "hidden",
-            marginBottom: 20,
+            marginBottom: isMobile ? 24 : 32,
             boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
           }}
         >
@@ -2110,18 +2438,18 @@ function PackagingBlock({
         style={{
           display: "flex",
           flexDirection: "column",
-          gap: 10,
-          padding: isMobile ? "18px 20px" : "22px 26px",
+          gap: isMobile ? 12 : 18,
+          padding: isMobile ? "22px 24px" : "34px 40px",
           background: accent.soft,
-          borderRadius: 10,
+          borderRadius: 12,
         }}
       >
         {weight?.trim() && (
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: isMobile ? 12 : 18 }}>
             <span
               style={{
                 flexShrink: 0,
-                fontSize: 12,
+                fontSize: isMobile ? 14 : 22,
                 fontWeight: 800,
                 color: accent.dark,
                 fontFamily: BODY_FONT,
@@ -2129,16 +2457,16 @@ function PackagingBlock({
             >
               중량
             </span>
-            <span style={{ fontSize: isMobile ? 15 : 16, fontWeight: 700, color: INK, fontFamily: BODY_FONT }}>
+            <span style={{ fontSize: isMobile ? 16 : 28, fontWeight: 700, color: INK, fontFamily: BODY_FONT }}>
               {weight.trim()}
             </span>
           </div>
         )}
-        <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: isMobile ? 12 : 18 }}>
           <span
             style={{
               flexShrink: 0,
-              fontSize: 12,
+              fontSize: isMobile ? 14 : 22,
               fontWeight: 800,
               color: accent.dark,
               fontFamily: BODY_FONT,
@@ -2146,7 +2474,7 @@ function PackagingBlock({
           >
             포장
           </span>
-          <span style={{ fontSize: isMobile ? 14 : 15, color: SUB, lineHeight: 1.6, fontFamily: BODY_FONT }}>
+          <span style={{ fontSize: isMobile ? 15 : 26, color: SUB, lineHeight: 1.6, fontFamily: BODY_FONT }}>
             완충재로 흔들림 없이 담아, 신선한 상태 그대로 보내드려요.
           </span>
         </div>
@@ -2155,27 +2483,29 @@ function PackagingBlock({
   )
 }
 
-function DeliveryBlock({ isMobile }: { isMobile: boolean }) {
+function DeliveryBlock({ isMobile, trust }: { isMobile: boolean; trust?: TrustInfo }) {
+  // 허위광고 방지: "당일 발송" 확정 약속은 셀러가 sameDayHarvest를 체크한 경우에만 노출.
+  const sameDay = !!trust?.sameDayHarvest
   return (
     <div
       style={{
-        padding: isMobile ? "36px 20px" : "48px 40px",
+        padding: isMobile ? "44px 24px" : "96px 44px",
         background: "#FFFFFF",
       }}
     >
-      <SectionTitle title={t.detail.result.deliveryTitle} />
+      <SectionTitle title={t.detail.result.deliveryTitle} isMobile={isMobile} />
       {/* v2.4: 초록 배경·주황 원형 이모지 삭제 → 얇은 라인 카드 */}
       <div
         style={{
-          padding: isMobile ? "20px 22px" : "26px 30px",
+          padding: isMobile ? "24px 24px" : "40px 44px",
           background: "#FFFFFF",
-          borderRadius: 4,
+          borderRadius: 6,
           border: `1px solid ${LINE}`,
         }}
       >
         <p
           style={{
-            fontSize: isMobile ? 14 : 15,
+            fontSize: isMobile ? 16 : 27,
             color: INK,
             lineHeight: 1.85,
             margin: 0,
@@ -2183,13 +2513,14 @@ function DeliveryBlock({ isMobile }: { isMobile: boolean }) {
           }}
         >
           {t.detail.result.deliveryBody}
+          {sameDay && ` ${t.detail.result.deliverySameDayNote}`}
         </p>
       </div>
     </div>
   )
 }
 
-function TrustBadgesRow({ trust }: { trust: TrustInfo }) {
+function TrustBadgesRow({ trust, isMobile }: { trust: TrustInfo; isMobile: boolean }) {
   const items: string[] = []
   if (trust.sameDayHarvest) items.push("당일 수확·발송")
   if (trust.coldChain) items.push("콜드체인 배송")
@@ -2209,8 +2540,8 @@ function TrustBadgesRow({ trust }: { trust: TrustInfo }) {
       style={{
         display: "flex",
         flexWrap: "wrap",
-        gap: 6,
-        padding: "14px 20px 20px",
+        gap: isMobile ? 7 : 10,
+        padding: isMobile ? "16px 24px 24px" : "20px 40px 32px",
         justifyContent: "center",
         borderBottom: `1px solid ${LINE}`,
       }}
@@ -2221,12 +2552,12 @@ function TrustBadgesRow({ trust }: { trust: TrustInfo }) {
           style={{
             display: "inline-flex",
             alignItems: "center",
-            padding: "5px 10px",
+            padding: isMobile ? "6px 12px" : "9px 18px",
             background: "#FFFFFF",
             border: `1px solid ${LINE}`,
             color: SUB,
             borderRadius: 999,
-            fontSize: 11,
+            fontSize: isMobile ? 13 : 21,
             fontWeight: 600,
             fontFamily: BODY_FONT,
           }}
@@ -2249,20 +2580,20 @@ function RecommendForBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "40px 20px" : "52px 40px",
+        padding: isMobile ? "48px 24px" : "104px 44px",
         background: "#FFFFFF",
       }}
     >
-      <SectionTitle title={t.detail.result.recommendForTitle} />
+      <SectionTitle title={t.detail.result.recommendForTitle} isMobile={isMobile} />
       <div
         style={{
           background: "#FFFFFF",
-          borderRadius: 12,
+          borderRadius: 14,
           border: `1px solid ${LINE}`,
-          padding: isMobile ? "20px 22px" : "28px 32px",
+          padding: isMobile ? "24px 26px" : "40px 44px",
           display: "flex",
           flexDirection: "column",
-          gap: 14,
+          gap: isMobile ? 16 : 22,
         }}
       >
         {items.slice(0, 6).map((it, i) => (
@@ -2271,12 +2602,12 @@ function RecommendForBlock({
             style={{
               display: "flex",
               alignItems: "flex-start",
-              gap: 12,
-              fontSize: isMobile ? 15 : 17,
+              gap: isMobile ? 12 : 18,
+              fontSize: isMobile ? 17 : 28,
               color: INK,
               lineHeight: 1.55,
               fontFamily: BODY_FONT,
-              paddingBottom: i < Math.min(items.length, 6) - 1 ? 12 : 0,
+              paddingBottom: i < Math.min(items.length, 6) - 1 ? (isMobile ? 16 : 22) : 0,
               borderBottom:
                 i < Math.min(items.length, 6) - 1
                   ? `1px solid ${LINE}`
@@ -2288,16 +2619,16 @@ function RecommendForBlock({
               aria-hidden
               style={{
                 flexShrink: 0,
-                marginTop: 2,
+                marginTop: isMobile ? 2 : 4,
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
-                width: 20,
-                height: 20,
+                width: isMobile ? 24 : 34,
+                height: isMobile ? 24 : 34,
                 borderRadius: "50%",
                 background: accent.accent,
                 color: "#FFFFFF",
-                fontSize: 12,
+                fontSize: isMobile ? 14 : 20,
                 fontWeight: 900,
                 lineHeight: 1,
               }}
@@ -2335,15 +2666,15 @@ function FarmStoryBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "40px 20px" : "56px 40px",
+        padding: isMobile ? "48px 24px" : "104px 44px",
         background: "#FFFFFF",
       }}
     >
-      <SectionTitle title={t.detail.result.farmStoryTitle} />
+      <SectionTitle title={t.detail.result.farmStoryTitle} isMobile={isMobile} />
 
       {/* v1.8: trust에 농부 정보 있으면 ProducerCard로 노출 */}
       {hasProducer && (
-        <div style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: isMobile ? 20 : 28 }}>
           <ProducerCard
             name={trust!.producerName ?? "농부"}
             region={trust!.producerRegion ?? ""}
@@ -2355,9 +2686,9 @@ function FarmStoryBlock({
 
       <div
         style={{
-          padding: isMobile ? "28px 24px" : "36px 40px",
+          padding: isMobile ? "32px 26px" : "56px 60px",
           background: BG_SOFT,
-          borderRadius: 12,
+          borderRadius: 14,
           border: `1px solid ${LINE}`,
           position: "relative",
         }}
@@ -2366,13 +2697,13 @@ function FarmStoryBlock({
           style={{
             display: "flex",
             flexDirection: "column",
-            gap: 12,
+            gap: isMobile ? 14 : 20,
           }}
         >
             {/* v2.5: 판매문구 느낌 — Pretendard 700 + 굵기 대비 (세리프 X) */}
             <p
               style={{
-                fontSize: isMobile ? 18 : 22,
+                fontSize: isMobile ? 19 : 32,
                 color: INK,
                 lineHeight: 1.65,
                 margin: 0,
@@ -2387,7 +2718,7 @@ function FarmStoryBlock({
             </p>
             <p
               style={{
-                fontSize: isMobile ? 12 : 13,
+                fontSize: isMobile ? 14 : 22,
                 color: SUB,
                 margin: 0,
                 fontFamily: BODY_FONT,
@@ -2407,23 +2738,23 @@ function ReturnsBlock({ isMobile }: { isMobile: boolean }) {
   return (
     <div
       style={{
-        padding: isMobile ? "36px 20px" : "48px 40px",
+        padding: isMobile ? "44px 24px" : "96px 44px",
         background: "#FFFFFF",
       }}
     >
-      <SectionTitle title={t.detail.result.returnsTitle} />
+      <SectionTitle title={t.detail.result.returnsTitle} isMobile={isMobile} />
       {/* v2.4: 원형 이모지·BG_SOFT 배경 삭제 → 얇은 라인 카드 */}
       <div
         style={{
-          padding: isMobile ? "20px 22px" : "26px 30px",
+          padding: isMobile ? "24px 24px" : "40px 44px",
           background: "#FFFFFF",
-          borderRadius: 4,
+          borderRadius: 6,
           border: `1px solid ${LINE}`,
         }}
       >
         <p
           style={{
-            fontSize: isMobile ? 14 : 15,
+            fontSize: isMobile ? 16 : 27,
             color: INK,
             lineHeight: 1.85,
             margin: 0,
@@ -2447,26 +2778,26 @@ function CautionsBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "36px 20px 40px" : "48px 40px 64px",
+        padding: isMobile ? "44px 24px 52px" : "96px 44px 120px",
         background: "#FFFFFF",
       }}
     >
       {/* v2.4: 빨강·노랑 경고 박스 삭제 → 얇은 회색 라인 카드 하나로 통합 */}
       <div
         style={{
-          padding: isMobile ? "20px 22px" : "26px 30px",
+          padding: isMobile ? "24px 24px" : "40px 44px",
           background: "#FFFFFF",
-          borderRadius: 4,
+          borderRadius: 6,
           border: `1px solid ${LINE}`,
         }}
       >
         <p
           style={{
-            fontSize: isMobile ? 13 : 14,
+            fontSize: isMobile ? 15 : 25,
             color: SUB,
             lineHeight: 1.75,
             margin: 0,
-            marginBottom: cautions.length > 0 ? 16 : 0,
+            marginBottom: cautions.length > 0 ? (isMobile ? 20 : 28) : 0,
             fontFamily: BODY_FONT,
           }}
         >
@@ -2476,11 +2807,11 @@ function CautionsBlock({
           <>
             <h3
               style={{
-                fontSize: isMobile ? 14 : 15,
+                fontSize: isMobile ? 17 : 28,
                 fontWeight: 700,
                 color: INK,
                 margin: 0,
-                marginBottom: 10,
+                marginBottom: isMobile ? 12 : 16,
                 fontFamily: BODY_FONT,
               }}
             >
@@ -2489,17 +2820,17 @@ function CautionsBlock({
             <ul
               style={{
                 margin: 0,
-                paddingLeft: 16,
+                paddingLeft: isMobile ? 20 : 26,
                 display: "flex",
                 flexDirection: "column",
-                gap: 6,
+                gap: isMobile ? 8 : 12,
               }}
             >
               {cautions.map((c, i) => (
                 <li
                   key={`c-${i}`}
                   style={{
-                    fontSize: isMobile ? 13 : 14,
+                    fontSize: isMobile ? 15 : 25,
                     color: SUB,
                     lineHeight: 1.7,
                     fontFamily: BODY_FONT,
@@ -2523,9 +2854,12 @@ function CautionsBlock({
 function SectionTitle({
   title,
   regen,
+  isMobile,
 }: {
   title: string
   regen?: React.ReactNode
+  /** 폰 미리보기(≤414)면 축소 스케일. 미지정 시 데스크톱(이미지 매체) 크기. */
+  isMobile?: boolean
 }) {
   return (
     <div
@@ -2533,13 +2867,13 @@ function SectionTitle({
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        marginBottom: 18,
+        marginBottom: isMobile ? 24 : 36,
       }}
     >
-      {/* v2.5: 섹션 h2 임팩트 강화 — 크기 24→34, BlackHanSans 계열 */}
+      {/* 임무D: 섹션 h2 — 이미지 매체 표준으로 대형화 (모바일 30 / 데스크톱 52) */}
       <h2
         style={{
-          fontSize: 34,
+          fontSize: isMobile ? 30 : 52,
           fontWeight: 400,
           color: INK,
           margin: 0,

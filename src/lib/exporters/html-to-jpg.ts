@@ -60,6 +60,9 @@ export async function exportNodeAsSlicedJpg(
   //    z-index:-1 은 일부 환경에서 toCanvas가 빈 캔버스를 만드는 원인이 되어 제거.
   //    top:-99999px 대신 화면 우측 밖에 두어 폰트/이미지 로드는 정상 진행되게 함.
   const clone = source.cloneNode(true) as HTMLElement
+  // 내보내기 위생: 편집 전용 UI(재생성 버튼·편집 장식 등)는 JPG에 남으면 안 됨.
+  // 원본이 아니라 클론에서만 제거 → 화면 UI는 그대로 유지.
+  clone.querySelectorAll("[data-edit-chrome]").forEach((el) => el.remove())
   const wrapper = document.createElement("div")
   wrapper.style.position = "fixed"
   wrapper.style.top = "0"

@@ -48,17 +48,17 @@ export function CertCaption({
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: 8,
-        padding: "8px 14px",
+        gap: 12,
+        padding: "12px 20px",
         background: "#FFFFFF",
-        border: `2px solid ${meta.color}`,
-        borderRadius: 8,
-        fontSize: 12,
+        border: `3px solid ${meta.color}`,
+        borderRadius: 10,
+        fontSize: 21,
         fontWeight: 600,
         color: "#212529",
       }}
     >
-      <span aria-hidden style={{ fontSize: 16 }}>
+      <span aria-hidden style={{ fontSize: 26 }}>
         {meta.icon}
       </span>
       <span style={{ color: meta.color, fontWeight: 800 }}>{meta.label}</span>

@@ -18,6 +18,13 @@ import type { CopyOutput } from "@/lib/ai/types"
 
 export const DEMO_COPY: CopyOutput = {
   headline: "청송 홍로 사과",
+  // 후킹 유형별 후보 — 첫 진입 데모에서 칩 기능이 바로 보이도록.
+  headlineCandidates: [
+    "청송 홍로 사과",
+    "13Brix 이상만 골랐어요",
+    "한 입 베면 사각 소리부터",
+    "새벽 5시에 따 그날 보냅니다",
+  ],
   subheadline: "아침 한 알로 시작하는 가을",
   story: `냉장고를 열면 사과 향이 먼저 반겨줍니다.
 

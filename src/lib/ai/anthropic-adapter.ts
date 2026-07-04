@@ -188,6 +188,11 @@ export class AnthropicAdapter implements AIProvider {
         if (refineBlock && refineBlock.type === "text") {
           const refinedParsed = extractJson(refineBlock.text)
           const refined = validateCopyOutput(refinedParsed)
+          // 헤드라인 후보 패스스루: refine이 headlineCandidates를 빠뜨려도
+          // draft의 후보를 보존해 셀러의 선택지를 잃지 않는다.
+          if (!refined.headlineCandidates?.length && draftOutput.headlineCandidates?.length) {
+            refined.headlineCandidates = draftOutput.headlineCandidates
+          }
           finalOutput = refined
           refineInputTokens = refineRes.usage?.input_tokens ?? 0
           refineOutputTokens = refineRes.usage?.output_tokens ?? 0

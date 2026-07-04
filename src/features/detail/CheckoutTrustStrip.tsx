@@ -36,12 +36,12 @@ export function CheckoutTrustStrip({
       style={{
         display: "flex",
         flexWrap: "wrap",
-        gap: 8,
-        padding: "10px 14px",
+        gap: 12,
+        padding: "18px 22px",
         background: "#FFF8E7",
         border: "1px dashed #E03131",
-        borderRadius: 10,
-        margin: "16px 0",
+        borderRadius: 12,
+        margin: "24px 0",
       }}
     >
       {items.map((it, i) => (
@@ -50,12 +50,12 @@ export function CheckoutTrustStrip({
           style={{
             display: "inline-flex",
             alignItems: "center",
-            gap: 6,
-            padding: "5px 10px",
+            gap: 10,
+            padding: "9px 18px",
             background: "#FFFFFF",
             border: "1px solid #E9ECEF",
             borderRadius: 999,
-            fontSize: 12,
+            fontSize: 21,
             fontWeight: 600,
             color: "#212529",
           }}

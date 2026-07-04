@@ -18,6 +18,40 @@ const LIMITS = {
   highlightBox: 30,
 } as const
 
+/** 헤드라인 후보 최대 개수 (AI 5개 + fruit-facts 무료 합류분 여유 = 8). */
+export const MAX_HEADLINE_CANDIDATES = 8
+
+/** 헤드라인 후보 중복 판정용 정규화 — 공백/문장부호 제거 후 소문자화. */
+export function normalizeHeadlineCandidate(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[.,!?·…"'()[\]{}]/g, "")
+}
+
+/**
+ * 헤드라인 후보 배열 검증 — 문자열만, headline 상한으로 자르고,
+ * 정규화 기준 중복 제거, 최대 MAX_HEADLINE_CANDIDATES개.
+ * 결과가 비면 undefined 반환(옵셔널 필드 — 칩 영역 자체를 숨기게).
+ */
+export function pickHeadlineCandidates(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const item of v) {
+    if (typeof item !== "string") continue
+    const trimmed = trimTo(item.trim(), LIMITS.headline)
+    if (!trimmed) continue
+    const norm = normalizeHeadlineCandidate(trimmed)
+    if (!norm || seen.has(norm)) continue
+    seen.add(norm)
+    out.push(trimmed)
+    if (out.length >= MAX_HEADLINE_CANDIDATES) break
+  }
+  return out.length > 0 ? out : undefined
+}
+
 /** 진부어 목록 (v8: 60종+ — AI 티 완전 제거). */
 const CLICHES = [
   "정성껏", "특별한", "다양한", "완벽한", "풍부한", "신선한", "최고의", "최상의", "엄선한", "프리미엄급",
@@ -255,8 +289,12 @@ export function extractJson(text: string): unknown {
 export function validateCopyOutput(raw: unknown): CopyOutput {
   if (!isObject(raw)) throw new Error("RESPONSE_NOT_OBJECT")
 
+  const headlineCandidates = pickHeadlineCandidates(raw.headlineCandidates)
+
   return {
     headline: trimTo(safeString(raw.headline), LIMITS.headline),
+    // 옵셔널 — 후보 없으면 키 자체를 넣지 않아 하위호환 유지.
+    ...(headlineCandidates ? { headlineCandidates } : {}),
     subheadline: trimTo(safeString(raw.subheadline), LIMITS.subheadline),
     story: safeString(raw.story),
     spec: pickSpec(raw.spec),

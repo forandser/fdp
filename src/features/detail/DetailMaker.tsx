@@ -112,6 +112,10 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   const [producerName, setProducerName] = useState("")
   const [producerRegion, setProducerRegion] = useState("")
   const [farmerYears, setFarmerYears] = useState("")
+  /** 운영 방식 체크 — 실제로 지키는 약속만 페이지에 표시(허위광고 방지). */
+  const [sameDayHarvest, setSameDayHarvest] = useState(false)
+  const [coldChain, setColdChain] = useState(false)
+  const [refundGuarantee, setRefundGuarantee] = useState(false)
   const [presetKeywords, setPresetKeywords] = useState<string[]>([])
   const [customKeywords, setCustomKeywords] = useState<string[]>([])
   const tone: CopyTone = "sincere"
@@ -123,8 +127,11 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
     if (producerName.trim()) out.producerName = producerName.trim()
     if (producerRegion.trim()) out.producerRegion = producerRegion.trim()
     if (farmerYears.trim()) out.farmerYears = Number(farmerYears) || undefined
+    if (sameDayHarvest) out.sameDayHarvest = true
+    if (coldChain) out.coldChain = true
+    if (refundGuarantee) out.refundGuarantee = true
     return out
-  }, [producerName, producerRegion, farmerYears])
+  }, [producerName, producerRegion, farmerYears, sameDayHarvest, coldChain, refundGuarantee])
 
   /** 상품명 실시간 SEO 검증 — v1.9. */
   const seoCheck = useMemo(() => {
@@ -269,6 +276,13 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         setWeight(input.weight ?? "")
         setBrix(input.brix != null ? String(input.brix) : "")
         setFarmIntro(input.farmIntro ?? "")
+        // 운영 방식 체크 복원 (구버전 저장본엔 trust 없음 — 하위호환)
+        setProducerName(input.trust?.producerName ?? "")
+        setProducerRegion(input.trust?.producerRegion ?? "")
+        setFarmerYears(input.trust?.farmerYears != null ? String(input.trust.farmerYears) : "")
+        setSameDayHarvest(!!input.trust?.sameDayHarvest)
+        setColdChain(!!input.trust?.coldChain)
+        setRefundGuarantee(input.trust?.refundGuarantee === true)
         setExtraDescription(extra)
         setPresetKeywords(preset)
         setCustomKeywords(custom)
@@ -380,14 +394,23 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       allKeywords.push(`상품 추가 설명: ${extraDescription.trim()}`)
     }
 
-    const trustData: TrustInfo | undefined =
-      producerName.trim() || producerRegion.trim() || farmerYears.trim()
-        ? {
-            producerName: producerName.trim() || undefined,
-            producerRegion: producerRegion.trim() || undefined,
-            farmerYears: farmerYears.trim() ? Number(farmerYears) : undefined,
-          }
-        : undefined
+    const hasTrust =
+      producerName.trim() ||
+      producerRegion.trim() ||
+      farmerYears.trim() ||
+      sameDayHarvest ||
+      coldChain ||
+      refundGuarantee
+    const trustData: TrustInfo | undefined = hasTrust
+      ? {
+          producerName: producerName.trim() || undefined,
+          producerRegion: producerRegion.trim() || undefined,
+          farmerYears: farmerYears.trim() ? Number(farmerYears) : undefined,
+          sameDayHarvest: sameDayHarvest || undefined,
+          coldChain: coldChain || undefined,
+          refundGuarantee: refundGuarantee || undefined,
+        }
+      : undefined
 
     const input: CopyInput = {
       category,
@@ -791,6 +814,17 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
             {t.detail.farmIntroHint}
           </p>
         </Field>
+        <div style={{ height: 16 }} />
+
+        {/* 운영 방식 체크 (선택) — 실제 지키는 약속만 페이지에 표시(허위광고 방지) */}
+        <TrustPromiseChecks
+          sameDayHarvest={sameDayHarvest}
+          coldChain={coldChain}
+          refundGuarantee={refundGuarantee}
+          onSameDayHarvest={setSameDayHarvest}
+          onColdChain={setColdChain}
+          onRefundGuarantee={setRefundGuarantee}
+        />
         <div style={{ height: 12 }} />
 
         {/* 농부 정식 정보 (선택) — 신뢰 카드용. v1.8 */}
@@ -940,7 +974,7 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         price={liveResultMeta.priceNum}
         origin={liveResultMeta.origin}
         weight={liveResultMeta.weight}
-        trust={currentInput?.trust ?? undefined}
+        trust={currentInput?.trust ?? trustForPreview}
         onCopyChange={handleCopyChange}
         onSectionRegenerate={result ? handleSectionRegenerate : undefined}
         busySection={busySection}
@@ -1132,6 +1166,88 @@ function FormGrid({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
+    </div>
+  )
+}
+
+/**
+ * 운영 방식 체크박스 — 셀러가 실제로 지키는 약속만 켜서 페이지에 노출.
+ * 미체크 시 상세페이지의 강한 주장("당일 수확"·"100% 환불"·"콜드체인")은
+ * 노출되지 않고 안전 문구로 대체됨(허위광고 방지).
+ */
+function TrustPromiseChecks({
+  sameDayHarvest,
+  coldChain,
+  refundGuarantee,
+  onSameDayHarvest,
+  onColdChain,
+  onRefundGuarantee,
+}: {
+  sameDayHarvest: boolean
+  coldChain: boolean
+  refundGuarantee: boolean
+  onSameDayHarvest: (v: boolean) => void
+  onColdChain: (v: boolean) => void
+  onRefundGuarantee: (v: boolean) => void
+}) {
+  const c = t.detail.trustPromise
+  const rows: { label: string; on: boolean; onChange: (v: boolean) => void }[] = [
+    { label: c.sameDayHarvest, on: sameDayHarvest, onChange: onSameDayHarvest },
+    { label: c.coldChain, on: coldChain, onChange: onColdChain },
+    { label: c.refundGuarantee, on: refundGuarantee, onChange: onRefundGuarantee },
+  ]
+  return (
+    <div
+      style={{
+        padding: "14px 16px",
+        border: "1px solid var(--color-neutral-100)",
+        borderRadius: "var(--radius-xs)",
+        background: "var(--color-bg-surface)",
+      }}
+    >
+      <div
+        style={{
+          fontSize: "var(--font-size-sm)",
+          fontWeight: 700,
+          color: "var(--color-neutral-900)",
+          marginBottom: 4,
+        }}
+      >
+        {c.title}
+      </div>
+      <p
+        style={{
+          fontSize: "var(--font-size-xs)",
+          color: "var(--color-neutral-500)",
+          margin: "0 0 12px",
+          lineHeight: 1.5,
+        }}
+      >
+        {c.hint}
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {rows.map((row) => (
+          <label
+            key={row.label}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              cursor: "pointer",
+              fontSize: "var(--font-size-md)",
+              color: "var(--color-neutral-900)",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={row.on}
+              onChange={(e) => row.onChange(e.target.checked)}
+              style={{ accentColor: "#E03131", width: 18, height: 18, flexShrink: 0 }}
+            />
+            {row.label}
+          </label>
+        ))}
+      </div>
     </div>
   )
 }

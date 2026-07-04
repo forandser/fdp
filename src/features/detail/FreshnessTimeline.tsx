@@ -45,42 +45,43 @@ export function FreshnessTimeline({ harvestDate, daysGood }: FreshnessTimelinePr
   return (
     <div
       style={{
-        padding: "16px 16px",
+        padding: "26px 26px",
         background: "#FFFFFF",
         border: "1px solid #E9ECEF",
-        borderRadius: 12,
+        borderRadius: 14,
       }}
     >
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 8,
-          marginBottom: 12,
+          gap: 12,
+          marginBottom: 18,
         }}
       >
         <span
           style={{
             display: "inline-block",
-            width: 10,
-            height: 10,
+            width: 16,
+            height: 16,
             borderRadius: "50%",
             background: color,
+            flexShrink: 0,
           }}
         />
-        <span style={{ fontSize: 13, fontWeight: 700, color: "#212529" }}>
+        <span style={{ fontSize: 24, fontWeight: 700, color: "#212529" }}>
           신선도 — {label}
         </span>
-        <span style={{ marginLeft: "auto", fontSize: 11, color: "#868E96" }}>
+        <span style={{ marginLeft: "auto", fontSize: 20, color: "#868E96" }}>
           {elapsed}일 경과 / 권장 {daysGood}일
         </span>
       </div>
       <div
         style={{
           position: "relative",
-          height: 6,
+          height: 10,
           background: "#F1F3F5",
-          borderRadius: 3,
+          borderRadius: 5,
           overflow: "hidden",
         }}
       >
@@ -100,8 +101,8 @@ export function FreshnessTimeline({ harvestDate, daysGood }: FreshnessTimelinePr
         style={{
           display: "flex",
           justifyContent: "space-between",
-          marginTop: 8,
-          fontSize: 11,
+          marginTop: 14,
+          fontSize: 20,
           color: "#868E96",
         }}
       >
@@ -112,10 +113,10 @@ export function FreshnessTimeline({ harvestDate, daysGood }: FreshnessTimelinePr
       {remain > 0 && (
         <p
           style={{
-            margin: "10px 0 0",
-            fontSize: 12,
+            margin: "16px 0 0",
+            fontSize: 22,
             color: "#495057",
-            lineHeight: 1.4,
+            lineHeight: 1.5,
           }}
         >
           ✓ 신선하게 드실 수 있는 기간이 약 <strong>{remain}일</strong> 남았어요.
