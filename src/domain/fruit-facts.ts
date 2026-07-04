@@ -25,6 +25,11 @@ export interface FruitVariety {
   brixMax: number
   harvestMonths: number[]
   note?: string
+  /**
+   * 개당 평균 무게(g) — 확실한 품종만 기입(환각 방지). 있으면 중량→개수 환산에 사용.
+   * 예: 3kg / 250g ≈ 12과. 없으면 환산 행/카드를 생략한다.
+   */
+  avgWeightG?: number
 }
 
 export interface FruitStorage {
@@ -68,7 +73,7 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
     aliases: ["사과", "홍로", "부사", "감홍", "아오리", "시나노", "시나노골드"],
     varieties: [
       { name: "아오리", brixMin: 13, brixMax: 14, harvestMonths: [7, 8], note: "여름 조생, 새콤" },
-      { name: "홍로", brixMin: 14, brixMax: 15, harvestMonths: [9], note: "추석용 중생종, 약 300g" },
+      { name: "홍로", brixMin: 14, brixMax: 15, harvestMonths: [9], note: "추석용 중생종, 약 300g", avgWeightG: 300 },
       { name: "부사", brixMin: 14, brixMax: 15, harvestMonths: [10, 11], note: "단맛+신맛 균형, 저장성 우수" },
       { name: "감홍", brixMin: 15, brixMax: 17, harvestMonths: [10, 11], note: "고당도 만생종" },
       { name: "시나노골드", brixMin: 13, brixMax: 15, harvestMonths: [9, 10], note: "노란 사과" },
@@ -162,7 +167,7 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
     pairings: ["선물"],
     cautions: ["충격에 약함"],
     sensoryWords: ["향 폭발", "농밀한 단맛", "촉촉"],
-    hookHeadlines: ["껍질을 까는 순간 향이 방을 채워요", "2~3월 한정 천혜향"],
+    hookHeadlines: ["껍질을 까는 순간 향이 방을 채워요", "봄을 여는 향 진한 한 알", "2~3월 한정 천혜향"],
   },
   "레드향": {
     name: "레드향",
@@ -210,7 +215,7 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
     pairings: ["봄 선물"],
     cautions: ["수확 시기 한정"],
     sensoryWords: ["봄 향", "농밀한 단맛"],
-    hookHeadlines: ["봄~초여름 한정 카라향", "향이 진한 한 알"],
+    hookHeadlines: ["향이 진한 한 알", "봄~초여름 한정 출하", "봄~초여름 한정 카라향"],
   },
   "딸기": {
     name: "딸기",
@@ -323,7 +328,7 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
     category: "fruit",
     aliases: ["단감", "부유", "차랑"],
     varieties: [
-      { name: "부유", brixMin: 17, brixMax: 19, harvestMonths: [10, 11], note: "납작한 모양, 약 250g" },
+      { name: "부유", brixMin: 17, brixMax: 19, harvestMonths: [10, 11], note: "납작한 모양, 약 250g", avgWeightG: 250 },
       { name: "차랑", brixMin: 20, brixMax: 23, harvestMonths: [10, 11], note: "10월 중순, 신맛 적음, 22Brix" },
     ],
     regions: ["상주", "창원", "진영", "함안", "청도", "영암"],
@@ -333,7 +338,12 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
     pairings: ["가을 디저트", "샐러드"],
     cautions: ["단감과 대봉 구분 — 대봉은 후숙 후 식용"],
     sensoryWords: ["단단", "씹는 맛", "농축된 단맛"],
-    hookHeadlines: ["22 Brix까지 농익은 차랑", "가을의 단단한 한 알"],
+    hookHeadlines: [
+      "가을의 단단한 한 알",
+      "단단하게 씹히는 가을 단감",
+      "17 Brix부터 시작하는 부유의 단맛",
+      "22 Brix까지 농익은 차랑",
+    ],
   },
   "참외": {
     name: "참외",
@@ -369,7 +379,7 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
     pairings: ["여름 가족 모임"],
     cautions: ["배송 충격 흡수 포장"],
     sensoryWords: ["시원한 한 입", "물결 단맛"],
-    hookHeadlines: ["한 손에 잡히는 애플수박", "8kg 한 통 — 가족 셋이 한 번에"],
+    hookHeadlines: ["8kg 한 통 — 가족 셋이 한 번에", "한 입 베면 시원한 여름 한 통", "한 손에 잡히는 애플수박"],
   },
   "멜론": {
     name: "멜론",
@@ -456,7 +466,7 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
     pairings: ["스무디", "셔벗"],
     cautions: ["저온장애 경고 — 받으시면 바로 냉장 마세요", "후숙 필요"],
     sensoryWords: ["진한 노란", "농축된 단맛", "껍질 누름 자국"],
-    hookHeadlines: ["제주 애플망고 — 국내산 한정 출하", "후숙 후 시원하게"],
+    hookHeadlines: ["후숙 후 시원하게", "농익은 노란 과육의 단맛", "제주 애플망고 — 국내산 한정 출하"],
   },
   "바나나": {
     name: "바나나",
@@ -525,7 +535,7 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
     pairings: ["매실청", "장아찌", "주류"],
     cautions: ["생식 X — 가공용", "매실청은 망종(6월 6일~20일) 최적기"],
     sensoryWords: ["진한 향", "산도"],
-    hookHeadlines: ["올해 첫 청매실", "당일 수확 발송"],
+    hookHeadlines: ["당일 수확 발송", "올해 첫 햇매실", "올해 첫 청매실"],
   },
   "토마토": {
     name: "토마토",
@@ -543,7 +553,7 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
     pairings: ["샐러드", "파스타"],
     cautions: ["대저짭짤이는 짠맛 특징 — 일반 토마토 단맛 카피와 분리"],
     sensoryWords: ["새콤달콤", "쫀쫀한 과육"],
-    hookHeadlines: ["짠맛 단맛 균형의 대저짭짤이", "노지 한 알의 진한 맛"],
+    hookHeadlines: ["노지 한 알의 진한 맛", "새콤달콤 균형 잡힌 한 알", "짠맛 단맛 균형의 대저짭짤이"],
   },
 }
 
@@ -600,4 +610,117 @@ export function getStorageMode(fruit: string): StorageMode | null {
 /** 감각어 풀 — 카피 생성 시 이 풀에서만 어휘 차용 허용. */
 export function getSensoryWords(fruit: string): string[] {
   return getFact(fruit)?.sensoryWords ?? []
+}
+
+/**
+ * 개당 평균 무게(g) 조회 — 상품명에 든 품종의 avgWeightG.
+ * 상품명에 품종이 특정되면 그 품종 값, 아니면 (avgWeightG가 있는 품종이 정확히 1종일 때만) 그 값.
+ * 여러 품종이 avgWeightG를 갖고 상품명이 품종을 특정하지 않으면 null(추정 회피).
+ */
+export function getAvgWeightG(productName: string): number | null {
+  const fact = getFact(productName)
+  if (!fact) return null
+  const nameLower = productName.toLowerCase()
+  const named = fact.varieties.filter(
+    (v) => v.avgWeightG != null && nameLower.includes(v.name.toLowerCase()),
+  )
+  if (named.length > 0) return named[0].avgWeightG ?? null
+  const withWeight = fact.varieties.filter((v) => v.avgWeightG != null)
+  return withWeight.length === 1 ? withWeight[0].avgWeightG ?? null : null
+}
+
+/**
+ * 중량 문자열("3kg"·"1.5kg"·"500g")에서 총 그램 수를 파싱한다.
+ * 여러 숫자가 있으면 첫 kg/g 표기만 사용. 파싱 불가면 null.
+ */
+export function parseWeightToGrams(weight: string): number | null {
+  const s = weight.toLowerCase().replace(/\s+/g, "")
+  const kg = s.match(/(\d+(?:\.\d+)?)\s*kg/)
+  if (kg) {
+    const v = Number(kg[1])
+    return Number.isFinite(v) && v > 0 ? v * 1000 : null
+  }
+  const g = s.match(/(\d+(?:\.\d+)?)\s*g/)
+  if (g) {
+    const v = Number(g[1])
+    return Number.isFinite(v) && v > 0 ? v : null
+  }
+  return null
+}
+
+/**
+ * 중량 + 개당 무게로 "약 N~M과" 개수 범위 문자열을 만든다.
+ * ±12% 편차를 반영해 범위로(예: 3kg / 250g → 약 11~13과). 계산 불가면 null.
+ */
+export function estimateCountLabel(weight: string, avgWeightG: number): string | null {
+  const grams = parseWeightToGrams(weight)
+  if (grams == null || avgWeightG <= 0) return null
+  const mid = grams / avgWeightG
+  if (!Number.isFinite(mid) || mid < 1) return null
+  // ±8% 편차를 round로 반영 — 예: 3kg/250g(mid 12) → 11~13과.
+  const lo = Math.max(1, Math.round(mid * 0.92))
+  const hi = Math.max(lo, Math.round(mid * 1.08))
+  return lo === hi ? `${lo}과` : `${lo}~${hi}과`
+}
+
+/**
+ * 후킹 후보(hookHeadline)가 상품명과 사실 정합한지 검사한다.
+ *
+ * 사용자 분노 사례: 상품명 "부유단감"인데 헤드라인 후보에 "22 Brix까지 농익은 차랑"이
+ * 노출됨 — 차랑은 부유와 다른 품종이라 말이 안 되는 문구.
+ *
+ * 규칙:
+ *  1. 품종명 필터 — 후보에 이 과일의 varieties 중 어떤 품종명이 들어 있는데,
+ *     그 품종명이 상품명에는 없으면 제외 (다른 품종 이야기 차단).
+ *     · 상품명에 어떤 품종도 안 들어 있으면 → 품종 특정 후보 전부 제외
+ *       (품종 중립 후보만 통과).
+ *  2. Brix 수치 필터 — 후보에 숫자 Brix가 들어 있으면, 그 수치가 상품명에 든
+ *     품종의 brixMin~brixMax 범위 안이어야 통과. 상품명에 품종이 없으면
+ *     과일 전체 범위(모든 varieties의 최소~최대)로 판정.
+ *
+ * @param fact       매칭된 과일 fact
+ * @param productName 셀러가 입력한 상품명 (품종 단서 추출용)
+ * @param headline   검사할 후킹 후보
+ * @returns 통과하면 true, 사실 불일치면 false
+ */
+export function isHookHeadlineCompatible(
+  fact: FruitFact,
+  productName: string,
+  headline: string,
+): boolean {
+  const nameLower = productName.toLowerCase()
+  const hookLower = headline.toLowerCase()
+
+  // 상품명에 실제로 등장한 이 과일의 품종명들.
+  const namedInProduct = fact.varieties.filter((v) =>
+    nameLower.includes(v.name.toLowerCase()),
+  )
+
+  // 1) 품종명 필터 — 후보에 등장하는 품종명 중 상품명에 없는 게 있으면 탈락.
+  for (const v of fact.varieties) {
+    const vLower = v.name.toLowerCase()
+    if (!hookLower.includes(vLower)) continue
+    // 후보가 이 품종을 언급함. 상품명에도 그 품종이 있어야 통과.
+    if (!nameLower.includes(vLower)) return false
+  }
+
+  // 2) Brix 수치 필터 — 후보에 든 숫자가 Brix 문맥이면 범위 검증.
+  //    "22 Brix", "17Brix", "50 Brix" 등. (g·kg·시·분·% 등 다른 단위는 무시)
+  const brixMatches = hookLower.matchAll(/(\d+(?:\.\d+)?)\s*brix/g)
+  for (const m of brixMatches) {
+    const value = Number(m[1])
+    if (Number.isNaN(value)) continue
+    // 상품명 품종이 있으면 그 품종 범위, 없으면 과일 전체 범위로 판정.
+    const scope = namedInProduct.length > 0 ? namedInProduct : fact.varieties
+    let lo = Infinity
+    let hi = -Infinity
+    for (const v of scope) {
+      if (v.brixMin < lo) lo = v.brixMin
+      if (v.brixMax > hi) hi = v.brixMax
+    }
+    if (lo === Infinity || hi === -Infinity) continue
+    if (value < lo || value > hi) return false
+  }
+
+  return true
 }

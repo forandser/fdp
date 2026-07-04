@@ -186,6 +186,29 @@ export const ko = {
       deliveryBody: "주문 확인 후 가장 신선한 상태로 준비해, 영업일 기준 빠르게 발송해 드려요.\n\n완충 포장으로 문 앞까지 신선하게 도착하며, 도서·산간 지역은 1~2일 정도 더 걸릴 수 있어요.",
       /** trust.sameDayHarvest 체크 시에만 노출하는 당일 발송 문구. */
       deliverySameDayNote: "평일 오후 이른 주문은 당일 발송을 도와드려요. (수확·물량 상황에 따라 익일 발송될 수 있어요.)",
+      /** Hero CTA 직후 배송 약속 밴드 — 강한 약속(sameDayHarvest 체크 시)/안전 문구(기본). */
+      deliveryPromise: {
+        strong: "주문 다음 날, 수확한 그대로 문 앞에",
+        safe: "주문 확인 후 가장 신선한 상태로 준비해 발송해요",
+      },
+      /** 당도 기준선 바 라벨. */
+      brixScale: {
+        good: "맛있다 기준",
+        ceiling: "품종 최대",
+        ours: "우리 {brix}",
+      },
+      /** 중량 → 개수 환산 행 (개당 무게 데이터 있을 때만). */
+      countEstimate: {
+        label: "개수 환산",
+        value: "{weight} = 약 {count}",
+      },
+      /** 크기 비교 블록 — 사진/무게 기반 개편(추상 원 제거). */
+      sizeRef: {
+        photoCaption: "실제 크기 참고 (배송 상품 사진)",
+        perPiece: "개당 평균 약 {g}g",
+        boxCount: "{weight} 기준 약 {count}",
+        deviation: "과일 특성상 크기가 일정하지 않아, 개수는 상황에 따라 1~2과 차이가 날 수 있어요.",
+      },
       /** 상단 가치 제안 스트립 라벨 — 강한 주장(체크 시)/안전 문구(기본) 구분. */
       valueProp: {
         directFromFarm: "산지 직송",

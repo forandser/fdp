@@ -69,7 +69,7 @@ export function ProducerCard({ name, region, years, photoUrl, oneLine }: Produce
         </div>
         <div
           style={{
-            fontSize: 22,
+            fontSize: 24,
             color: "#495057",
             display: "flex",
             alignItems: "center",
@@ -83,7 +83,7 @@ export function ProducerCard({ name, region, years, photoUrl, oneLine }: Produce
         {oneLine && (
           <p
             style={{
-              fontSize: 22,
+              fontSize: 24,
               color: "#495057",
               lineHeight: 1.5,
               margin: "14px 0 0",

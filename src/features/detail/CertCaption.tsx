@@ -53,7 +53,7 @@ export function CertCaption({
         background: "#FFFFFF",
         border: `3px solid ${meta.color}`,
         borderRadius: 10,
-        fontSize: 21,
+        fontSize: 24,
         fontWeight: 600,
         color: "#212529",
       }}

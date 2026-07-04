@@ -23,7 +23,13 @@ import {
   MAX_HEADLINE_CANDIDATES,
   normalizeHeadlineCandidate,
 } from "@/lib/ai/validate"
-import { detectFruitFactKey, FRUIT_FACTS } from "@/domain/fruit-facts"
+import {
+  detectFruitFactKey,
+  FRUIT_FACTS,
+  isHookHeadlineCompatible,
+  getAvgWeightG,
+  estimateCountLabel,
+} from "@/domain/fruit-facts"
 import { resolveAccent, DEFAULT_ACCENT, type AccentPalette } from "./fruit-accent"
 
 /**
@@ -108,6 +114,8 @@ export interface ImagePlan {
   keyPoints: (UploadedImage | undefined)[]
   recipe: (UploadedImage | undefined)[]
   packaging?: UploadedImage
+  /** 크기 비교 블록용 — "실제 크기 참고" 사진 1장. 남는 사진이 없으면 undefined. */
+  sizeRef?: UploadedImage
   gallery: UploadedImage[]
 }
 
@@ -128,6 +136,7 @@ export function planImages(
       keyPoints: Array<UploadedImage | undefined>(keyPointCount).fill(undefined),
       recipe: Array<UploadedImage | undefined>(recipeCount).fill(undefined),
       packaging: undefined,
+      sizeRef: undefined,
       gallery: [],
     }
   }
@@ -201,9 +210,14 @@ export function planImages(
   // 갤러리도 빈 배열 → 블록 자체가 숨겨진다(line 573 게이트). 7~8장 구간에서
   // 예전 `rest.slice(...)` 무조건 폴백이 특징+갤러리 전량 중복을 만들던 문제를 제거.
   const unused = rest.filter((img) => (useCount.get(img.id) ?? 0) === 0)
-  const gallery = unused.slice(0, GALLERY_MAX)
 
-  return { hero, whyBrand, keyPoints, recipe, packaging, gallery }
+  // sizeRef — 크기 비교 블록용. 미사용 사진이 2장 이상 있을 때만 1장 예약한다.
+  // (미사용이 1장뿐이면 갤러리에 양보 — 크기 참고보다 갤러리 노출이 우선.)
+  const sizeRef = unused.length >= 2 ? unused[0] : undefined
+  const galleryPool = sizeRef ? unused.slice(1) : unused
+  const gallery = galleryPool.slice(0, GALLERY_MAX)
+
+  return { hero, whyBrand, keyPoints, recipe, packaging, sizeRef, gallery }
 }
 
 /** fruit-facts에서 무료로 합류시킬 hookHeadlines 최대 개수 (기획 Should: 2~3개). */
@@ -215,6 +229,11 @@ const FREE_CANDIDATE_MAX = 3
  *  2. 상품명이 fruit-facts에 매칭되면 그 hookHeadlines 2~3개를 API 비용 없이 합류
  * 정규화 기준 중복 제거 후 최대 MAX_HEADLINE_CANDIDATES(8)개.
  * 후보가 하나도 없으면 빈 배열 → 칩 영역 자체를 렌더하지 않는다(하위호환).
+ *
+ * 품종 인식 필터: fruit-facts 무료 후보(hookHeadlines)는 상품명과 사실 정합한
+ * 것만 합류한다. 상품명 "부유단감"에 다른 품종("차랑")이나 그 품종 Brix(22)가
+ * 든 후보가 노출되던 문제(사용자 분노 사례)를 isHookHeadlineCompatible로 차단.
+ * 필터는 무료 후보에만 적용 — AI 후보는 프롬프트(규칙 55)가 책임진다.
  */
 export function buildDisplayCandidates(
   copy: CopyOutput,
@@ -233,11 +252,17 @@ export function buildDisplayCandidates(
 
   for (const c of copy.headlineCandidates ?? []) push(c)
 
-  // 무료 후보 합류 — fruit-facts 매칭 시 hookHeadlines 일부를 비용 없이 추가.
+  // 무료 후보 합류 — fruit-facts 매칭 시 hookHeadlines 중 사실 정합한 것만 추가.
+  // 필터를 먼저 통과시킨 뒤 slice — 앞쪽 후보가 걸러져도 FREE_CANDIDATE_MAX개를 채운다.
   const key = detectFruitFactKey(productName)
   if (key) {
-    const hooks = FRUIT_FACTS[key]?.hookHeadlines ?? []
-    for (const h of hooks.slice(0, FREE_CANDIDATE_MAX)) push(h)
+    const fact = FRUIT_FACTS[key]
+    if (fact) {
+      const compatible = fact.hookHeadlines.filter((h) =>
+        isHookHeadlineCompatible(fact, productName, h),
+      )
+      for (const h of compatible.slice(0, FREE_CANDIDATE_MAX)) push(h)
+    }
   }
 
   return out
@@ -331,6 +356,74 @@ function ValuePropStrip({ isMobile, trust }: { isMobile: boolean; trust?: TrustI
           <span>{label}</span>
         </div>
       ))}
+    </div>
+  )
+}
+
+/**
+ * CTA pill — Hero와 하단에서 공유(리서치: CTA 2회 반복).
+ * 동일 문구를 같은 스타일로 두 번 노출한다. 폰트 이미지 매체 대형(모바일 20 / 데스크톱 36).
+ */
+function CtaPill({ text, isMobile }: { text: string; isMobile: boolean }) {
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: isMobile ? "16px 30px" : "22px 48px",
+        borderRadius: 999,
+        background: INK,
+        color: "#FFFFFF",
+        fontSize: isMobile ? 20 : 36,
+        fontWeight: 800,
+        fontFamily: BODY_FONT,
+        letterSpacing: -0.3,
+      }}
+    >
+      {text}
+    </div>
+  )
+}
+
+/**
+ * Hero 직후 배송 약속 밴드 (리서치: 배송 약속 1줄 상단 배치 +27.1%).
+ * 허위광고 방지 — 강한 약속은 trust.sameDayHarvest 체크 시에만, 미체크 시 안전 문구.
+ * 톤은 ValuePropStrip과 통일(검정 배경 + accent 체크).
+ */
+function DeliveryPromiseBand({ isMobile, trust }: { isMobile: boolean; trust?: TrustInfo }) {
+  const accent = useAccent()
+  const dp = t.detail.result.deliveryPromise
+  const text = trust?.sameDayHarvest ? dp.strong : dp.safe
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: isMobile ? 8 : 12,
+        background: INK,
+        color: "#FFFFFF",
+        padding: isMobile ? "16px 20px" : "26px 44px",
+        textAlign: "center",
+        // 바로 아래 ValuePropStrip도 검정 배경 — 두 밴드가 뭉치지 않게 하단 하어라인 구분.
+        borderBottom: "1px solid rgba(255,255,255,0.15)",
+      }}
+    >
+      <span aria-hidden style={{ color: accent.accent, fontSize: isMobile ? 18 : 30, fontWeight: 900 }}>
+        ✓
+      </span>
+      <span
+        style={{
+          fontSize: isMobile ? 18 : 32,
+          fontWeight: 800,
+          fontFamily: BODY_FONT,
+          letterSpacing: -0.3,
+          lineHeight: 1.4,
+          wordBreak: "keep-all",
+        }}
+      >
+        {text}
+      </span>
     </div>
   )
 }
@@ -496,6 +589,15 @@ export function ResultView({
     return !!(key && FRUIT_FACTS[key]?.pairings?.length)
   }, [productName])
 
+  /** CTA 문구 — Hero와 하단에서 동일하게 반복(리서치: CTA 2회). */
+  const ctaText = useMemo(() => {
+    const name = productName.trim()
+    const producer = trust?.producerName?.trim()
+    return producer
+      ? `${producer} 농가를 만나보세요`
+      : `신선한 ${name || "이 상품"}, 지금 담아보세요`
+  }, [productName, trust?.producerName])
+
   return (
     <AccentContext.Provider value={accent}>
     <div
@@ -571,7 +673,6 @@ export function ResultView({
               copy={copy}
               productName={productName}
               origin={origin}
-              trust={trust}
               onCopyChange={onCopyChange}
               onRegenHeadline={renderRegen("headline")}
               onRegenSub={renderRegen("subheadline")}
@@ -579,7 +680,11 @@ export function ResultView({
               factPlaceholder={factPlaceholder}
               headlineCandidates={headlineCandidates}
               onRegenCandidates={renderRegen("headlineCandidates")}
+              ctaText={ctaText}
             />
+
+            {/* 배송 약속 밴드 — Hero CTA 직후 (리서치: 배송 약속 상단 +27.1%) */}
+            <DeliveryPromiseBand isMobile={isMobile} trust={trust} />
 
             {/* v2.5: 가치 제안 스트립 — 강한 주장은 trust 체크 시에만, 미체크는 안전 문구 */}
             <ValuePropStrip isMobile={isMobile} trust={trust} />
@@ -676,16 +781,18 @@ export function ResultView({
             {/* 5. SPEC + PRICE */}
             <SpecBlock
               copy={copy}
+              productName={productName}
+              weight={weight}
               onCopyChange={onCopyChange}
               onRegen={renderRegen("spec")}
               isMobile={isMobile}
             />
 
-            {/* v2.8: 5a. 크기·중량 안내 (수플린 중량 다이어그램) */}
-            <DotDivider />
+            {/* 5a. 크기·중량 안내 — 사진/무게 데이터 있을 때만 (추상 원 제거) */}
             <SizeDiagramBlock
               productName={productName}
               weight={weight}
+              sizeRef={imagePlan.sizeRef}
               isMobile={isMobile}
             />
 
@@ -790,6 +897,18 @@ export function ResultView({
                 />
               </div>
             )}
+
+            {/* CTA 반복 — 교환·환불 안내 뒤, 주의 박스 앞 (리서치: CTA 2회 반복) */}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                padding: isMobile ? "36px 24px 8px" : "72px 44px 16px",
+                background: "#FFFFFF",
+              }}
+            >
+              <CtaPill text={ctaText} isMobile={isMobile} />
+            </div>
 
             {/* 10. CAUTIONS — 신선식품 면책 박스 자동 표시 (cautions 비어 있어도 노출) */}
             <DotDivider />
@@ -1038,7 +1157,7 @@ function RecipeBlock({
       <div style={{ textAlign: "center", marginBottom: isMobile ? 32 : 48 }}>
         <div
           style={{
-            fontSize: isMobile ? 13 : 22,
+            fontSize: isMobile ? 14 : 24,
             color: accent.accent,
             fontWeight: 800,
             letterSpacing: 2,
@@ -1099,7 +1218,7 @@ function RecipeBlock({
               <div style={{ flex: 1, minWidth: 0, padding: isMobile ? "0 18px 0 0" : "0 32px 0 0" }}>
                 <div
                   style={{
-                    fontSize: isMobile ? 12 : 20,
+                    fontSize: isMobile ? 13 : 24,
                     color: accent.accent,
                     fontWeight: 800,
                     letterSpacing: 1.5,
@@ -1246,7 +1365,6 @@ function HeroBlock({
   copy,
   productName,
   origin,
-  trust,
   onCopyChange,
   onRegenHeadline,
   onRegenSub,
@@ -1254,12 +1372,12 @@ function HeroBlock({
   factPlaceholder,
   headlineCandidates,
   onRegenCandidates,
+  ctaText,
 }: {
   heroImage?: UploadedImage
   copy: CopyOutput
   productName: string
   origin?: string
-  trust?: TrustInfo
   onCopyChange: (next: CopyOutput) => void
   onRegenHeadline: React.ReactNode
   onRegenSub: React.ReactNode
@@ -1269,14 +1387,12 @@ function HeroBlock({
   headlineCandidates: string[]
   /** "후보 새로 받기" 재생성 노드 (data-edit-chrome — JPG 제외). */
   onRegenCandidates: React.ReactNode
+  /** Hero·하단 공용 CTA 문구 (ResultView에서 계산해 내려줌). */
+  ctaText: string
 }) {
   const accent = useAccent()
   const name = productName.trim()
   const originText = origin?.trim()
-  const producer = trust?.producerName?.trim()
-  const ctaText = producer
-    ? `${producer} 농가를 만나보세요`
-    : `신선한 ${name || "이 상품"}, 지금 담아보세요`
   return (
     <div style={{ background: "#FFFFFF" }}>
       {/* v2.9: 상단 캡션 + 대형 헤드 (수플린 레퍼런스 — 헤드가 이미지 위) */}
@@ -1319,7 +1435,7 @@ function HeroBlock({
                   borderRadius: 999,
                   background: accent.accent,
                   color: "#FFFFFF",
-                  fontSize: isMobile ? 13 : 22,
+                  fontSize: isMobile ? 14 : 24,
                   fontWeight: 800,
                   letterSpacing: 0.5,
                   fontFamily: BODY_FONT,
@@ -1401,10 +1517,10 @@ function HeroBlock({
           textAlign: "center",
         }}
       >
-        {/* v2.9: 서브카피 — 대문자 액센트 → 설명형 회색 (수플린 톤) */}
+        {/* v2.9: 서브카피 — 대문자 액센트 → 설명형 회색 (수플린 톤). 리서치 본문 34px+ */}
         <p
           style={{
-            fontSize: isMobile ? 17 : 30,
+            fontSize: isMobile ? 20 : 36,
             color: SUB,
             margin: 0,
             marginBottom: isMobile ? 24 : 32,
@@ -1423,23 +1539,8 @@ function HeroBlock({
           />
         </p>
 
-        {/* CTA pill (수플린 "○○를 선택하세요!" 레퍼런스) */}
-        <div
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            padding: isMobile ? "14px 28px" : "20px 44px",
-            borderRadius: 999,
-            background: INK,
-            color: "#FFFFFF",
-            fontSize: isMobile ? 17 : 30,
-            fontWeight: 800,
-            fontFamily: BODY_FONT,
-            letterSpacing: -0.3,
-          }}
-        >
-          {ctaText}
-        </div>
+        {/* CTA pill (수플린 "○○를 선택하세요!" 레퍼런스) — 하단에서 재사용 */}
+        <CtaPill text={ctaText} isMobile={isMobile} />
 
         {(onRegenHeadline || onRegenSub) && (
           <div
@@ -1477,7 +1578,7 @@ function HeroBlock({
                   borderRadius: 999,
                   background: accent.accent,
                   color: "#FFFFFF",
-                  fontSize: isMobile ? 13 : 22,
+                  fontSize: isMobile ? 14 : 24,
                   fontWeight: 700,
                   fontFamily: BODY_FONT,
                   boxShadow: `0 2px 6px ${accent.accent}40`,
@@ -1544,7 +1645,7 @@ function StoryBlock({
               padding: isMobile ? "7px 16px" : "10px 22px",
               background: INK,
               color: "#FFFFFF",
-              fontSize: isMobile ? 13 : 20,
+              fontSize: isMobile ? 14 : 24,
               fontWeight: 800,
               letterSpacing: 3,
               fontFamily: BODY_FONT,
@@ -1565,9 +1666,9 @@ function StoryBlock({
       >
         <p
           style={{
-            fontSize: isMobile ? 18 : 30,
+            fontSize: isMobile ? 20 : 34,
             color: INK,
-            lineHeight: 1.85,
+            lineHeight: 1.7,
             whiteSpace: "pre-line",
             margin: 0,
             textAlign: "center",
@@ -1711,13 +1812,178 @@ function GalleryBlock({
   )
 }
 
+/**
+ * 당도 기준선 바 (리서치: 당도 숫자는 기준선 맥락이 있어야 팔림).
+ * fruit-facts 매칭 + 사용자 brix가 goodBrix 이상일 때만 렌더한다.
+ * (brix < goodBrix면 불리한 시각화라 호출부에서 아예 렌더하지 않는다.)
+ *
+ * 눈금: goodBrix("맛있다 기준")·brixCeiling("품종 최대") 두 포인트 + 사용자 brix 위치에 accent 마커.
+ * "비파괴 측정" 등 근거 없는 문구는 넣지 않는다.
+ */
+function BrixScaleBar({
+  brix,
+  goodBrix,
+  brixCeiling,
+  isMobile,
+}: {
+  brix: number
+  goodBrix: number
+  brixCeiling: number
+  isMobile: boolean
+}) {
+  const accent = useAccent()
+  const bs = t.detail.result.brixScale
+
+  // 도메인 — goodBrix 아래로 약간 여유(2), 위로는 ceiling과 사용자 brix 중 큰 값.
+  const lo = Math.max(0, goodBrix - 2)
+  const hi = Math.max(brixCeiling, brix)
+  const span = hi - lo
+  const pct = (v: number) => (span > 0 ? Math.min(100, Math.max(0, ((v - lo) / span) * 100)) : 0)
+
+  const goodPct = pct(goodBrix)
+  const ceilPct = pct(brixCeiling)
+  const brixPct = pct(brix)
+
+  return (
+    <div style={{ marginTop: isMobile ? 16 : 22 }}>
+      {/* 사용자 brix 마커 라벨 */}
+      <div style={{ position: "relative", height: isMobile ? 28 : 40, marginBottom: isMobile ? 6 : 8 }}>
+        <div
+          style={{
+            position: "absolute",
+            left: `${brixPct}%`,
+            transform: "translateX(-50%)",
+            whiteSpace: "nowrap",
+            fontSize: isMobile ? 15 : 26,
+            fontWeight: 800,
+            color: accent.accent,
+            fontFamily: BODY_FONT,
+          }}
+        >
+          {bs.ours.replace("{brix}", `${brix}`)}
+        </div>
+      </div>
+
+      {/* 트랙 */}
+      <div
+        style={{
+          position: "relative",
+          height: isMobile ? 10 : 14,
+          background: "#E9ECEF",
+          borderRadius: 999,
+        }}
+      >
+        {/* goodBrix~사용자 구간을 accent.soft로 채워 "기준 이상" 시각화 */}
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            left: `${goodPct}%`,
+            width: `${Math.max(0, brixPct - goodPct)}%`,
+            top: 0,
+            bottom: 0,
+            background: accent.soft,
+            borderRadius: 999,
+          }}
+        />
+        {/* goodBrix 눈금 */}
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            left: `${goodPct}%`,
+            transform: "translateX(-50%)",
+            top: isMobile ? -4 : -6,
+            width: isMobile ? 3 : 4,
+            height: isMobile ? 18 : 26,
+            background: MUTE,
+            borderRadius: 2,
+          }}
+        />
+        {/* ceiling 눈금 */}
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            left: `${ceilPct}%`,
+            transform: "translateX(-50%)",
+            top: isMobile ? -4 : -6,
+            width: isMobile ? 3 : 4,
+            height: isMobile ? 18 : 26,
+            background: MUTE,
+            borderRadius: 2,
+          }}
+        />
+        {/* 사용자 brix 마커 (accent 원) */}
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            left: `${brixPct}%`,
+            transform: "translate(-50%, -50%)",
+            top: "50%",
+            width: isMobile ? 18 : 26,
+            height: isMobile ? 18 : 26,
+            borderRadius: "50%",
+            background: accent.accent,
+            border: "3px solid #FFFFFF",
+            boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
+          }}
+        />
+      </div>
+
+      {/* 눈금 라벨 */}
+      <div style={{ position: "relative", height: isMobile ? 34 : 44, marginTop: isMobile ? 8 : 10 }}>
+        <div
+          style={{
+            position: "absolute",
+            left: `${goodPct}%`,
+            transform: "translateX(-50%)",
+            textAlign: "center",
+            whiteSpace: "nowrap",
+            fontSize: isMobile ? 14 : 24,
+            color: SUB,
+            fontWeight: 600,
+            fontFamily: BODY_FONT,
+          }}
+        >
+          {bs.good}
+          <br />
+          {goodBrix}
+        </div>
+        <div
+          style={{
+            position: "absolute",
+            left: `${ceilPct}%`,
+            transform: "translateX(-50%)",
+            textAlign: "center",
+            whiteSpace: "nowrap",
+            fontSize: isMobile ? 14 : 24,
+            color: SUB,
+            fontWeight: 600,
+            fontFamily: BODY_FONT,
+          }}
+        >
+          {bs.ceiling}
+          <br />
+          {brixCeiling}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function SpecBlock({
   copy,
+  productName,
+  weight: _weight, // 개수 환산이 크기 블록으로 이관되어 미사용 (인터페이스는 유지)
   onCopyChange,
   onRegen,
   isMobile,
 }: {
   copy: CopyOutput
+  productName: string
+  weight?: string
   onCopyChange: (next: CopyOutput) => void
   onRegen: React.ReactNode
   isMobile: boolean
@@ -1726,6 +1992,12 @@ function SpecBlock({
   const specCount = copy.spec.length
   // 4개 이상이면 2열, 3개면 1열(좁은 모바일)/2열(데스크탑) 자동 — 항상 2열로 통일하되 홀수 시 마지막 카드가 가득 차도록 grid auto-fit 흉내
   const columns = specCount <= 1 ? "1fr" : "repeat(2, minmax(0, 1fr))"
+
+  // 당도 기준선 바 — fruit-facts 매칭 시에만 사용할 기준값.
+  const brixFact = FRUIT_FACTS[detectFruitFactKey(productName) ?? ""]
+
+  // (개수 환산은 크기 블록이 전담 — v3.1-b에서 스펙 쪽 중복 행 삭제)
+
   return (
     <div
       style={{
@@ -1765,7 +2037,7 @@ function SpecBlock({
               >
                 <div
                   style={{
-                    fontSize: isMobile ? 14 : 22,
+                    fontSize: isMobile ? 15 : 24,
                     color: SUB,
                     fontWeight: 700,
                     fontFamily: BODY_FONT,
@@ -1775,32 +2047,52 @@ function SpecBlock({
                   {s.label}
                 </div>
                 {isSweetness && sweetnessMatch ? (
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "baseline",
-                      gap: isMobile ? 6 : 10,
-                      lineHeight: 1,
-                      color: accent.accent,
-                      fontFamily: DISPLAY_FONT,
-                    }}
-                  >
-                    {/* v2.5: 당도 대형 숫자 — 임무D 확대(모바일 64 / 데스크톱 108, 시각 앵커) */}
-                    <span style={{ fontSize: isMobile ? 64 : 108, fontWeight: 400, letterSpacing: -3 }}>
-                      {sweetnessMatch[1]}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: isMobile ? 15 : 26,
-                        fontWeight: 800,
-                        color: accent.dark,
-                        fontFamily: BODY_FONT,
-                        letterSpacing: 1,
-                      }}
-                    >
-                      {sweetnessMatch[2] ?? "Brix"}
-                    </span>
-                  </div>
+                  (() => {
+                    const brixValue = Number(sweetnessMatch[1])
+                    // 기준선 바는 fact 매칭 + brix가 "맛있다 기준" 이상일 때만 (불리한 시각화 방지).
+                    const showScale =
+                      !!brixFact &&
+                      Number.isFinite(brixValue) &&
+                      brixValue >= brixFact.goodBrix
+                    return (
+                      <>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "baseline",
+                            gap: isMobile ? 6 : 10,
+                            lineHeight: 1,
+                            color: accent.accent,
+                            fontFamily: DISPLAY_FONT,
+                          }}
+                        >
+                          {/* v2.5: 당도 대형 숫자 — 임무D 확대(모바일 64 / 데스크톱 108, 시각 앵커) */}
+                          <span style={{ fontSize: isMobile ? 64 : 108, fontWeight: 400, letterSpacing: -3 }}>
+                            {sweetnessMatch[1]}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: isMobile ? 15 : 26,
+                              fontWeight: 800,
+                              color: accent.dark,
+                              fontFamily: BODY_FONT,
+                              letterSpacing: 1,
+                            }}
+                          >
+                            {sweetnessMatch[2] ?? "Brix"}
+                          </span>
+                        </div>
+                        {showScale && brixFact && (
+                          <BrixScaleBar
+                            brix={brixValue}
+                            goodBrix={brixFact.goodBrix}
+                            brixCeiling={brixFact.brixCeiling}
+                            isMobile={isMobile}
+                          />
+                        )}
+                      </>
+                    )
+                  })()
                 ) : (
                   <div
                     style={{
@@ -1844,6 +2136,9 @@ function SpecBlock({
           여기에 상품 정보 카드가 들어갑니다
         </div>
       )}
+
+      {/* v3.1-b: 스펙 쪽 개수 환산 행 삭제 — 바로 아래 크기 블록(SizeDiagramBlock)이
+          같은 환산을 카드로 보여줘 연속 중복이었다 (하네스 실측에서 발견). */}
     </div>
   )
 }
@@ -1944,7 +2239,7 @@ function KeyPointsBig({
                   padding: isMobile ? "7px 16px" : "10px 22px",
                   background: accent.accent,
                   color: "#FFF",
-                  fontSize: isMobile ? 13 : 22,
+                  fontSize: isMobile ? 14 : 24,
                   fontWeight: 800,
                   letterSpacing: 2.5,
                   marginBottom: isMobile ? 20 : 28,
@@ -1979,9 +2274,9 @@ function KeyPointsBig({
               </h3>
               <p
                 style={{
-                  fontSize: isMobile ? 17 : 28,
+                  fontSize: isMobile ? 20 : 34,
                   color: SUB,
-                  lineHeight: 1.8,
+                  lineHeight: 1.7,
                   margin: 0,
                   marginBottom: isMobile ? 32 : 44,
                   whiteSpace: "pre-line",
@@ -2073,9 +2368,9 @@ function StorageBlock({
         {/* v2.2: 값 유무 상관 없이 항상 EditableResultText — 편집 진입 가능 */}
         <p
           style={{
-            fontSize: isMobile ? 16 : 27,
+            fontSize: isMobile ? 18 : 32,
             color: INK,
-            lineHeight: 1.85,
+            lineHeight: 1.7,
             whiteSpace: "pre-line",
             margin: 0,
             fontFamily: BODY_FONT,
@@ -2135,7 +2430,7 @@ function FaqBlock({
             {/* v2.4: ▼ 화살표·빨강 Q. 삭제 → Q./A. 미니멀 표기 */}
             <p
               style={{
-                fontSize: isMobile ? 17 : 30,
+                fontSize: isMobile ? 19 : 34,
                 fontWeight: 700,
                 color: INK,
                 margin: 0,
@@ -2153,9 +2448,9 @@ function FaqBlock({
             </p>
             <p
               style={{
-                fontSize: isMobile ? 16 : 28,
+                fontSize: isMobile ? 18 : 32,
                 color: SUB,
-                lineHeight: 1.75,
+                lineHeight: 1.7,
                 margin: 0,
               }}
             >
@@ -2177,138 +2472,174 @@ function FaqBlock({
 }
 
 /**
- * v2.8 크기·중량 안내 (수플린 아보카도 중량 다이어그램 레퍼런스).
- * 3단계 상대 크기 원(소과/중과/대과) + 중량 표기 + 정직한 편차 안내.
- * 실제 g 수치는 환각 방지를 위해 만들지 않고, 셀러가 입력한 weight만 노출.
+ * 크기·중량 안내 — 사용자 지적("사진도 없는데 추상 원 3개가 무슨 소용") 반영 개편.
+ *
+ * 추상 원 3개를 제거하고 실제 근거만 노출한다:
+ *  ① sizeRef 사진이 있으면 → 그 사진 + "실제 크기 참고" 캡션 (+ 개당 g/개수 환산 있으면).
+ *  ② 사진·무게 데이터 둘 다 없으면 → 블록 자체를 렌더하지 않는다(null).
+ *  ③ 무게 데이터만 있으면 → 텍스트 카드(개당 평균 g + 박스 개수 환산 + 편차 안내 1줄).
+ *
+ * "개당 평균 g"·"개수 환산"은 fruit-facts.avgWeightG가 있는 품종에서만 — 없으면 그 행 생략.
+ * 렌더할 내용이 있을 때만 앞에 DotDivider를 함께 그린다(빈 블록 뒤 유령 구분선 방지).
  */
 function SizeDiagramBlock({
   productName,
   weight,
+  sizeRef,
   isMobile,
 }: {
   productName?: string
   weight?: string
+  sizeRef?: UploadedImage
   isMobile: boolean
 }) {
   const accent = useAccent()
-  // 임무D: scale을 0.5/0.75/1.0으로 더 벌려 대·중·소 대비를 명확히.
-  const tiers = [
-    { label: "소과", scale: 0.5 },
-    { label: "중과", scale: 0.75 },
-    { label: "대과", scale: 1 },
-  ]
-  // 전체 크기 확대 — 흰 배경에서 뭉개지지 않도록 원을 키운다.
-  const maxSize = isMobile ? 120 : 190
+  const sr = t.detail.result.sizeRef
   const name = productName?.trim() || "이 상품"
-  return (
-    <div style={{ padding: isMobile ? "44px 24px" : "96px 44px", background: "#FFFFFF" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 10 : 14, marginBottom: 8 }}>
-        <span
-          aria-hidden
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: isMobile ? 30 : 44,
-            height: isMobile ? 30 : 44,
-            borderRadius: "50%",
-            background: accent.accent,
-            color: "#FFFFFF",
-            fontSize: isMobile ? 16 : 24,
-            fontWeight: 900,
-            flexShrink: 0,
-          }}
-        >
-          ✓
-        </span>
-        <h2
-          style={{
-            fontSize: isMobile ? 30 : 52,
-            fontWeight: 400,
-            margin: 0,
-            color: INK,
-            fontFamily: DISPLAY_FONT,
-            letterSpacing: -1,
-            lineHeight: 1.1,
-          }}
-        >
-          {name} 크기가 <span style={{ color: accent.accent }}>궁금해요</span>
-        </h2>
-      </div>
 
-      {/* 상대 크기 3원 + 라벨 — 채움은 3개 동일(등급 오독 방지), 대비는 굵은 테두리로 확보 */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-end",
-          justifyContent: "center",
-          gap: isMobile ? 32 : 60,
-          padding: isMobile ? "36px 0 32px" : "56px 0 44px",
-        }}
-      >
-        {tiers.map((tier) => {
-          const d = Math.round(maxSize * tier.scale)
-          return (
-            <div key={tier.label} style={{ textAlign: "center" }}>
-              <div
-                aria-hidden
-                style={{
-                  width: d,
-                  height: d,
-                  borderRadius: "50%",
-                  background: accent.soft,
-                  // 임무D: 테두리 2→4px(모바일 3)로 굵혀 흰 배경 대비 확보. 크기별 색 농도 차이는 두지 않음.
-                  border: `${isMobile ? 3 : 4}px solid ${accent.accent}`,
-                  margin: isMobile ? "0 auto 16px" : "0 auto 22px",
-                }}
+  const avgWeightG = productName ? getAvgWeightG(productName) : null
+  const perPieceLabel = avgWeightG != null ? sr.perPiece.replace("{g}", `${avgWeightG}`) : null
+  const boxCount =
+    weight?.trim() && avgWeightG != null ? estimateCountLabel(weight.trim(), avgWeightG) : null
+  const boxCountLabel =
+    boxCount && weight?.trim()
+      ? sr.boxCount.replace("{weight}", weight.trim()).replace("{count}", boxCount)
+      : null
+
+  // ② 사진도 무게 데이터도 없으면 렌더하지 않음. (무게만 있어도 ③으로 렌더 — 개수 환산 없이 중량 카드)
+  const hasWeightInfo = !!weight?.trim() || perPieceLabel != null
+  if (!sizeRef && !hasWeightInfo) return null
+
+  return (
+    <>
+      <DotDivider />
+      <div style={{ padding: isMobile ? "44px 24px" : "96px 44px", background: "#FFFFFF" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 10 : 14, marginBottom: isMobile ? 24 : 36 }}>
+          <span
+            aria-hidden
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: isMobile ? 30 : 44,
+              height: isMobile ? 30 : 44,
+              borderRadius: "50%",
+              background: accent.accent,
+              color: "#FFFFFF",
+              fontSize: isMobile ? 16 : 24,
+              fontWeight: 900,
+              flexShrink: 0,
+            }}
+          >
+            ✓
+          </span>
+          <h2
+            style={{
+              fontSize: isMobile ? 30 : 52,
+              fontWeight: 400,
+              margin: 0,
+              color: INK,
+              fontFamily: DISPLAY_FONT,
+              letterSpacing: -1,
+              lineHeight: 1.1,
+            }}
+          >
+            {name} 크기가 <span style={{ color: accent.accent }}>궁금해요</span>
+          </h2>
+        </div>
+
+        {/* ① 실제 크기 참고 사진 (남는 사진이 있을 때만) */}
+        {sizeRef && (
+          <div style={{ marginBottom: isMobile ? 20 : 28 }}>
+            <div
+              style={{
+                borderRadius: 12,
+                overflow: "hidden",
+                boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
+              }}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={sizeRef.url}
+                alt="실제 크기 참고"
+                style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", display: "block" }}
               />
+            </div>
+            <div
+              style={{
+                textAlign: "center",
+                marginTop: isMobile ? 12 : 16,
+                fontSize: isMobile ? 15 : 24,
+                color: SUB,
+                fontWeight: 600,
+                fontFamily: BODY_FONT,
+              }}
+            >
+              {sr.photoCaption}
+            </div>
+          </div>
+        )}
+
+        {/* ③ 무게·개수 카드 — 개당 g / 박스 개수 환산 / 중량 (있는 행만) */}
+        {(perPieceLabel || boxCountLabel || weight?.trim()) && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: isMobile ? 10 : 14,
+              padding: isMobile ? "22px 24px" : "34px 40px",
+              background: accent.soft,
+              borderRadius: 12,
+              marginBottom: isMobile ? 20 : 28,
+            }}
+          >
+            {weight?.trim() && (
               <div
                 style={{
-                  fontSize: isMobile ? 16 : 26,
-                  fontWeight: 800,
+                  fontSize: isMobile ? 18 : 30,
                   color: INK,
+                  fontWeight: 800,
                   fontFamily: BODY_FONT,
+                  letterSpacing: -0.3,
                 }}
               >
-                {tier.label}
+                중량 · {weight.trim()}
               </div>
-            </div>
-          )
-        })}
-      </div>
+            )}
+            {perPieceLabel && (
+              <div style={{ fontSize: isMobile ? 18 : 30, color: SUB, fontFamily: BODY_FONT, fontWeight: 600 }}>
+                {perPieceLabel}
+              </div>
+            )}
+            {boxCountLabel && (
+              <div style={{ fontSize: isMobile ? 18 : 32, color: accent.dark, fontFamily: BODY_FONT, fontWeight: 800 }}>
+                {boxCountLabel}
+              </div>
+            )}
+          </div>
+        )}
 
-      {weight?.trim() && (
+        {/* 정직한 편차 안내 — 개수 환산이 있을 때만 그 편차를, 아니면 크기 편차 문구 */}
         <div
           style={{
-            textAlign: "center",
-            fontSize: isMobile ? 16 : 26,
+            padding: isMobile ? "18px 20px" : "26px 32px",
+            background: BG_SOFT,
+            border: `1px solid ${LINE}`,
+            borderRadius: 12,
+            fontSize: isMobile ? 18 : 30,
             color: SUB,
-            marginBottom: isMobile ? 20 : 28,
+            lineHeight: 1.7,
             fontFamily: BODY_FONT,
           }}
         >
-          중량 구성 · <strong style={{ color: INK }}>{weight.trim()}</strong>
+          <strong style={{ color: INK }}>꼭 확인해 주세요</strong>
+          <br />
+          {boxCountLabel
+            ? sr.deviation
+            : "과일 특성상 크기가 일정하지 않아요. 실제 크기와 외형에 다소 차이가 있을 수 있으니 참고 부탁드려요."}
         </div>
-      )}
-
-      {/* 정직한 편차 안내 — 경고 톤 회피: 중립 회색 배경/회색 강조로 (accent 제거) */}
-      <div
-        style={{
-          padding: isMobile ? "18px 20px" : "26px 32px",
-          background: BG_SOFT,
-          border: `1px solid ${LINE}`,
-          borderRadius: 12,
-          fontSize: isMobile ? 15 : 24,
-          color: SUB,
-          lineHeight: 1.7,
-          fontFamily: BODY_FONT,
-        }}
-      >
-        <strong style={{ color: INK }}>꼭 확인해 주세요</strong>
-        <br />
-        과일 특성상 크기가 일정하지 않아요. 실제 크기와 외형에 다소 차이가 있을 수 있으니 참고 부탁드려요.
       </div>
-    </div>
+    </>
   )
 }
 
@@ -2343,7 +2674,7 @@ function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: b
       <div style={{ textAlign: "center", marginBottom: isMobile ? 32 : 48 }}>
         <div
           style={{
-            fontSize: isMobile ? 15 : 26,
+            fontSize: isMobile ? 18 : 26,
             color: SUB,
             fontWeight: 600,
             marginBottom: isMobile ? 10 : 14,
@@ -2413,7 +2744,7 @@ function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: b
               </div>
               <div
                 style={{
-                  fontSize: isMobile ? 15 : 26,
+                  fontSize: isMobile ? 18 : 26,
                   color: SUB,
                   lineHeight: 1.6,
                   fontFamily: BODY_FONT,
@@ -2448,7 +2779,7 @@ function PackagingBlock({
       <div style={{ textAlign: "center", marginBottom: isMobile ? 32 : 48 }}>
         <div
           style={{
-            fontSize: isMobile ? 13 : 22,
+            fontSize: isMobile ? 14 : 24,
             color: accent.accent,
             fontWeight: 800,
             letterSpacing: 2,
@@ -2506,7 +2837,7 @@ function PackagingBlock({
             <span
               style={{
                 flexShrink: 0,
-                fontSize: isMobile ? 14 : 22,
+                fontSize: isMobile ? 15 : 24,
                 fontWeight: 800,
                 color: accent.dark,
                 fontFamily: BODY_FONT,
@@ -2514,7 +2845,7 @@ function PackagingBlock({
             >
               중량
             </span>
-            <span style={{ fontSize: isMobile ? 16 : 28, fontWeight: 700, color: INK, fontFamily: BODY_FONT }}>
+            <span style={{ fontSize: isMobile ? 18 : 30, fontWeight: 700, color: INK, fontFamily: BODY_FONT }}>
               {weight.trim()}
             </span>
           </div>
@@ -2523,7 +2854,7 @@ function PackagingBlock({
           <span
             style={{
               flexShrink: 0,
-              fontSize: isMobile ? 14 : 22,
+              fontSize: isMobile ? 15 : 24,
               fontWeight: 800,
               color: accent.dark,
               fontFamily: BODY_FONT,
@@ -2531,7 +2862,7 @@ function PackagingBlock({
           >
             포장
           </span>
-          <span style={{ fontSize: isMobile ? 15 : 26, color: SUB, lineHeight: 1.6, fontFamily: BODY_FONT }}>
+          <span style={{ fontSize: isMobile ? 18 : 30, color: SUB, lineHeight: 1.6, fontFamily: BODY_FONT }}>
             완충재로 흔들림 없이 담아, 신선한 상태 그대로 보내드려요.
           </span>
         </div>
@@ -2562,9 +2893,9 @@ function DeliveryBlock({ isMobile, trust }: { isMobile: boolean; trust?: TrustIn
       >
         <p
           style={{
-            fontSize: isMobile ? 16 : 27,
+            fontSize: isMobile ? 18 : 32,
             color: INK,
-            lineHeight: 1.85,
+            lineHeight: 1.7,
             margin: 0,
             fontFamily: BODY_FONT,
           }}
@@ -2614,7 +2945,7 @@ function TrustBadgesRow({ trust, isMobile }: { trust: TrustInfo; isMobile: boole
             border: `1px solid ${LINE}`,
             color: SUB,
             borderRadius: 999,
-            fontSize: isMobile ? 13 : 21,
+            fontSize: isMobile ? 14 : 24,
             fontWeight: 600,
             fontFamily: BODY_FONT,
           }}
@@ -2660,7 +2991,7 @@ function RecommendForBlock({
               display: "flex",
               alignItems: "flex-start",
               gap: isMobile ? 12 : 18,
-              fontSize: isMobile ? 17 : 28,
+              fontSize: isMobile ? 19 : 30,
               color: INK,
               lineHeight: 1.55,
               fontFamily: BODY_FONT,
@@ -2775,7 +3106,7 @@ function FarmStoryBlock({
             </p>
             <p
               style={{
-                fontSize: isMobile ? 14 : 22,
+                fontSize: isMobile ? 15 : 24,
                 color: SUB,
                 margin: 0,
                 fontFamily: BODY_FONT,
@@ -2811,9 +3142,9 @@ function ReturnsBlock({ isMobile }: { isMobile: boolean }) {
       >
         <p
           style={{
-            fontSize: isMobile ? 16 : 27,
+            fontSize: isMobile ? 18 : 32,
             color: INK,
-            lineHeight: 1.85,
+            lineHeight: 1.7,
             margin: 0,
             fontFamily: BODY_FONT,
           }}
@@ -2850,9 +3181,9 @@ function CautionsBlock({
       >
         <p
           style={{
-            fontSize: isMobile ? 15 : 25,
+            fontSize: isMobile ? 18 : 32,
             color: SUB,
-            lineHeight: 1.75,
+            lineHeight: 1.7,
             margin: 0,
             marginBottom: cautions.length > 0 ? (isMobile ? 20 : 28) : 0,
             fontFamily: BODY_FONT,
@@ -2864,7 +3195,7 @@ function CautionsBlock({
           <>
             <h3
               style={{
-                fontSize: isMobile ? 17 : 28,
+                fontSize: isMobile ? 18 : 32,
                 fontWeight: 700,
                 color: INK,
                 margin: 0,
@@ -2887,7 +3218,7 @@ function CautionsBlock({
                 <li
                   key={`c-${i}`}
                   style={{
-                    fontSize: isMobile ? 15 : 25,
+                    fontSize: isMobile ? 18 : 30,
                     color: SUB,
                     lineHeight: 1.7,
                     fontFamily: BODY_FONT,

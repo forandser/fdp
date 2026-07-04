@@ -72,7 +72,7 @@ export function FreshnessTimeline({ harvestDate, daysGood }: FreshnessTimelinePr
         <span style={{ fontSize: 24, fontWeight: 700, color: "#212529" }}>
           신선도 — {label}
         </span>
-        <span style={{ marginLeft: "auto", fontSize: 20, color: "#868E96" }}>
+        <span style={{ marginLeft: "auto", fontSize: 24, color: "#868E96" }}>
           {elapsed}일 경과 / 권장 {daysGood}일
         </span>
       </div>
@@ -102,7 +102,7 @@ export function FreshnessTimeline({ harvestDate, daysGood }: FreshnessTimelinePr
           display: "flex",
           justifyContent: "space-between",
           marginTop: 14,
-          fontSize: 20,
+          fontSize: 24,
           color: "#868E96",
         }}
       >
@@ -114,7 +114,7 @@ export function FreshnessTimeline({ harvestDate, daysGood }: FreshnessTimelinePr
         <p
           style={{
             margin: "16px 0 0",
-            fontSize: 22,
+            fontSize: 26,
             color: "#495057",
             lineHeight: 1.5,
           }}

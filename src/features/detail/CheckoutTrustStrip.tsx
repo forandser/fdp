@@ -57,7 +57,7 @@ export function CheckoutTrustStrip({
             background: "#FFFFFF",
             border: "1px solid #E9ECEF",
             borderRadius: 999,
-            fontSize: 21,
+            fontSize: 24,
             fontWeight: 600,
             color: "#212529",
           }}
