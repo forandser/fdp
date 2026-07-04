@@ -102,6 +102,9 @@ export async function regenerateSection(
     storageHint: input.storageHint
       ? `${input.storageHint}\n\n[재생성 요청: ${sectionId}] ${instruction}`
       : `[재생성 요청: ${sectionId}] ${instruction}`,
+    // v3.5: 단일 섹션 재생성은 리서치 불필요(불필요한 web_search 비용 방지).
+    // 원본 리서치 요약은 mergeSection이 current.research로 보존한다.
+    researchEnabled: false,
   }
 
   const result = await getAIProvider().generateCopy(augmentedInput)
@@ -171,6 +174,12 @@ export function mergeSection(
     : current.problemArc
   if (nextProblemArc && nextProblemArc.problems.length > 0) {
     merged.problemArc = nextProblemArc
+  }
+  // v3.5: research 요약도 옵셔널 — 섹션 재생성 patch엔 없으므로 current 값을 보존한다.
+  // (이 처리가 없으면 아무 섹션이나 재생성할 때 리서치 요약 패널이 사라진다.)
+  const nextResearch = "research" in patch ? patch.research : current.research
+  if (nextResearch) {
+    merged.research = nextResearch
   }
   return merged
 }

@@ -15,6 +15,7 @@ import { ProducerCard } from "./ProducerCard"
 import { DisclosureBlock } from "./DisclosureBlock"
 // v2.7: StickyMobileCta 삭제 (중앙 하단 복사/다운로드 버튼 제거 지시)
 import { QualityScoreCard } from "./QualityScoreCard"
+import { ResearchSummaryPanel } from "./ResearchSummaryPanel"
 import { WidthPresetSwitcher, WIDTH_PRESETS, type WidthPresetKey } from "./WidthPresetSwitcher"
 // v2.6: WorkJsonExporter 삭제 (사이드바 3개 액션 제거 지시)
 import { checkComplianceReport } from "@/lib/ai/compliance-report"
@@ -1508,6 +1509,9 @@ export function ResultView({
 
         {/* DisclosureBlock — 식약처 자동 검수 + 면책 (v1.8 — 위반 있으면 자동 강조) */}
         <DisclosureBlock report={complianceReport} />
+
+        {/* v3.5: AI 리서치 요약 (아트보드 밖 — JPG 미포함). 리서치 미사용/실패 시 미노출. */}
+        <ResearchSummaryPanel research={copy.research} />
 
         {missing.length > 0 && (
           <div
@@ -4309,7 +4313,8 @@ function FarmStoryBlock({
   trust?: TrustInfo
 }) {
   const accent = useAccent()
-  // trust에 농부 정보 있으면 ProducerCard로, 없으면 placeholder.
+  // trust에 농부 정보 있으면 ProducerCard + 서명, 없으면 서명 줄 자체를 생략.
+  // 지어낸 지역·연차·이름을 기본값으로 넣는 것은 허위광고 — 절대 금지.
   const hasProducer = !!(trust?.producerName || trust?.producerRegion || trust?.farmerYears)
   const farmerMeta = hasProducer
     ? [
@@ -4319,7 +4324,7 @@ function FarmStoryBlock({
       ]
         .filter(Boolean)
         .join(" ")
-    : "20년차 청송 김 농부"
+    : null
   return (
     <div
       style={{
@@ -4373,18 +4378,20 @@ function FarmStoryBlock({
             >
               {farmStory}
             </p>
-            <p
-              style={{
-                fontSize: isMobile ? 15 : 24,
-                color: SUB,
-                margin: 0,
-                fontFamily: BODY_FONT,
-                fontWeight: 600,
-                letterSpacing: 0.2,
-              }}
-            >
-              — {farmerMeta}
-            </p>
+            {farmerMeta && (
+              <p
+                style={{
+                  fontSize: isMobile ? 15 : 24,
+                  color: SUB,
+                  margin: 0,
+                  fontFamily: BODY_FONT,
+                  fontWeight: 600,
+                  letterSpacing: 0.2,
+                }}
+              >
+                — {farmerMeta}
+              </p>
+            )}
         </div>
       </div>
     </div>

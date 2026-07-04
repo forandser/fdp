@@ -17,12 +17,19 @@ import {
   type DiagnosticResult,
   type DiagnosticStatus,
   type ModelId,
+  type ResearchResult,
   type SuggestPointsInput,
   type SuggestPointsResult,
   type SuggestKeywordsResult,
 } from "./types"
 import { getKeySource } from "./key-source"
 import { buildFruitCopyMessages, FRUIT_COPY_SYSTEM_PROMPT } from "./prompts/fruit-copy"
+import {
+  buildResearchMessages,
+  RESEARCH_SYSTEM_PROMPT,
+  RESEARCH_MAX_TOKENS,
+  RESEARCH_MAX_WEB_SEARCHES,
+} from "./prompts/research"
 import {
   buildRefineCopyMessages,
   REFINE_COPY_SYSTEM_PROMPT,
@@ -35,8 +42,12 @@ import {
   buildSuggestKeywordsMessages,
   SUGGEST_KEYWORDS_SYSTEM_PROMPT,
 } from "./prompts/suggest-keywords"
-import { estimateInputCostKRW, estimateOutputCostKRW } from "./pricing"
-import { extractJson, validateCopyOutput } from "./validate"
+import {
+  estimateInputCostKRW,
+  estimateOutputCostKRW,
+  estimateWebSearchCostKRW,
+} from "./pricing"
+import { extractJson, validateCopyOutput, validateResearchResult } from "./validate"
 import { t } from "@/lib/i18n"
 
 const DIAGNOSTIC_MAX_TOKENS = 8
@@ -138,11 +149,75 @@ export class AnthropicAdapter implements AIProvider {
   }
 
   /**
-   * v2.5: 2-step 카피 생성.
-   * Step 1 (draft): fruit-copy 프롬프트로 초안 카피 생성.
+   * v3.5: research 단계 (선택). web_search 도구를 켠 Messages 호출로
+   * "품종 일반 참고 정보"를 조사한다. 실패(에러/타임아웃/파싱실패)는 절대
+   * 생성 전체를 죽이지 않는다 — null 반환 + console.warn, 호출부가 2-step으로 폴백.
+   *
+   * @returns 리서치 결과 + web_search 호출 횟수 + 토큰. 실패 시 null.
+   */
+  private async runResearch(
+    client: Anthropic,
+    input: CopyInput,
+  ): Promise<{
+    research: ResearchResult
+    inputTokens: number
+    outputTokens: number
+    webSearchRequests: number
+  } | null> {
+    try {
+      const res = await client.messages.create({
+        model: this.modelId,
+        system: RESEARCH_SYSTEM_PROMPT,
+        max_tokens: RESEARCH_MAX_TOKENS,
+        messages: buildResearchMessages(input),
+        // 무료 운영 원칙: 새 서버/서비스 없이 Anthropic 서버측 web_search만 사용.
+        tools: [
+          {
+            type: "web_search_20250305",
+            name: "web_search",
+            max_uses: RESEARCH_MAX_WEB_SEARCHES,
+          },
+        ],
+      })
+
+      // web_search 응답은 여러 text 블록으로 쪼개질 수 있어 최종 text를 이어붙인다.
+      const text = res.content
+        .filter((c): c is Extract<typeof c, { type: "text" }> => c.type === "text")
+        .map((c) => c.text)
+        .join("\n")
+        .trim()
+      if (!text) {
+        console.warn("[generateCopy] research step: empty text, falling back to 2-step")
+        return null
+      }
+
+      const research = validateResearchResult(extractJson(text))
+      if (!research) {
+        console.warn("[generateCopy] research step: no usable content, falling back to 2-step")
+        return null
+      }
+
+      return {
+        research,
+        inputTokens: res.usage?.input_tokens ?? 0,
+        outputTokens: res.usage?.output_tokens ?? 0,
+        webSearchRequests: res.usage?.server_tool_use?.web_search_requests ?? 0,
+      }
+    } catch (err) {
+      // 리서치 실패는 절대 치명적이지 않다 — 조용히 2-step 폴백.
+      console.warn("[generateCopy] research step failed, falling back to 2-step:", err)
+      return null
+    }
+  }
+
+  /**
+   * v3.5: research → draft → refine 3-step 카피 생성 (리서치 실패 시 draft→refine 2-step).
+   * Step 0 (research, 선택): web_search로 품종 일반 참고 정보 조사. input.researchEnabled가
+   *   false가 아니면 수행. 실패 시 조용히 폴백.
+   * Step 1 (draft): fruit-copy 프롬프트로 초안 카피 생성 (research 결과를 참고 블록으로 주입).
    * Step 2 (refine): draft를 스마트스토어 판매 관점 rubric 5개로 자체 심사 → 리라이트.
    *
-   * refine이 실패하면 draft를 그대로 반환 (양보). 비용은 두 step 합산.
+   * refine이 실패하면 draft를 그대로 반환 (양보). 비용은 research+draft+refine 합산.
    */
   async generateCopy(input: CopyInput): Promise<CopyResult> {
     const client = await this.createClient()
@@ -153,12 +228,27 @@ export class AnthropicAdapter implements AIProvider {
       Math.max(COPY_BASE_MAX_TOKENS, Math.ceil(inputCharCount * 4)),
     )
 
-    // Step 1: draft 생성
+    // Step 0: research (선택) — researchEnabled가 명시적 false가 아니면 기본 수행(기본 ON).
+    let research: ResearchResult | undefined
+    let researchInputTokens = 0
+    let researchOutputTokens = 0
+    let webSearchRequests = 0
+    if (input.researchEnabled !== false) {
+      const r = await this.runResearch(client, input)
+      if (r) {
+        research = r.research
+        researchInputTokens = r.inputTokens
+        researchOutputTokens = r.outputTokens
+        webSearchRequests = r.webSearchRequests
+      }
+    }
+
+    // Step 1: draft 생성 (research 있으면 참고 블록 주입)
     const draftRes = await client.messages.create({
       model: this.modelId,
       system: FRUIT_COPY_SYSTEM_PROMPT,
       max_tokens: dynamicMaxTokens,
-      messages: buildFruitCopyMessages(input),
+      messages: buildFruitCopyMessages(input, research),
     })
 
     const draftBlock = draftRes.content.find((c) => c.type === "text")
@@ -203,19 +293,25 @@ export class AnthropicAdapter implements AIProvider {
       }
     }
 
-    const totalInputTokens = draftInputTokens + refineInputTokens
-    const totalOutputTokens = draftOutputTokens + refineOutputTokens
+    const totalInputTokens = researchInputTokens + draftInputTokens + refineInputTokens
+    const totalOutputTokens = researchOutputTokens + draftOutputTokens + refineOutputTokens
     const estimatedCostKRW =
       estimateInputCostKRW(this.modelId, totalInputTokens) +
-      estimateOutputCostKRW(this.modelId, totalOutputTokens)
+      estimateOutputCostKRW(this.modelId, totalOutputTokens) +
+      estimateWebSearchCostKRW(webSearchRequests)
+
+    // 리서치 요약을 output에 실어 결과 화면(아트보드 밖) 접이식 패널에 전달·저장.
+    // 아트보드/JPG에는 절대 포함하지 않는다 (ResultView가 사이드바에만 렌더).
+    const output = research ? { ...finalOutput, research } : finalOutput
 
     return {
-      output: finalOutput,
+      output,
       usage: {
         inputTokens: totalInputTokens,
         outputTokens: totalOutputTokens,
         estimatedCostKRW: Number.isFinite(estimatedCostKRW) ? estimatedCostKRW : 0,
         truncated: draftTruncated,
+        webSearchRequests,
       },
       modelId: this.modelId,
     }

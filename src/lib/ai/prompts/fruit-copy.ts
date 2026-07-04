@@ -21,7 +21,7 @@
  */
 
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages"
-import type { CopyInput } from "../types"
+import type { CopyInput, ResearchResult } from "../types"
 import { sanitizeString, sanitizeStringArray } from "../sanitize"
 import { detectFruitFactKey, FRUIT_FACTS } from "@/domain/fruit-facts"
 import { safeExpressionsForPrompt } from "../safe-expressions"
@@ -464,7 +464,39 @@ function buildFactContext(input: CopyInput): string {
   return lines.join("\n")
 }
 
-export function buildFruitCopyMessages(input: CopyInput): MessageParam[] {
+/**
+ * v3.5: 리서치 결과를 "품종 일반 참고 정보(이 상품의 고유 사실 아님)" 블록으로 변환.
+ * fruit-facts와 동일한 안전 프레이밍 — 이 블록의 산지·수치를 이 상품 고유 사실로
+ * 승격하는 것을 명시적으로 금지한다.
+ */
+function buildResearchContext(research: ResearchResult): string {
+  const lines: string[] = [
+    "[ 품종 일반 참고 정보 (실시간 리서치 — 이 상품의 고유 사실 아님) ]",
+    "아래는 web 검색으로 모은 이 품종의 '일반적인' 참고 정보입니다. 이 상품(이 셀러)의 고유 사실이 아닙니다.",
+    "이 블록의 어떤 내용도 이 상품의 산지·당도·중량·인증으로 승격하지 마세요(규칙 6·55·56).",
+    "- 카피에 넣을 산지·당도·중량 등 고유 사실은 오직 입력값(input)만 사용합니다.",
+    "- 아래 정보에 나온 지역명·수치를 이 상품의 산지/당도로 쓰지 마세요.",
+    "- 특정 판매자 문구를 베끼지 말고, 품종 일반 지식으로만 활용하세요(표절 금지).",
+    "- 활용 범위: 품종 일반 특성 이해, storage 보관법 분기, faq·problemArc의 소비자 공감 포인트 참고.",
+  ]
+  if (research.varietyNotes.length > 0) {
+    lines.push(`- 품종 일반 특성: ${research.varietyNotes.join(" / ")}`)
+  }
+  if (research.seasonInfo) lines.push(`- 제철/수확기(일반): ${research.seasonInfo}`)
+  if (research.storageTips) lines.push(`- 보관법(일반): ${research.storageTips}`)
+  if (research.consumerInterests.length > 0) {
+    lines.push(`- 소비자 관심 포인트: ${research.consumerInterests.join(" / ")}`)
+  }
+  if (research.faqSeeds.length > 0) {
+    lines.push(`- 자주 묻는 질문(씨앗): ${research.faqSeeds.join(" / ")}`)
+  }
+  return lines.join("\n")
+}
+
+export function buildFruitCopyMessages(
+  input: CopyInput,
+  research?: ResearchResult,
+): MessageParam[] {
   // 셀러 자유 입력은 sanitize → 프롬프트 인젝션 차단
   const sanitized: CopyInput = {
     ...input,
@@ -479,12 +511,13 @@ export function buildFruitCopyMessages(input: CopyInput): MessageParam[] {
   const tone = sanitized.tone ?? "sincere"
   const factContext = buildFactContext(sanitized)
   const safePool = safeExpressionsForPrompt()
+  const researchContext = research ? `\n\n${buildResearchContext(research)}` : ""
 
   const userContent = `입력 데이터 (JSON):
 ${JSON.stringify(sanitized, null, 2)}
 
 [ fact 컨텍스트 — 환각 방지 ]
-${factContext}
+${factContext}${researchContext}
 
 [ ${safePool} ]
 

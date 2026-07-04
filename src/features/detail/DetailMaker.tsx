@@ -15,6 +15,7 @@ import type {
   ProductCategory,
   SellerReview,
   TrustInfo,
+  UsageInfo,
 } from "@/lib/ai/types"
 import {
   regenerateSection,
@@ -130,6 +131,11 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   const [reviews, setReviews] = useState<SellerReview[]>([])
   const [presetKeywords, setPresetKeywords] = useState<string[]>([])
   const [customKeywords, setCustomKeywords] = useState<string[]>([])
+  /**
+   * v3.5: AI 리서치 모드 토글 — 기본 ON. localStorage "fdp:research-enabled"에 저장.
+   * 생성 시 web_search로 품종 일반 참고 정보를 조사해 카피 깊이를 높인다(회당 약 30~70원·10~20초 추가).
+   */
+  const [researchEnabled, setResearchEnabled] = useState(true)
   const tone: CopyTone = "sincere"
   /** v2.7: 게이트 UI 삭제. 내부 상수 true 유지 (API 안전망 / 규칙 5 준수) */
   const isOrdinaryProduce = true
@@ -223,6 +229,8 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   } | null>(null)
   /** 결과 받은 시점의 입력 — 섹션 재생성에 재사용 */
   const [currentInput, setCurrentInput] = useState<CopyInput | null>(null)
+  // v3.5: 마지막 생성의 토큰·검색 사용량 — 결과 화면에 비용 투명성 한 줄 표시용.
+  const [lastUsage, setLastUsage] = useState<UsageInfo | null>(null)
   /** 섹션 재생성 진행 중인 섹션 (null이면 idle) */
   const [busySection, setBusySection] = useState<SectionId | null>(null)
   /** 현재 작업 ID — 저장/업데이트에 사용 */
@@ -243,6 +251,27 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
     window.addEventListener("resize", onResize)
     return () => window.removeEventListener("resize", onResize)
   }, [])
+
+  /** v3.5: 리서치 토글 localStorage 복원 — 저장값이 "0"이면 OFF, 그 외/미설정이면 기본 ON. */
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    try {
+      const saved = window.localStorage.getItem("fdp:research-enabled")
+      if (saved === "0") setResearchEnabled(false)
+    } catch {
+      /* localStorage 접근 불가(프라이빗 모드 등) — 기본 ON 유지 */
+    }
+  }, [])
+
+  /** v3.5: 리서치 토글 변경 시 localStorage 저장. */
+  const handleResearchToggle = (next: boolean) => {
+    setResearchEnabled(next)
+    try {
+      window.localStorage.setItem("fdp:research-enabled", next ? "1" : "0")
+    } catch {
+      /* 저장 실패는 무시 */
+    }
+  }
 
   useEffect(() => {
     if (!initialWorkId) return
@@ -459,11 +488,13 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       recommendBadge: undefined,
       tone: "sincere",
       isOrdinaryProduce,
+      researchEnabled,
     }
 
     try {
       const res = await getAIProvider().generateCopy(input)
       setResult(res.output)
+      setLastUsage(res.usage)
       setCurrentInput(input)
       setResultMeta({
         priceNum: 0,
@@ -947,6 +978,88 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         />
       </Step>
 
+      {/* v3.5: AI 리서치 모드 토글 — 기본 ON. 생성 시 web_search로 품종 일반 참고 정보 조사. */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          padding: "12px 14px",
+          marginBottom: 12,
+          background: "var(--color-bg-subtle)",
+          border: "1px solid var(--color-neutral-200)",
+          borderRadius: "var(--radius-xs)",
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: 14,
+              fontWeight: 700,
+              color: "var(--color-neutral-900)",
+            }}
+          >
+            🔍 AI 리서치
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--color-neutral-600)",
+              lineHeight: 1.5,
+              marginTop: 2,
+            }}
+          >
+            품종 일반 특성·제철·보관법을 실시간 검색해 카피에 반영해요 (회당 약 30~70원·10~20초 추가).
+          </div>
+        </div>
+        <label
+          style={{
+            position: "relative",
+            display: "inline-block",
+            width: 44,
+            height: 24,
+            flexShrink: 0,
+            cursor: isGenerating ? "not-allowed" : "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            role="switch"
+            aria-label="AI 리서치 모드"
+            checked={researchEnabled}
+            disabled={isGenerating}
+            onChange={(e) => handleResearchToggle(e.target.checked)}
+            style={{ opacity: 0, width: 0, height: 0 }}
+          />
+          <span
+            aria-hidden
+            style={{
+              position: "absolute",
+              inset: 0,
+              borderRadius: 999,
+              transition: "background 0.15s",
+              background: researchEnabled
+                ? "var(--color-primary-600)"
+                : "var(--color-neutral-300)",
+            }}
+          />
+          <span
+            aria-hidden
+            style={{
+              position: "absolute",
+              top: 3,
+              left: researchEnabled ? 23 : 3,
+              width: 18,
+              height: 18,
+              borderRadius: "50%",
+              background: "#fff",
+              transition: "left 0.15s",
+              boxShadow: "0 1px 2px rgba(0,0,0,0.2)",
+            }}
+          />
+        </label>
+      </div>
+
       <button
         type="button"
         onClick={() => void handleSubmit()}
@@ -1007,6 +1120,27 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
           }}
         >
           👆 위 폼에서 입력하면 여기에 반영됩니다
+        </div>
+      )}
+
+      {result && lastUsage && (
+        <div
+          className="fdp-no-print"
+          style={{
+            padding: "8px 14px",
+            marginBottom: 12,
+            background: "var(--color-bg-surface)",
+            border: "1px solid var(--color-neutral-300)",
+            borderRadius: "var(--radius-xs)",
+            color: "var(--color-neutral-700)",
+            fontSize: 12,
+            textAlign: "right",
+          }}
+        >
+          이번 생성: 토큰 {(lastUsage.inputTokens + lastUsage.outputTokens).toLocaleString()}
+          {lastUsage.webSearchRequests ? ` · 리서치 검색 ${lastUsage.webSearchRequests}회` : ""}
+          {" · 약 ₩"}
+          {Math.max(1, Math.round(lastUsage.estimatedCostKRW)).toLocaleString()}
         </div>
       )}
 

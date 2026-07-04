@@ -5,7 +5,15 @@
  * 화이트리스트 키만 복사 (prototype pollution 방어 포함).
  */
 
-import type { CopyOutput, CopySpec, CopyFAQ, CopyKeyPoint, CopyProblemArc } from "./types"
+import type {
+  CopyOutput,
+  CopySpec,
+  CopyFAQ,
+  CopyKeyPoint,
+  CopyProblemArc,
+  ResearchResult,
+  ResearchSource,
+} from "./types"
 
 const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"])
 
@@ -292,6 +300,81 @@ export function pickProblemArc(v: unknown): CopyProblemArc | undefined {
     .slice(0, MAX_PROBLEM_ARC_PROBLEMS)
   if (!question || problems.length === 0) return undefined
   return { question, problems }
+}
+
+/** v3.5: 리서치 결과 각 배열 항목 최대 개수 / 길이 상한. */
+const RESEARCH_LIMITS = {
+  listItems: 6,
+  listItemLen: 80,
+  seasonInfo: 120,
+  storageTips: 200,
+  sources: 8,
+  sourceTitle: 120,
+  sourceUrl: 300,
+} as const
+
+/** 안전한 출처 URL만 통과 (http/https + 파싱 가능). 그 외(javascript: 등)는 버린다. */
+function pickSafeUrl(v: unknown): string | null {
+  if (typeof v !== "string") return null
+  const s = v.trim().slice(0, RESEARCH_LIMITS.sourceUrl)
+  if (!/^https?:\/\//i.test(s)) return null
+  try {
+    const u = new URL(s)
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null
+    return u.toString()
+  } catch {
+    return null
+  }
+}
+
+function pickResearchSources(v: unknown): ResearchSource[] {
+  if (!Array.isArray(v)) return []
+  const out: ResearchSource[] = []
+  const seen = new Set<string>()
+  for (const item of v) {
+    if (!isObject(item)) continue
+    if (Object.keys(item).some((k) => FORBIDDEN_KEYS.has(k))) continue
+    const url = pickSafeUrl(item.url)
+    if (!url || seen.has(url)) continue
+    const title = trimTo(safeString(item.title), RESEARCH_LIMITS.sourceTitle) || url
+    seen.add(url)
+    out.push({ title, url })
+    if (out.length >= RESEARCH_LIMITS.sources) break
+  }
+  return out
+}
+
+function pickResearchList(v: unknown): string[] {
+  return safeStringArray(v)
+    .map((s) => trimTo(s, RESEARCH_LIMITS.listItemLen))
+    .filter(Boolean)
+    .slice(0, RESEARCH_LIMITS.listItems)
+}
+
+/**
+ * v3.5: 리서치 결과 화이트리스트 검증.
+ * 유의미한 내용(리스트 항목 또는 season/storage 문자열)이 하나도 없으면 null 반환
+ * → 요약 패널 미노출 + draft 주입 생략(빈 리서치 블록 방지).
+ */
+export function validateResearchResult(raw: unknown): ResearchResult | null {
+  if (!isObject(raw)) return null
+
+  const result: ResearchResult = {
+    varietyNotes: pickResearchList(raw.varietyNotes),
+    seasonInfo: trimTo(safeString(raw.seasonInfo), RESEARCH_LIMITS.seasonInfo),
+    storageTips: trimTo(safeString(raw.storageTips), RESEARCH_LIMITS.storageTips),
+    consumerInterests: pickResearchList(raw.consumerInterests),
+    faqSeeds: pickResearchList(raw.faqSeeds),
+    sources: pickResearchSources(raw.sources),
+  }
+
+  const hasContent =
+    result.varietyNotes.length > 0 ||
+    result.consumerInterests.length > 0 ||
+    result.faqSeeds.length > 0 ||
+    result.seasonInfo.length > 0 ||
+    result.storageTips.length > 0
+  return hasContent ? result : null
 }
 
 /** 응답 텍스트에서 코드펜스 제거 후 JSON 파싱 시도. */

@@ -55,6 +55,42 @@ export interface CopyInput {
   reviews?: SellerReview[]
   /** 일반 농산물 확인 게이트 (건강기능식품/숙취해소 표시 상품 제외). v1.8 식약처 §10 보호. */
   isOrdinaryProduce?: boolean
+  /**
+   * v3.5: AI 리서치 모드 — web_search로 품종 일반 특성을 조사해 draft에 주입.
+   * 기본 ON(생성 폼에서 토글). 실패 시 조용히 기존 2-step으로 폴백.
+   * 리서치는 "품종 일반 참고 정보"만 — 산지·당도·중량 등 상품 고유 사실은
+   * 여전히 입력값만 사용(규칙 55/56 유지).
+   */
+  researchEnabled?: boolean
+}
+
+/** v3.5: 리서치 인용 출처 1건. */
+export interface ResearchSource {
+  title: string
+  url: string
+}
+
+/**
+ * v3.5: 생성 시 실시간 리서치 결과 — "품종 일반 참고 정보"(이 상품의 고유 사실 아님).
+ * web_search로 조사한 품종 일반 특성·제철·보관·소비자 관심사·FAQ 씨앗.
+ * 절대 상품 고유 사실(이 셀러의 산지·당도·중량)로 승격 금지 — draft 프롬프트에서
+ * fruit-facts와 동일한 안전 프레이밍으로만 주입한다.
+ *
+ * 하위호환: 구버전 저장본/리서치 미사용·실패 시 undefined — 요약 패널 미노출.
+ */
+export interface ResearchResult {
+  /** 품종 일반 특성 — 맛·식감·당도 범위 등 (2~6개). */
+  varietyNotes: string[]
+  /** 제철/수확기 한 줄. */
+  seasonInfo: string
+  /** 보관법 한두 줄. */
+  storageTips: string
+  /** 소비자가 이 품종에서 중시하는 포인트 (2~6개). */
+  consumerInterests: string[]
+  /** 자주 묻는 질문 씨앗 (2~6개) — draft가 faq로 각색. */
+  faqSeeds: string[]
+  /** 인용 출처 목록 (제목+URL). */
+  sources: ResearchSource[]
 }
 
 /**
@@ -176,6 +212,12 @@ export interface CopyOutput {
   /** 농가 한 줄 소개 (선택, 셀러가 입력한 farmIntro 기반으로 정제) */
   farmStory: string
   /**
+   * v3.5: AI 리서치 요약 (선택). 결과 화면 접이식 패널(아트보드 밖)에만 노출 —
+   * JPG/아트보드에는 절대 포함하지 않는다. 리서치 미사용/실패 시 undefined.
+   * 카피 필드가 아니라 "이 카피의 근거 참고 정보"로만 취급.
+   */
+  research?: ResearchResult
+  /**
    * 문제 제기 → 해결 서사 아크 (선택). WHY 카드 다음, Story 앞의 ProblemArcBlock이 렌더.
    * 공감 질문 + 구매 실패의 실제 원인 2~3개. keyPoints가 그 해결책으로 호응.
    * 하위호환: 구버전 저장본엔 없음(undefined) — 블록 미노출.
@@ -188,6 +230,8 @@ export interface UsageInfo {
   outputTokens: number
   estimatedCostKRW: number
   truncated: boolean
+  /** v3.5: web_search 도구 호출 횟수(리서치 단계). 미사용 시 0. 비용 추정에 합산. */
+  webSearchRequests?: number
 }
 
 export interface CopyResult {

@@ -25,6 +25,18 @@ export const PRICING: Record<ModelId, ModelPricing> = {
   [MODEL_IDS.OPUS]: { inputUsdPerMtok: 15, outputUsdPerMtok: 75 },
 }
 
+/**
+ * v3.5: web_search 서버 도구 비용 — Anthropic 고시 $10 / 1,000회.
+ * 리서치 1회(검색 최대 5회)당 약 ₩69 상한 (5 × $10/1000 × 1380).
+ */
+const WEB_SEARCH_USD_PER_1K = 10
+
+/** web_search 호출 횟수 → KRW 비용. */
+export function estimateWebSearchCostKRW(requests: number): number {
+  const safe = Math.max(0, Number.isFinite(requests) ? requests : 0)
+  return (safe / 1000) * WEB_SEARCH_USD_PER_1K * USD_TO_KRW
+}
+
 export function estimateInputCostKRW(modelId: ModelId, tokens: number): number {
   const safeTokens = Math.max(0, Number.isFinite(tokens) ? tokens : 0)
   const price = PRICING[modelId]
