@@ -133,15 +133,33 @@ export async function exportNodeAsSlicedJpg(
 
     // 그리디 그룹화: 각 그룹의 누적 높이가 target을 넘지 않도록 섹션을 묶음.
     // 한 섹션이 target보다 크면 단독 그룹으로 처리 (자연 경계 유지).
+    //
+    // E20(분할 경계 파손): data-slice-glue가 붙은 최상위 요소는 "다음 형제와 분리 금지"
+    // 신호다(WHY 돔 전환·곡선 divider·섹션 헤딩·배지 행 등 뒤 내용의 리드인). 슬라이스
+    // 경계가 glue 요소와 그 다음 형제 사이에 떨어지면 돔이 반토막 나거나 배지/헤딩이
+    // 고아로 남는다(05·07·08 증거). 방지책: 그룹을 끊을 때, 직전 그룹 꼬리에 붙은
+    // "연속된 glue 요소들"은 다음 그룹으로 함께 넘긴다 → glue는 절대 그룹 마지막이 되지 않음.
+    // (marker 복원은 group 배열 자체를 기준으로 재삽입하므로 이 재배치와 무관하게 정합.)
+    const isGlue = (el: HTMLElement) => el.hasAttribute("data-slice-glue")
     const groups: HTMLElement[][] = []
     let curr: HTMLElement[] = []
     let currH = 0
     for (const el of children) {
       const h = el.getBoundingClientRect().height
       if (curr.length > 0 && currH + h > target) {
-        groups.push(curr)
-        curr = []
-        currH = 0
+        // 그룹 끊기 직전: 꼬리의 연속 glue 요소들을 떼어 다음 그룹으로 이월.
+        // (glue 요소만으로 이뤄진 그룹은 통째로 이월 → 빈 그룹 push 방지.)
+        let carryStart = curr.length
+        while (carryStart > 0 && isGlue(curr[carryStart - 1])) carryStart--
+        const carried = curr.slice(carryStart)
+        const kept = curr.slice(0, carryStart)
+        if (kept.length > 0) {
+          groups.push(kept)
+          curr = carried
+          currH = carried.reduce((s, e) => s + e.getBoundingClientRect().height, 0)
+        }
+        // kept가 비면(=현재 그룹 전체가 glue) 끊지 않고 계속 누적 —
+        // glue 리드인이 뒤 내용과 같은 그룹에 남도록 한다.
       }
       curr.push(el)
       currH += h

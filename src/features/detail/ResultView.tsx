@@ -2,14 +2,13 @@
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { t } from "@/lib/i18n"
-import type { CopyOutput, CopyKeyPoint, TrustInfo, SellerReview } from "@/lib/ai/types"
+import type { CopyOutput, CopyKeyPoint, TrustInfo, SellerReview, ProductCategory } from "@/lib/ai/types"
 import type { SectionId } from "@/lib/ai/section-regenerate"
 import type { UploadedImage } from "./ImageUploader"
 import { ExportPanel } from "./ExportPanel"
 import { EditableResultText } from "./EditableResultText"
 import { RegenButton } from "./RegenButton"
 import { CertCaption } from "./CertCaption"
-import { CheckoutTrustStrip } from "./CheckoutTrustStrip"
 import { FreshnessTimeline } from "./FreshnessTimeline"
 import { ProducerCard } from "./ProducerCard"
 import { DisclosureBlock } from "./DisclosureBlock"
@@ -42,8 +41,39 @@ import {
   ColdIcon,
   SealIcon,
   ShieldIcon,
+  BrixIcon,
+  MapPinIcon,
+  ScaleIcon,
+  LeafIcon,
   type LineIconProps,
 } from "./LineIcons"
+
+/**
+ * A3(카테고리 명사) — 고정 문구의 "과일" 자리를 카테고리에 맞춰 치환.
+ * fruit→과일 / veggie→채소 / other→상품. {noun} 토큰 치환에도 쓴다.
+ */
+function categoryNoun(category?: ProductCategory): string {
+  if (category === "veggie") return "채소"
+  if (category === "other") return "상품"
+  return "과일"
+}
+
+/** 주격 조사 이/가 — 마지막 글자 받침 유무로 선택 (과일→이, 채소→가). */
+function subjectJosa(word: string): string {
+  const code = word.charCodeAt(word.length - 1)
+  if (code < 0xac00 || code > 0xd7a3) return "이(가)"
+  return (code - 0xac00) % 28 === 0 ? "가" : "이"
+}
+
+/**
+ * C12: 특정 지역이 아닌 일반 산지 표기("국내산/수입산/해외산"류) 판별.
+ * 이런 값은 "From. {origin}" 배지로 띄우면 산지 신뢰 장치로 오독되므로 숨긴다.
+ */
+const GENERIC_ORIGINS = ["국내산", "수입산", "해외산", "국산", "원산지", "미상"]
+function isGenericOrigin(origin: string): boolean {
+  const o = origin.trim()
+  return GENERIC_ORIGINS.some((g) => o === g)
+}
 
 /**
  * v2.8: 과일별 축색 Context.
@@ -70,6 +100,8 @@ interface ResultViewProps {
   price: number
   origin?: string
   weight?: string
+  /** 상품 카테고리 — 고정 문구의 명사 치환(과일/채소/상품)에 사용 (A3). */
+  category?: ProductCategory
   trust?: TrustInfo
   /**
    * 고객 후기 — 셀러 직접 입력(AI 생성 아님). 0건이면 ReviewsBlock 미노출.
@@ -176,10 +208,16 @@ export function planImages(
 
   let prevId: string | undefined = hero?.id // 직전 슬롯 = hero (whyBrand가 hero 사진 못 쓰게)
 
+  // E19 규칙 ②: rest 사진 1장의 최대 사용 횟수(2회). 히어로는 재사용 풀에서 제외(규칙 ①).
+  const MAX_REUSE = 2
+
   /**
-   * 특징 슬롯 1칸 배정: rest 중 (사용 횟수 최소) & (직전과 다른) 사진을 고른다.
-   * rest가 비어 있으면 undefined (호출부가 hero 폴백 여부를 결정).
-   * 동점일 땐 원본 순서가 앞선 사진 우선 → 결정적.
+   * 특징 슬롯 1칸 배정 (E19 강화):
+   *  - rest 중 (사용 횟수 < MAX_REUSE) & (직전 슬롯과 다른) 사진을 사용 횟수 최소 우선으로 고른다.
+   *  - 규칙 ③(인접 슬롯 동일 금지): 직전과 같은 사진은 다른 선택지가 전혀 없을 때만.
+   *  - 규칙 ②(최대 2회): 이미 2회 쓴 사진은 아예 후보에서 제외 → 부족하면 undefined 반환
+   *    (호출부가 히어로 폴백 대신 이미지 없이 렌더할지 결정 — 규칙 ④).
+   *  - 동점 시 원본 순서 앞 사진 우선 → 결정적.
    */
   const pickFeature = (): UploadedImage | undefined => {
     if (rest.length === 0) return undefined
@@ -189,8 +227,9 @@ export function planImages(
     let bestSameCount = Infinity
     for (const img of rest) {
       const c = useCount.get(img.id) ?? 0
+      if (c >= MAX_REUSE) continue // 규칙 ②: 2회 초과 사용 금지
       if (img.id === prevId) {
-        // 직전과 같은 사진은 마지막 후보로만 (다른 선택지가 전혀 없을 때).
+        // 규칙 ③: 직전과 같은 사진은 마지막 후보로만.
         if (c < bestSameCount) {
           bestSameCount = c
           bestSameAsPrev = img
@@ -213,35 +252,33 @@ export function planImages(
   // whyBrand — Hero 직후. hero 사진 금지. rest 없으면 undefined(텍스트 카드).
   const whyBrand = pickFeature()
 
+  // 고순위 슬롯(POINT 카드) — rest가 부족하면 undefined 그대로 두어 이미지 없이 렌더(규칙 ④).
+  // 단, rest가 아예 0장(사진 1장뿐)일 때만 hero 폴백 허용(규칙 ⑤: 히어로+1곳).
+  const onlyHero = rest.length === 0
   const keyPoints: (UploadedImage | undefined)[] = []
   for (let i = 0; i < keyPointCount; i++) {
     const img = pickFeature()
-    // rest가 아예 없을 때만 hero로 폴백 (직전이 hero면 중복이라 그냥 hero 허용 — 이 경우 사진 1장뿐).
-    keyPoints.push(img ?? hero)
+    keyPoints.push(img ?? (onlyHero && i === 0 ? hero : undefined))
   }
 
   const recipe: (UploadedImage | undefined)[] = []
   for (let i = 0; i < recipeCount; i++) {
     const img = pickFeature()
-    recipe.push(img ?? hero)
+    recipe.push(img)
   }
 
-  // packaging — 갤러리 그리드와 겹치지 않게 특징 슬롯으로 먼저 배정.
-  const packaging = pickFeature() ?? hero
+  // 저순위 슬롯(packaging) — 남는 사진이 있을 때만. 없으면 undefined → 틴트 배경 렌더(규칙 ④).
+  // 히어로 재사용 폴백 제거 — 사진 부족 시 히어로를 packaging에 다시 붙이지 않는다.
+  const packaging = pickFeature()
 
   // 갤러리 — 특징 슬롯에서 "아직 한 번도 안 쓴" rest 사진만 흡수한다.
-  // (hero 및 특징 블록에 이미 노출된 사진은 넣지 않아 블록 간 중복 0 — 임무 C.)
-  // rest가 비거나(사진 1장뿐) 특징 슬롯이 rest를 전부 소진하면 unused가 빈 배열이라
-  // 갤러리도 빈 배열 → 블록 자체가 숨겨진다(line 573 게이트). 7~8장 구간에서
-  // 예전 `rest.slice(...)` 무조건 폴백이 특징+갤러리 전량 중복을 만들던 문제를 제거.
+  // (hero 및 특징 블록에 이미 노출된 사진은 넣지 않아 블록 간 중복 0.)
   const unused = rest.filter((img) => (useCount.get(img.id) ?? 0) === 0)
 
-  // SensoryPunch용 분위기 컷 — galleryPool(unused) 첫 장 우선.
-  // unused를 하나 쓰면 갤러리 중복을 피하려고 그 장을 gallery에서 제외한다.
-  // unused가 비면(사진이 특징 슬롯에서 모두 소진 or 1장뿐) hero 재사용 허용
-  // (이 블록은 검정 배경 분위기 컷이라 중복이 튀지 않는다).
-  const punch = unused.length > 0 ? unused[0] : hero
-  const galleryPool = punch && unused.length > 0 ? unused.slice(1) : unused
+  // SensoryPunch용 분위기 컷(저순위 풀블리드) — 아직 안 쓴 사진이 있을 때만(규칙 ④).
+  // 히어로 재사용 폴백 제거 — 사진이 부족하면 punch는 undefined(카피만, 틴트 배경).
+  const punch = unused.length > 0 ? unused[0] : undefined
+  const galleryPool = punch ? unused.slice(1) : unused
 
   // v3.1-b: sizeRef 예약 삭제 — 크기와 무관한 사진(비닐하우스 등)에 "실제 크기 참고"
   // 캡션이 붙는 사고가 나서, 남는 사진은 전부 갤러리가 흡수한다.
@@ -372,7 +409,9 @@ function CurveDivider({
   height?: number
 }) {
   return (
-    <div aria-hidden style={{ background: topColor, lineHeight: 0 }}>
+    // E20: data-slice-glue — 곡선 전환은 항상 뒤 섹션으로 이어지는 리드인이라
+    // 뒤 형제와 분리되면 잘린 곡선만 슬라이스 끝에 남는다. exporter가 다음 형제와 묶는다.
+    <div aria-hidden data-slice-glue style={{ background: topColor, lineHeight: 0 }}>
       <svg
         width="100%"
         viewBox="0 0 860 80"
@@ -414,7 +453,9 @@ function DomeTransition({
     Math.min(circle * 0.55, (inner * 0.78) / (labelLen * 0.75)),
   )
   return (
-    <div aria-hidden style={{ background: tintColor, position: "relative", lineHeight: 0 }}>
+    // E20: data-slice-glue — 이 돔은 뒤 섹션(WHY 카드)의 리드인이라 분할 경계가
+    // 여기서 떨어지면 돔 원이 반토막 난다(05 증거). exporter가 다음 형제와 같은 그룹에 묶는다.
+    <div aria-hidden data-slice-glue style={{ background: tintColor, position: "relative", lineHeight: 0 }}>
       <svg
         width="100%"
         viewBox="0 0 860 120"
@@ -730,15 +771,23 @@ function ValuePropStrip({ isMobile, trust }: { isMobile: boolean; trust?: TrustI
   type VpItem = { label: string; Icon: (p: LineIconProps) => React.JSX.Element }
   const strong: VpItem[] = []
   if (trust?.sameDayHarvest) strong.push({ label: vp.sameDayHarvest, Icon: HarvestIcon })
+  // C9: "산지 직송"은 directFromFarm 체크 시에만 (안전 필러에서 제거).
+  if (trust?.directFromFarm) strong.push({ label: vp.directFromFarm, Icon: MapPinIcon })
   if (trust?.coldChain) strong.push({ label: vp.coldChain, Icon: ColdIcon })
   else if (trust?.sealedPackage) strong.push({ label: vp.sealed, Icon: SealIcon })
-  if (trust?.refundGuarantee) strong.push({ label: vp.refund, Icon: ShieldIcon })
+  // C10: refundGuarantee가 조건부(condition 존재)면 "100% 환불" → "조건부 교환·환불"로 다운그레이드.
+  if (trust?.refundGuarantee) {
+    const conditional =
+      typeof trust.refundGuarantee === "object" && !!trust.refundGuarantee.condition?.trim()
+    strong.push({ label: conditional ? vp.refundConditional : vp.refund, Icon: ShieldIcon })
+  }
 
-  // 검증 불필요한 안전 문구 (항상 참인 일반적 신선식품 표현)
+  // 검증 불필요한 안전 문구 (항상 참인 일반적 신선식품 표현).
+  // C9: "산지 직송" 제외 — 꼼꼼 선별/신선 포장/정성 포장만.
   const safe: VpItem[] = [
-    { label: vp.directFromFarm, Icon: HarvestIcon },
     { label: vp.carefulSort, Icon: SortIcon },
     { label: vp.freshPack, Icon: PackIcon },
+    { label: vp.carefulPack, Icon: SealIcon },
   ]
 
   const items: VpItem[] = []
@@ -938,6 +987,7 @@ export function ResultView({
   price: _price,
   origin,
   weight,
+  category,
   trust,
   reviews,
   onRetry,
@@ -1089,6 +1139,21 @@ export function ResultView({
   /** v2.8: 과일별 축색 팔레트 — 상품명 기반 자동 전환. */
   const accent = useMemo(() => resolveAccent(productName), [productName])
 
+  /** A3: 카테고리 명사(과일/채소/상품) — 고정 문구 치환용. */
+  const noun = categoryNoun(category)
+
+  /**
+   * D17: 크기 편차 보일러플레이트 박스 중복 방어 — 입력 faq/cautions에 "크기"
+   * 키워드 항목이 이미 있으면 SizeDiagramBlock의 편차 안내 박스를 생략한다.
+   */
+  const hasSizeMention = useMemo(() => {
+    const inFaq = (copy.faq ?? []).some(
+      (f) => f.q?.includes("크기") || f.a?.includes("크기"),
+    )
+    const inCautions = (copy.cautions ?? []).some((c) => c.includes("크기"))
+    return inFaq || inCautions
+  }, [copy.faq, copy.cautions])
+
   /** v2.9: 즐기는 법 블록 노출 여부 — 과일 매칭 + pairings 있을 때만. */
   const hasRecipe = useMemo(() => {
     const key = detectFruitFactKey(productName)
@@ -1104,17 +1169,17 @@ export function ResultView({
   const ctaText = useMemo(() => {
     const name = productName.trim()
     const producer = trust?.producerName?.trim()
+    // D16: "신선한 X" 남발 방지 — 접두 "신선한" 제거. (농가 캡션은 히어로 1곳 허용 — D15.)
     return producer
       ? `${producer} 농가를 만나보세요`
-      : `신선한 ${name || "이 상품"}, 지금 담아보세요`
+      : `${name || "이 상품"}, 지금 담아보세요`
   }, [productName, trust?.producerName])
+  // D15: 하단 CTA는 농가 문구를 쓰지 않는다(농가 장치는 히어로 캡션 + FarmStoryBlock 2곳만).
+  // D16: "신선한 X" 남발 방지 — "{name}, 정직하게 준비했습니다".
   const ctaTextBottom = useMemo(() => {
     const name = productName.trim()
-    const producer = trust?.producerName?.trim()
-    return producer
-      ? `${producer} 농가를 소개합니다`
-      : `신선한 ${name || "이 상품"}, 여기 있습니다`
-  }, [productName, trust?.producerName])
+    return `${name || "이 상품"}, 정직하게 준비했습니다`
+  }, [productName])
 
   return (
     <AccentContext.Provider value={accent}>
@@ -1168,6 +1233,10 @@ export function ResultView({
               boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
               overflow: "hidden",
               color: INK,
+              // B4: 한글 단어 중간 줄바꿈 전면 방지 — 아트보드 루트에 1회 적용(상속됨).
+              // 히어로 H1·섹션 헤더·본문 전부 여기서 상속받는다. 개별 상충 지정 없음.
+              wordBreak: "keep-all",
+              overflowWrap: "break-word",
               fontFamily:
                 'Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif',
             }}
@@ -1233,8 +1302,8 @@ export function ResultView({
               isMobile={isMobile}
             />
 
-            {/* 1a. TRUST BADGES */}
-            {trust && <TrustBadgesRow trust={trust} isMobile={isMobile} />}
+            {/* D14: WHY 하단 신뢰 pill 행(TrustBadgesRow) 삭제 — 신뢰 3종은 히어로
+                highlightBadges + 아이콘 트리오(ValuePropStrip) 2곳으로만 노출. */}
 
             {/* 1b. CertCaption — 공식 인증 (v1.8) */}
             {trust && (trust.gapNumber?.trim() || trust.organicNumber?.trim() || trust.pesticideFreeNumber?.trim()) && (
@@ -1349,6 +1418,8 @@ export function ResultView({
               productName={productName}
               weight={weight}
               isMobile={isMobile}
+              noun={noun}
+              hasSizeMention={hasSizeMention}
             />
 
             {/* 6. POINT BIG CARDS */}
@@ -1361,6 +1432,7 @@ export function ResultView({
                   onCopyChange={onCopyChange}
                   pointImageFor={pointImageFor}
                   isMobile={isMobile}
+                  noun={noun}
                 />
               </>
             )}
@@ -1432,27 +1504,11 @@ export function ResultView({
 
             <DotDivider />
 
-            {/* 9a. RETURNS (정형) */}
-            <ReturnsBlock isMobile={isMobile} />
+            {/* 9a. RETURNS (정형) — 환불 기한은 refundGuarantee 입력이 있으면 그 값(C11) */}
+            <ReturnsBlock isMobile={isMobile} trust={trust} />
 
-            {/* 9b. CheckoutTrustStrip — 결제 인접 신뢰 줄 (v1.8) */}
-            {trust && (
-              <div style={{ padding: "0 20px" }}>
-                <CheckoutTrustStrip
-                  coldChain={trust.coldChain}
-                  sealed={trust.sealedPackage}
-                  refundCondition={
-                    typeof trust.refundGuarantee === "object"
-                      ? trust.refundGuarantee.condition
-                      : trust.refundGuarantee
-                        ? "맛 이상 시 환불 보장"
-                        : undefined
-                  }
-                  sameDayShipping={trust.sameDayHarvest}
-                  accentColor={accent.accent}
-                />
-              </div>
-            )}
+            {/* D14: 교환·환불 하단 신뢰 pill 행(CheckoutTrustStrip) 삭제 — 신뢰 3종 연타 방지.
+                신뢰 요소는 히어로 highlightBadges + 아이콘 트리오(ValuePropStrip) 2곳으로만. */}
 
             {/* CTA 반복 — 교환·환불 안내 뒤, 주의 박스 앞 (리서치: CTA 2회 반복).
                 하단은 히어로와 동일 데이터의 제목형 변주(이슈4) — 같은 문구 2회 반복 방지. */}
@@ -1467,9 +1523,10 @@ export function ResultView({
               <CtaPill text={ctaTextBottom} isMobile={isMobile} />
             </div>
 
-            {/* 10. CAUTIONS — 신선식품 면책 박스 자동 표시 (cautions 비어 있어도 노출) */}
+            {/* 10. CAUTIONS — 신선식품 면책 박스 자동 표시 (cautions 비어 있어도 노출).
+                D17: faq 답변·storage와 정확 일치하는 cautions 항목은 렌더 생략. */}
             <DotDivider />
-            <CautionsBlock cautions={copy.cautions ?? []} isMobile={isMobile} />
+            <CautionsBlock cautions={copy.cautions ?? []} copy={copy} isMobile={isMobile} />
           </div>
             </div>
           </div>
@@ -1670,22 +1727,8 @@ function WhyBrandCard({
           </div>
         )}
 
-        {/* v2.9-b: 공정 라벨(손 선별/안전 포장) 삭제 — 배송·포장 블록과 중복(리뷰 지적).
-            맛 자신감 한 줄로 대체 (다른 블록과 안 겹치는 각도). */}
-        <p
-          style={{
-            fontSize: isMobile ? 18 : 32,
-            fontWeight: 700,
-            color: INK,
-            margin: 0,
-            lineHeight: 1.6,
-            fontFamily: BODY_FONT,
-            letterSpacing: -0.3,
-            wordBreak: "keep-all",
-          }}
-        >
-          한 번 드셔보면, <span style={{ color: accent.accent }}>왜 여기서 사는지</span> 아실 거예요.
-        </p>
+        {/* D16: WHY 카드 고정 필러("한 번 드셔보면...") 삭제 — 05 프리미엄 톤과 충돌 + 범용 필러.
+            WHY 헤딩만 남기고 지어낸 자신감 문구는 넣지 않는다. */}
       </div>
     </div>
   )
@@ -1713,7 +1756,8 @@ function RecipeBlock({
   const key = detectFruitFactKey(productName)
   const pairings = key ? FRUIT_FACTS[key]?.pairings ?? [] : []
   const items = pairings.slice(0, 3)
-  if (items.length === 0) return null
+  // F(minor): 칩 2개 미만이면 섹션 미노출 (한 칩짜리 빈약한 섹션 방지).
+  if (items.length < 2) return null
 
   const name = productName.trim() || "이 상품"
   return (
@@ -1913,6 +1957,8 @@ function HeroBlock({
   const accent = useAccent()
   const name = productName.trim()
   const originText = origin?.trim()
+  // C12: origin이 "국내산/수입산/해외산"류(특정 지역 아님)면 "From. {origin}" 배지 숨김.
+  const showOriginBadge = !!originText && !isGenericOrigin(originText)
   return (
     <div style={{ background: "#FFFFFF" }}>
       {/* v2.9: 상단 캡션 + 대형 헤드 (수플린 레퍼런스 — 헤드가 이미지 위) */}
@@ -1923,7 +1969,7 @@ function HeroBlock({
           background: accent.soft,
         }}
       >
-        {(name || originText) && (
+        {(name || showOriginBadge) && (
           <div
             style={{
               display: "flex",
@@ -1946,7 +1992,7 @@ function HeroBlock({
                 오늘도 신선한 {name}
               </span>
             )}
-            {originText && (
+            {showOriginBadge && (
               <span
                 style={{
                   display: "inline-flex",
@@ -2090,7 +2136,13 @@ function HeroBlock({
           </div>
         )}
 
-        {copy.highlightBadges.length > 0 && (
+        {(() => {
+          // C12: origin과 동일 문자열인 highlightBadge 중복 제거
+          // (히어로 첫 화면 "국내산" 3회 방지 — 캡션·From배지·이 배지 중복).
+          const oNorm = originText?.trim()
+          const heroBadges = copy.highlightBadges.filter((b) => !oNorm || b.trim() !== oNorm)
+          if (heroBadges.length === 0) return null
+          return (
           <div
             style={{
               display: "flex",
@@ -2100,7 +2152,7 @@ function HeroBlock({
               marginTop: isMobile ? 24 : 32,
             }}
           >
-            {copy.highlightBadges.slice(0, 4).map((b, i) => (
+            {heroBadges.slice(0, 4).map((b, i) => (
               <span
                 key={`b-${i}`}
                 style={{
@@ -2138,7 +2190,8 @@ function HeroBlock({
               </span>
             ))}
           </div>
-        )}
+          )
+        })()}
       </div>
     </div>
   )
@@ -2350,8 +2403,14 @@ function StoryBlock({
   const accent = useAccent()
   const hasStory = !!copy.story
   // 형광펜 강조: story에서 첫 감각 문장을 결정적으로 하나 뽑는다(문단당 1개).
-  // 편집은 위 EditableResultText 문단에서 하고, 강조는 그 아래 비편집 콜아웃으로 훑어읽기 지원.
   const storyHi = useMemo(() => splitStoryHighlight(copy.story), [copy.story])
+  // D13(풀쿼트 발췌): 콜아웃에 인용된 문장은 본문에서 제거(발췌 개념)해 verbatim 반복을 없앤다.
+  // splitStoryHighlight가 before+highlight+after로 원문을 정확 분할하므로,
+  // 본문은 before+after만 렌더. 매칭 실패(storyHi === null)면 원문 그대로(카피 손실 금지).
+  const displayStory = useMemo(() => {
+    if (!storyHi) return copy.story
+    return `${storyHi.before}${storyHi.after}`.replace(/\n{3,}/g, "\n\n").trim()
+  }, [storyHi, copy.story])
   return (
     <div
       style={{
@@ -2380,31 +2439,27 @@ function StoryBlock({
           margin: "0 auto",
         }}
       >
-        <p
-          style={{
-            fontSize: isMobile ? 20 : 34,
-            color: INK,
-            lineHeight: 1.7,
-            whiteSpace: "pre-line",
-            margin: 0,
-            textAlign: "center",
-            fontFamily: BODY_FONT,
-            fontWeight: 500,
-            position: "relative",
-            zIndex: 1,
-            wordBreak: "keep-all",
-          }}
-        >
-          <EditableResultText
-            copy={copy}
-            onChange={onCopyChange}
-            path={["story"]}
-            multiline
-            maxLength={1000}
-            preserveWhitespace
-            placeholder="한 입 베면 어떤 맛인지, 어떤 향이 나는지 3~5문장으로 적어보세요"
-          />
-        </p>
+        {/* D13: JPG 본문 — 발췌 문장을 뺀 displayStory를 평문으로 렌더(편집은 아래 chrome).
+            storyHi가 null(매칭 실패)이면 displayStory === copy.story 라 현행 유지. */}
+        {displayStory.trim() && (
+          <p
+            style={{
+              fontSize: isMobile ? 20 : 34,
+              color: INK,
+              lineHeight: 1.7,
+              whiteSpace: "pre-line",
+              margin: 0,
+              textAlign: "center",
+              fontFamily: BODY_FONT,
+              fontWeight: 500,
+              position: "relative",
+              zIndex: 1,
+              wordBreak: "keep-all",
+            }}
+          >
+            {displayStory}
+          </p>
+        )}
 
         {/*
           형광펜 강조 콜아웃 — story의 첫 감각 문장을 accent.soft 배경+진한 글씨로 다시 노출.
@@ -2467,6 +2522,54 @@ function StoryBlock({
         )}
       </div>
 
+      {/* D13: 스토리 편집 진입 — 편집 전용(JPG 제외). 발췌 문장 포함 원문 전체를 편집.
+          위 JPG 본문(displayStory)·콜아웃은 이 원문에서 파생된다(StorageBlock과 동일 방식). */}
+      <div
+        data-edit-chrome
+        style={{
+          marginTop: isMobile ? 16 : 24,
+          maxWidth: 720,
+          marginLeft: "auto",
+          marginRight: "auto",
+          padding: isMobile ? "20px 22px" : "28px 34px",
+          background: BG_SOFT,
+          borderRadius: 10,
+          border: `1px dashed ${LINE}`,
+        }}
+      >
+        <p
+          style={{
+            margin: "0 0 8px",
+            fontSize: isMobile ? 12 : 14,
+            color: MUTE,
+            fontWeight: 700,
+            fontFamily: BODY_FONT,
+          }}
+        >
+          이야기 편집 (강조 문장은 위 발췌 박스로 노출돼요)
+        </p>
+        <p
+          style={{
+            fontSize: isMobile ? 16 : 22,
+            color: INK,
+            lineHeight: 1.6,
+            whiteSpace: "pre-line",
+            margin: 0,
+            fontFamily: BODY_FONT,
+          }}
+        >
+          <EditableResultText
+            copy={copy}
+            onChange={onCopyChange}
+            path={["story"]}
+            multiline
+            maxLength={1000}
+            preserveWhitespace
+            placeholder="한 입 베면 어떤 맛인지, 어떤 향이 나는지 3~5문장으로 적어보세요"
+          />
+        </p>
+      </div>
+
       {onRegen && (
         <div data-edit-chrome style={{ display: "flex", justifyContent: "center", marginTop: 14 }}>
           {onRegen}
@@ -2527,7 +2630,8 @@ function SensoryPunchBlock({
             path={["highlightBox"]}
             maxLength={60}
             placeholder="한 줄 임팩트 카피 (예: 수분 가득, 과즙 팡팡!)"
-            style={{ color: accent.accent }}
+            // F(minor): 검정 밴드 위 빨강(저대비) → accent.soft(밝은 틴트)로 가독성 확보(01·04).
+            style={{ color: accent.soft }}
           />
         </p>
       </div>
@@ -2721,7 +2825,6 @@ function BrixScaleBar({
   const pct = (v: number) => (span > 0 ? Math.min(100, Math.max(0, ((v - lo) / span) * 100)) : 0)
 
   const goodPct = pct(goodBrix)
-  const ceilPct = pct(brixCeiling)
   const brixPct = pct(brix)
 
   return (
@@ -2780,20 +2883,7 @@ function BrixScaleBar({
             borderRadius: 2,
           }}
         />
-        {/* ceiling 눈금 */}
-        <div
-          aria-hidden
-          style={{
-            position: "absolute",
-            left: `${ceilPct}%`,
-            transform: "translateX(-50%)",
-            top: isMobile ? -4 : -6,
-            width: isMobile ? 3 : 4,
-            height: isMobile ? 18 : 26,
-            background: MUTE,
-            borderRadius: 2,
-          }}
-        />
+        {/* C8: "품종 최대" ceiling 눈금 삭제 — 검증 불가 단정. */}
         {/* 사용자 brix 마커 (accent 원) */}
         <div
           aria-hidden
@@ -2831,23 +2921,20 @@ function BrixScaleBar({
           <br />
           {goodBrix}
         </div>
-        <div
-          style={{
-            position: "absolute",
-            left: `${ceilPct}%`,
-            transform: "translateX(-50%)",
-            textAlign: "center",
-            whiteSpace: "nowrap",
-            fontSize: isMobile ? 14 : 24,
-            color: SUB,
-            fontWeight: 600,
-            fontFamily: BODY_FONT,
-          }}
-        >
-          {bs.ceiling}
-          <br />
-          {brixCeiling}
-        </div>
+        {/* C8: "품종 최대" ceiling 라벨 삭제 — 검증 불가 단정. */}
+      </div>
+
+      {/* C8: 게이지 하단 캡션 — 품종 일반 정보 참고, 개체차 있음. */}
+      <div
+        style={{
+          marginTop: isMobile ? 4 : 6,
+          fontSize: isMobile ? 8 : 12,
+          color: MUTE,
+          fontFamily: BODY_FONT,
+          lineHeight: 1.4,
+        }}
+      >
+        {bs.caption}
       </div>
     </div>
   )
@@ -2858,12 +2945,14 @@ function BrixScaleBar({
  * 기존 LineIcons(손그림 라인) 재사용 → 브랜드 톤 통일, toCanvas 호환.
  */
 function specLabelIcon(label: string): (p: LineIconProps) => React.JSX.Element {
-  if (/(당도|Brix|brix|맛|향|달)/.test(label)) return HarvestIcon
-  if (/(산지|원산지|재배|농장|생산)/.test(label)) return HarvestIcon
+  // F(minor): 의미별 고유 아이콘 — 같은 아이콘이 한 페이지에서 두 의미로 쓰이지 않게
+  // 당도=BrixIcon(물방울) / 산지=MapPinIcon(핀) / 중량=ScaleIcon(저울) / 품종=LeafIcon(잎)로 분리.
+  if (/(당도|Brix|brix|맛|향|달)/.test(label)) return BrixIcon
+  if (/(산지|원산지|재배|농장|생산)/.test(label)) return MapPinIcon
   if (/(보관|냉장|냉동|저온|콜드)/.test(label)) return ColdIcon
-  if (/(중량|무게|크기|용량|수량|개수)/.test(label)) return SortIcon
+  if (/(중량|무게|크기|용량|수량|개수)/.test(label)) return ScaleIcon
   if (/(포장|배송|택배|발송)/.test(label)) return DeliverIcon
-  if (/(품종|등급|규격|선별)/.test(label)) return SortIcon
+  if (/(품종|등급|규격|선별)/.test(label)) return LeafIcon
   return PackIcon
 }
 
@@ -2910,7 +2999,8 @@ function SpecBlock({
   const columns = gridSpecs.length <= 1 ? "1fr" : "repeat(2, minmax(0, 1fr))"
 
   // 스펙 카드 1장 렌더 (풀폭·그리드 공용). i는 원본 copy.spec 인덱스(편집 경로용).
-  const renderCard = (s: CopyOutput["spec"][number], i: number) => {
+  // fullSpan: F(minor) 홀수 개 그리드의 마지막 카드를 2열 전체로 확장(외톨이 반폭 카드 방지).
+  const renderCard = (s: CopyOutput["spec"][number], i: number, fullSpan?: boolean) => {
     const isSweetness = /(당도|Brix|brix)/.test(s.label)
     const sweetnessMatch = isSweetness && s.value
       ? s.value.trim().match(/^(\d+(?:\.\d+)?)\s*([A-Za-z가-힣]+)?/)
@@ -2919,6 +3009,7 @@ function SpecBlock({
       <div
         key={`spec-${i}`}
         style={{
+          gridColumn: fullSpan ? "1 / -1" : undefined,
           background: "#FFFFFF",
           border: `1px solid ${LINE}`,
           borderRadius: 14,
@@ -2996,25 +3087,39 @@ function SpecBlock({
             )
           })()
         ) : (
-          <div
-            style={{
-              fontSize: isMobile ? 22 : 40,
-              fontWeight: 800,
-              color: INK,
-              lineHeight: 1.35,
-              wordBreak: "keep-all",
-              fontFamily: BODY_FONT,
-              letterSpacing: -0.3,
-            }}
-          >
-            <EditableResultText
-              copy={copy}
-              onChange={onCopyChange}
-              path={["spec", i, "value"]}
-              maxLength={100}
-              placeholder={s.label}
-            />
-          </div>
+          (() => {
+            // B5: 공백 없는 12자+ 식별자(예: GAP-2026-0412)는 폰트 축소 + 한 줄 유지로 꺾임 방지.
+            const longestToken = (s.value ?? "")
+              .split(/\s+/)
+              .reduce((max, tok) => Math.max(max, tok.length), 0)
+            const isLongId = longestToken >= 12
+            const baseSize = isMobile ? 22 : 40
+            return (
+              <div
+                style={{
+                  fontSize: isLongId ? (isMobile ? 15 : 26) : baseSize,
+                  fontWeight: 800,
+                  color: INK,
+                  lineHeight: 1.35,
+                  // 긴 식별자는 어떤 위치에서도 안 꺾이게(nowrap), 일반 값은 keep-all.
+                  wordBreak: "keep-all",
+                  whiteSpace: isLongId ? "nowrap" : undefined,
+                  overflow: isLongId ? "hidden" : undefined,
+                  textOverflow: isLongId ? "ellipsis" : undefined,
+                  fontFamily: BODY_FONT,
+                  letterSpacing: -0.3,
+                }}
+              >
+                <EditableResultText
+                  copy={copy}
+                  onChange={onCopyChange}
+                  path={["spec", i, "value"]}
+                  maxLength={100}
+                  placeholder={s.label}
+                />
+              </div>
+            )
+          })()
         )}
       </div>
     )
@@ -3043,7 +3148,16 @@ function SpecBlock({
               }}
             >
               {/* v2.3: 이모지 아이콘 삭제, 카드 테두리 얇은 회색, 라벨/값 리듬 통일 */}
-              {gridSpecs.map(({ s, i }) => renderCard(s, i))}
+              {/* F(minor): 2열 그리드에서 홀수 개면 마지막 카드를 풀폭으로. */}
+              {gridSpecs.map(({ s, i }, gi) =>
+                renderCard(
+                  s,
+                  i,
+                  gridSpecs.length > 1 &&
+                    gridSpecs.length % 2 === 1 &&
+                    gi === gridSpecs.length - 1,
+                ),
+              )}
             </div>
           )}
         </div>
@@ -3078,12 +3192,15 @@ function KeyPointsBig({
   onCopyChange,
   pointImageFor,
   isMobile,
+  noun,
 }: {
   points: CopyKeyPoint[]
   copy: CopyOutput
   onCopyChange: (next: CopyOutput) => void
   pointImageFor: (idx: number) => UploadedImage | undefined
   isMobile: boolean
+  /** A3: 카테고리 명사 — 섹션 제목의 {noun} 치환. */
+  noun: string
 }) {
   const accent = useAccent()
   return (
@@ -3124,7 +3241,9 @@ function KeyPointsBig({
             letterSpacing: -1.5,
           }}
         >
-          {t.detail.result.keyPointsSectionTitle}
+          {t.detail.result.keyPointsSectionTitle
+            .replace("{noun}", noun)
+            .replace("{josa}", subjectJosa(noun))}
         </h2>
       </div>
 
@@ -3571,10 +3690,16 @@ function SizeDiagramBlock({
   productName,
   weight,
   isMobile,
+  noun,
+  hasSizeMention,
 }: {
   productName?: string
   weight?: string
   isMobile: boolean
+  /** A3: 카테고리 명사 — 편차 안내 문구의 {noun} 치환. */
+  noun: string
+  /** D17: 입력 faq/cautions에 "크기" 항목이 이미 있으면 편차 안내 박스 생략. */
+  hasSizeMention?: boolean
 }) {
   const accent = useAccent()
   const sr = t.detail.result.sizeRef
@@ -3670,25 +3795,28 @@ function SizeDiagramBlock({
           </div>
         )}
 
-        {/* 정직한 편차 안내 — 개수 환산이 있을 때만 그 편차를, 아니면 크기 편차 문구 */}
-        <div
-          style={{
-            padding: isMobile ? "18px 20px" : "26px 32px",
-            background: BG_SOFT,
-            border: `1px solid ${LINE}`,
-            borderRadius: 12,
-            fontSize: isMobile ? 18 : 30,
-            color: SUB,
-            lineHeight: 1.7,
-            fontFamily: BODY_FONT,
-          }}
-        >
-          <strong style={{ color: INK }}>꼭 확인해 주세요</strong>
-          <br />
-          {boxCountLabel
-            ? sr.deviation
-            : "과일 특성상 크기가 일정하지 않아요. 실제 크기와 외형에 다소 차이가 있을 수 있으니 참고 부탁드려요."}
-        </div>
+        {/* 정직한 편차 안내 — 개수 환산이 있을 때만 그 편차를, 아니면 크기 편차 문구.
+            D17: 입력 faq/cautions에 "크기" 항목이 이미 있으면 이 보일러플레이트 박스는 생략. */}
+        {!hasSizeMention && (
+          <div
+            style={{
+              padding: isMobile ? "18px 20px" : "26px 32px",
+              background: BG_SOFT,
+              border: `1px solid ${LINE}`,
+              borderRadius: 12,
+              fontSize: isMobile ? 18 : 30,
+              color: SUB,
+              lineHeight: 1.7,
+              fontFamily: BODY_FONT,
+            }}
+          >
+            <strong style={{ color: INK }}>꼭 확인해 주세요</strong>
+            <br />
+            {boxCountLabel
+              ? sr.deviation.replace("{noun}", noun)
+              : sr.deviationSize.replace("{noun}", noun)}
+          </div>
+        )}
       </div>
     </>
   )
@@ -3705,13 +3833,20 @@ function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: b
   const accent = useAccent()
   const sameDay = !!trust?.sameDayHarvest
   const cold = !!trust?.coldChain
+  // C9: "산지 수확"은 directFromFarm/sameDayHarvest 없으면 "수확 후 준비"로 (미검증 산지 단정 방지).
+  const fromFarm = sameDay || !!trust?.directFromFarm
   const steps = [
     {
-      title: "산지 수확",
-      desc: sameDay ? "아침 일찍 산지에서 그날 딴 것만" : "산지에서 수확한 신선한 상품을",
+      title: fromFarm ? "산지 수확" : "수확 후 준비",
+      desc: sameDay
+        ? "아침 일찍 산지에서 그날 딴 것만"
+        : fromFarm
+          ? "산지에서 수확한 신선한 상품을"
+          : "수확한 신선한 상품을",
     },
     {
-      title: "손 선별·포장",
+      // F(minor): "손 선별·포장" → "손 선별"(다음 STEP '포장·출고'와 '포장' 중복 정리).
+      title: "손 선별",
       desc: sameDay ? "상태 좋은 것만 하나씩 골라 당일 포장" : "상태 좋은 것만 하나씩 골라 포장",
     },
     {
@@ -4022,55 +4157,6 @@ function DeliveryBlock({ isMobile, trust }: { isMobile: boolean; trust?: TrustIn
   )
 }
 
-function TrustBadgesRow({ trust, isMobile }: { trust: TrustInfo; isMobile: boolean }) {
-  const items: string[] = []
-  if (trust.sameDayHarvest) items.push("당일 수확·발송")
-  if (trust.coldChain) items.push("콜드체인 배송")
-  if (trust.directFromFarm) items.push("산지 직거래")
-  if (trust.refundGuarantee) items.push("환불 보장")
-  if (trust.gapNumber?.trim()) items.push("GAP 인증")
-  if (trust.organicNumber?.trim()) items.push("친환경 인증")
-  if (trust.pesticideFreeNumber?.trim()) items.push("무농약 인증")
-  if (trust.harvestDateLabel?.trim())
-    items.push(`수확 ${trust.harvestDateLabel.trim()}`)
-
-  if (items.length === 0) return null
-
-  // v2.4: 이모지·dashed·회전 도트 삭제 → 흰 배경 미니멀 칩 (컬리·오늘의집 톤)
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexWrap: "wrap",
-        gap: isMobile ? 7 : 10,
-        padding: isMobile ? "16px 24px 24px" : "20px 40px 32px",
-        justifyContent: "center",
-        borderBottom: `1px solid ${LINE}`,
-      }}
-    >
-      {items.map((label, i) => (
-        <span
-          key={`tb-${i}`}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            padding: isMobile ? "6px 12px" : "9px 18px",
-            background: "#FFFFFF",
-            border: `1px solid ${LINE}`,
-            color: SUB,
-            borderRadius: 999,
-            fontSize: isMobile ? 14 : 24,
-            fontWeight: 600,
-            fontFamily: BODY_FONT,
-          }}
-        >
-          {label}
-        </span>
-      ))}
-    </div>
-  )
-}
-
 function RecommendForBlock({
   items,
   isMobile,
@@ -4174,70 +4260,56 @@ function ReviewsBlock({
         }}
       >
         {reviews.map((r, i) => {
-          // v3.4(지시5): highlight가 본문에 실제 포함될 때만 발췌 오버랩 박스(proj1).
-          // accent 아웃라인 + 흰 배경 박스를 살짝 회전·겹침. 지어내지 않고 원문 발췌만.
+          // A1(장치 단일화): 인라인 형광펜 제거 — 본문은 강조 없는 평문.
+          // highlight가 본문에 실제 포함될 때만 발췌 콜아웃을 카드 "본문 흐름 내"
+          // (하단, 살짝 회전)에 배치한다. absolute 겹침 폐기 — 본문을 절대 가리지 않는다.
           const hi = r.highlight?.trim()
           const showPull = !!hi && r.text.includes(hi)
           const tilt = i % 2 === 0 ? "rotate(-1.5deg)" : "rotate(1.5deg)"
           return (
-            <div key={`review-${i}`} style={{ position: "relative" }}>
-              <div
+            <div
+              key={`review-${i}`}
+              style={{
+                background: "#FFFFFF",
+                borderRadius: 16,
+                border: `1px solid ${accent.soft}`,
+                boxShadow: `0 4px 16px ${accent.accent}10`,
+                padding: isMobile ? "24px 24px" : "40px 44px",
+                display: "flex",
+                flexDirection: "column",
+                gap: isMobile ? 12 : 18,
+              }}
+            >
+              {/* 별 5개 — D18: 셀러 입력에 별점 필드가 없어 자동 생성이므로 렌더 제거.
+                  (셀러 입력 필드 생기면 부활) */}
+              {/* 후기 본문 — 강조 없는 평문(A1: 인라인 형광펜 제거). */}
+              <p
                 style={{
-                  background: "#FFFFFF",
-                  borderRadius: 16,
-                  border: `1px solid ${accent.soft}`,
-                  boxShadow: `0 4px 16px ${accent.accent}10`,
-                  padding: isMobile ? "24px 24px" : "40px 44px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: isMobile ? 12 : 18,
+                  fontSize: isMobile ? 20 : 34,
+                  color: INK,
+                  lineHeight: 1.6,
+                  margin: 0,
+                  fontFamily: BODY_FONT,
+                  fontWeight: 500,
+                  wordBreak: "keep-all",
+                  whiteSpace: "pre-line",
                 }}
               >
-                {/* 별 5개 — 항상 5점(셀러가 대표 후기로 고른 것). accent 색 채움. */}
-                <div
-                  aria-hidden
-                  style={{
-                    display: "flex",
-                    gap: isMobile ? 3 : 5,
-                    fontSize: isMobile ? 20 : 32,
-                    color: accent.accent,
-                    lineHeight: 1,
-                  }}
-                >
-                  {"★★★★★"}
-                </div>
-                {/* 후기 본문 — highlight가 본문에 포함되면 그 부분만 형광펜 강조. */}
-                <p
-                  style={{
-                    fontSize: isMobile ? 20 : 34,
-                    color: INK,
-                    lineHeight: 1.6,
-                    margin: 0,
-                    fontFamily: BODY_FONT,
-                    fontWeight: 500,
-                    wordBreak: "keep-all",
-                    whiteSpace: "pre-line",
-                  }}
-                >
-                  <ReviewBody text={r.text} highlight={r.highlight} accent={accent} />
-                </p>
-              </div>
+                {r.text}
+              </p>
 
-              {/* 발췌 오버랩 박스 — 카드 오른쪽 아래에 살짝 겹쳐 회전 배치 (proj1) */}
+              {/* 발췌 콜아웃 — 본문 아래 흐름 내 배치, 살짝 회전 유지. 본문 안 가림(A1). */}
               {showPull && (
                 <div
                   style={{
-                    position: "absolute",
-                    right: isMobile ? 12 : 28,
-                    bottom: isMobile ? -18 : -26,
+                    alignSelf: i % 2 === 0 ? "flex-start" : "flex-end",
                     transform: tilt,
-                    maxWidth: "78%",
+                    maxWidth: "86%",
                     background: "#FFFFFF",
                     border: `2px solid ${accent.accent}`,
                     borderRadius: 10,
                     padding: isMobile ? "10px 16px" : "16px 26px",
                     boxShadow: `0 6px 18px ${accent.accent}22`,
-                    zIndex: 2,
                   }}
                 >
                   <span
@@ -4260,46 +4332,6 @@ function ReviewsBlock({
         })}
       </div>
     </div>
-  )
-}
-
-/**
- * 후기 본문 렌더 — highlight가 text에 실제 포함될 때만 그 부분을 accent 배경
- * 형광펜(진한 글씨)으로 강조한다. 포함되지 않으면 본문 그대로(강조 없음).
- * 첫 등장 1회만 강조(과도 방지).
- */
-function ReviewBody({
-  text,
-  highlight,
-  accent,
-}: {
-  text: string
-  highlight?: string
-  accent: AccentPalette
-}) {
-  const hi = highlight?.trim()
-  const idx = hi ? text.indexOf(hi) : -1
-  if (!hi || idx < 0) return <>{text}</>
-  const before = text.slice(0, idx)
-  const after = text.slice(idx + hi.length)
-  return (
-    <>
-      {before}
-      <span
-        style={{
-          background: accent.soft,
-          color: accent.dark,
-          fontWeight: 800,
-          padding: "0.1em 0.25em",
-          borderRadius: 4,
-          boxDecorationBreak: "clone",
-          WebkitBoxDecorationBreak: "clone",
-        }}
-      >
-        {hi}
-      </span>
-      {after}
-    </>
   )
 }
 
@@ -4342,6 +4374,8 @@ function FarmStoryBlock({
             region={trust!.producerRegion ?? ""}
             years={trust!.farmerYears ?? 0}
             photoUrl={trust!.farmerPhotoUrl}
+            accentColor={accent.accent}
+            accentSoft={accent.soft}
           />
         </div>
       )}
@@ -4398,7 +4432,16 @@ function FarmStoryBlock({
   )
 }
 
-function ReturnsBlock({ isMobile }: { isMobile: boolean }) {
+function ReturnsBlock({ isMobile, trust }: { isMobile: boolean; trust?: TrustInfo }) {
+  // C11: 환불 신청 기한 — refundGuarantee.windowHours 입력이 있으면 그 값으로,
+  // 없으면 "수령 당일". condition만 있고 windowHours가 없으면 기본 문구 유지(시간 값 없음).
+  const rg = trust?.refundGuarantee
+  const windowHours =
+    typeof rg === "object" && rg.windowHours && rg.windowHours > 0 ? rg.windowHours : null
+  const windowText = windowHours
+    ? t.detail.result.returnsWindowHours.replace("{hours}", String(windowHours))
+    : t.detail.result.returnsWindowDefault
+  const body = t.detail.result.returnsBody.replace("{window}", windowText)
   return (
     <div
       style={{
@@ -4425,7 +4468,7 @@ function ReturnsBlock({ isMobile }: { isMobile: boolean }) {
             fontFamily: BODY_FONT,
           }}
         >
-          {t.detail.result.returnsBody}
+          {body}
         </p>
       </div>
     </div>
@@ -4434,15 +4477,26 @@ function ReturnsBlock({ isMobile }: { isMobile: boolean }) {
 
 function CautionsBlock({
   cautions,
+  copy,
   isMobile,
 }: {
   cautions: string[]
+  /** D17 dedupe용 — faq 답변·storage와 정확 일치 항목 제거. */
+  copy: CopyOutput
   isMobile: boolean
 }) {
+  // D17: cautions 항목이 faq 답변(a) 또는 storage와 트림 기준 정확 일치하면 렌더 생략.
+  const dupeSet = new Set<string>()
+  if (copy.storage?.trim()) dupeSet.add(copy.storage.trim())
+  for (const f of copy.faq ?? []) {
+    if (f.a?.trim()) dupeSet.add(f.a.trim())
+  }
+  const shownCautions = cautions.filter((c) => c.trim() && !dupeSet.has(c.trim()))
   return (
     <div
       style={{
-        padding: isMobile ? "44px 24px 52px" : "96px 44px 120px",
+        // F(minor): 페이지 말미 과잉 공백 축소 (06·07·08).
+        padding: isMobile ? "44px 24px 40px" : "96px 44px 72px",
         background: "#FFFFFF",
       }}
     >
@@ -4461,13 +4515,13 @@ function CautionsBlock({
             color: SUB,
             lineHeight: 1.7,
             margin: 0,
-            marginBottom: cautions.length > 0 ? (isMobile ? 20 : 28) : 0,
+            marginBottom: shownCautions.length > 0 ? (isMobile ? 20 : 28) : 0,
             fontFamily: BODY_FONT,
           }}
         >
           {t.detail.result.cautionsAutoNotice}
         </p>
-        {cautions.length > 0 && (
+        {shownCautions.length > 0 && (
           <>
             <h3
               style={{
@@ -4490,7 +4544,7 @@ function CautionsBlock({
                 gap: isMobile ? 8 : 12,
               }}
             >
-              {cautions.map((c, i) => (
+              {shownCautions.map((c, i) => (
                 <li
                   key={`c-${i}`}
                   style={{

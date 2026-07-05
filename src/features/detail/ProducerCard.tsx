@@ -14,9 +14,21 @@ interface ProducerCardProps {
   photoUrl?: string
   /** 한 줄 소개 (선택). */
   oneLine?: string
+  /** F(minor): 과일 축색 — 아바타 배경·연차 강조에 사용. 미지정 시 중립 회색. */
+  accentColor?: string
+  /** accentColor의 아주 옅은 틴트 — 아바타 배경 그라디언트용. */
+  accentSoft?: string
 }
 
-export function ProducerCard({ name, region, years, photoUrl, oneLine }: ProducerCardProps) {
+export function ProducerCard({
+  name,
+  region,
+  years,
+  photoUrl,
+  oneLine,
+  accentColor = "#495057",
+  accentSoft = "#F1F3F5",
+}: ProducerCardProps) {
   return (
     <div
       style={{
@@ -38,7 +50,7 @@ export function ProducerCard({ name, region, years, photoUrl, oneLine }: Produce
           overflow: "hidden",
           border: "4px solid #FFFFFF",
           boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
-          background: "linear-gradient(135deg, #FFF8E7 0%, #E8F5E9 100%)",
+          background: `linear-gradient(135deg, ${accentSoft} 0%, #FFFFFF 100%)`,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -52,7 +64,7 @@ export function ProducerCard({ name, region, years, photoUrl, oneLine }: Produce
             style={{ width: "100%", height: "100%", objectFit: "cover" }}
           />
         ) : (
-          <DefaultFarmerSvg />
+          <DefaultFarmerSvg color={accentColor} />
         )}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -76,9 +88,12 @@ export function ProducerCard({ name, region, years, photoUrl, oneLine }: Produce
             gap: 10,
           }}
         >
-          <span>{region}</span>
-          <span style={{ color: "#ADB5BD" }}>·</span>
-          <span style={{ color: "#E03131", fontWeight: 700 }}>{years}년차</span>
+          {region && <span>{region}</span>}
+          {/* A2: 연차가 없거나 0이면 연차 표기 자체 생략 (0년차 렌더 방지). */}
+          {region && years > 0 && <span style={{ color: "#ADB5BD" }}>·</span>}
+          {years > 0 && (
+            <span style={{ color: accentColor, fontWeight: 700 }}>{years}년차</span>
+          )}
         </div>
         {oneLine && (
           <p
@@ -97,12 +112,12 @@ export function ProducerCard({ name, region, years, photoUrl, oneLine }: Produce
   )
 }
 
-function DefaultFarmerSvg() {
+function DefaultFarmerSvg({ color = "#52C41A" }: { color?: string }) {
   return (
     <svg width="56" height="56" viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
         d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"
-        fill="#52C41A"
+        fill={color}
       />
     </svg>
   )

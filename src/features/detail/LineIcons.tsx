@@ -138,6 +138,58 @@ export function ShieldIcon(props: LineIconProps) {
   )
 }
 
+/** 당도(Brix) — 물방울(과즙 한 방울). */
+export function BrixIcon(props: LineIconProps) {
+  return (
+    <IconFrame {...props}>
+      {/* 물방울 외곽 (위 뾰족, 아래 둥근) */}
+      <path d="M12 3.5 C12 3.5 5.5 11 5.5 15 a6.5 6.5 0 0 0 13 0 C18.5 11 12 3.5 12 3.5 Z" />
+      {/* 안쪽 하이라이트 (반짝임) */}
+      <path d="M9.5 15.5 a2.5 2.5 0 0 0 2 2.3" />
+    </IconFrame>
+  )
+}
+
+/** 산지 — 지도 핀(원산지 위치). */
+export function MapPinIcon(props: LineIconProps) {
+  return (
+    <IconFrame {...props}>
+      {/* 핀 외곽 (물방울형 + 아래 꼭지) */}
+      <path d="M12 21 C12 21 5 14.5 5 9.5 a7 7 0 0 1 14 0 C19 14.5 12 21 12 21 Z" />
+      {/* 핀 중앙 원 */}
+      <circle cx="12" cy="9.5" r="2.4" />
+    </IconFrame>
+  )
+}
+
+/** 중량 — 양팔 저울(무게 표기). */
+export function ScaleIcon(props: LineIconProps) {
+  return (
+    <IconFrame {...props}>
+      {/* 기둥 + 팔 */}
+      <path d="M12 4 V19 M5 7 H19 M12 5.4 a1.1 1.1 0 1 0 0 2.2 a1.1 1.1 0 0 0 0 -2.2" />
+      {/* 받침대 */}
+      <path d="M8.5 19 H15.5" />
+      {/* 왼쪽 접시 (줄 + 그릇) */}
+      <path d="M5 7 L2.8 12 h4.4 Z" />
+      {/* 오른쪽 접시 */}
+      <path d="M19 7 L16.8 12 h4.4 Z" />
+    </IconFrame>
+  )
+}
+
+/** 품종 — 잎사귀(품종/신선). */
+export function LeafIcon(props: LineIconProps) {
+  return (
+    <IconFrame {...props}>
+      {/* 잎 외곽 */}
+      <path d="M5 19 C5 11 11 5 19 5 C19 13 13 19 5 19 Z" />
+      {/* 잎맥 */}
+      <path d="M5 19 C9 15 13 11 17 7" />
+    </IconFrame>
+  )
+}
+
 /**
  * DeliveryFlow 4단계 스텝 아이콘 매핑 (순서 고정).
  * 0 수확 · 1 선별/포장 · 2 출고 · 3 도착.

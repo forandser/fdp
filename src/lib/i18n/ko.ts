@@ -187,7 +187,8 @@ export const ko = {
       whatsDifferentTitle: "왜 여기서 살까요?",
       whatsDifferentHint: "핵심 포인트 3개만 기억해 주세요.",
       pointLabel: "포인트",
-      keyPointsSectionTitle: "이 과일이 특별한 이유",
+      /** {noun} = 카테고리 명사(과일/채소/상품), {josa} = 이/가 — ResultView가 category로 치환. */
+      keyPointsSectionTitle: "이 {noun}{josa} 특별한 이유",
       story: "상품 이야기",
       spec: "상품 정보",
       storage: "보관·먹는 법",
@@ -205,14 +206,17 @@ export const ko = {
       deliverySameDayNote: "평일 오후 이른 주문은 당일 발송을 도와드려요. (수확·물량 상황에 따라 익일 발송될 수 있어요.)",
       /** Hero CTA 직후 배송 약속 밴드 — 강한 약속(sameDayHarvest 체크 시)/안전 문구(기본). */
       deliveryPromise: {
-        strong: "주문 다음 날, 수확한 그대로 문 앞에",
+        // C7: "주문 다음 날 문 앞"은 익일 도착 약속(불가) + 배송안내와 모순 → 중립 신선 준비 문구로.
+        strong: "그날 수확한 것만 가장 신선한 상태로 준비해 발송해요",
         safe: "주문 확인 후 가장 신선한 상태로 준비해 발송해요",
       },
       /** 당도 기준선 바 라벨. */
       brixScale: {
-        good: "맛있다 기준",
+        // C8: "맛있다 기준"→순화, "품종 최대"는 검증 불가 단정이라 삭제(마커/라벨 제거).
+        good: "일반적인 맛 기준 (참고)",
         ceiling: "품종 최대",
         ours: "우리 {brix}",
+        caption: "품종 일반 정보 참고, 개체차 있음",
       },
       /** 중량 → 개수 환산 행 (개당 무게 데이터 있을 때만). */
       countEstimate: {
@@ -224,21 +228,29 @@ export const ko = {
         photoCaption: "실제 크기 참고 (배송 상품 사진)",
         perPiece: "개당 평균 약 {g}g",
         boxCount: "{weight} 기준 약 {count}",
-        deviation: "과일 특성상 크기가 일정하지 않아, 개수는 상황에 따라 1~2과 차이가 날 수 있어요.",
+        // A3: {noun}=카테고리 명사. "1~2과"→"1~2개"(채소·기타 호환).
+        deviation: "{noun} 특성상 크기가 일정하지 않아, 개수는 상황에 따라 1~2개 차이가 날 수 있어요.",
+        deviationSize: "{noun} 특성상 크기가 일정하지 않아요. 실제 크기와 외형에 다소 차이가 있을 수 있으니 참고 부탁드려요.",
       },
       /** 상단 가치 제안 스트립 라벨 — 강한 주장(체크 시)/안전 문구(기본) 구분. */
       valueProp: {
         directFromFarm: "산지 직송",
         carefulSort: "꼼꼼 선별",
         freshPack: "신선 포장",
+        carefulPack: "정성 포장",
         sameDayHarvest: "당일 수확",
         refund: "100% 환불",
+        refundConditional: "조건부 교환·환불",
         coldChain: "콜드체인",
         sealed: "봉인 포장",
       },
       returnsTitle: "교환·환불 안내",
-      returnsBody: "받으신 상품에 파손·변질·오배송이 있다면 수령 당일 사진 1~2장과 함께 카카오톡이나 문자로 알려주세요.\n\n확인되는 즉시 재발송 또는 환불로 처리해 드립니다. 왕복 배송 중 신선도가 크게 저하되어 단순 변심 반품은 어려운 점 양해 부탁드려요.",
-      cautionsAutoNotice: "한 그루에서 딴 열매도 색과 크기, 당도가 조금씩 달라요. 자연이 그해에 만든 결과이니 너그럽게 이해 부탁드립니다.",
+      // C11: {window}는 refundGuarantee.windowHours/condition 입력이 있으면 그 값, 없으면 "수령 당일".
+      returnsBody: "받으신 상품에 파손·변질·오배송이 있다면 {window} 사진 1~2장과 함께 카카오톡이나 문자로 알려주세요.\n\n확인되는 즉시 재발송 또는 환불로 처리해 드립니다. 왕복 배송 중 신선도가 크게 저하되어 단순 변심 반품은 어려운 점 양해 부탁드려요.",
+      returnsWindowDefault: "수령 당일",
+      returnsWindowHours: "수령 후 {hours}시간 안에",
+      // A3: "한 그루에서 딴..." 고정 문단 삭제(딸기·채소에 틀리고 cautions와 중복). 중립 신선식품 면책으로.
+      cautionsAutoNotice: "자연에서 자란 신선식품 특성상 색과 크기가 조금씩 다를 수 있어요. 너그럽게 이해 부탁드립니다.",
       priceLabel: "판매가",
       retry: "다시 만들기",
       edit: "편집하기 (다음 단계)",

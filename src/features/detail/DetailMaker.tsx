@@ -1151,6 +1151,7 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         price={liveResultMeta.priceNum}
         origin={liveResultMeta.origin}
         weight={liveResultMeta.weight}
+        category={currentInput?.category ?? category}
         trust={currentInput?.trust ?? trustForPreview}
         reviews={currentInput?.reviews ?? reviews}
         onCopyChange={handleCopyChange}
