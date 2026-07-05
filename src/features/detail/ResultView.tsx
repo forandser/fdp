@@ -96,6 +96,17 @@ function useAccent(): AccentPalette {
 interface ResultViewProps {
   copy: CopyOutput
   images: UploadedImage[]
+  /**
+   * v3.7: 포장 전용 슬롯 사진. 있으면 PackagingBlock("이렇게 배송되어요")에 그 사진 사용.
+   * 없으면(null/undefined) PackagingBlock 섹션 자체 미노출 — 일반 풀 사진으로 대체하지 않는다.
+   * 일반 풀(images)과 분리된 별도 입력이라 planImages 배정에 포함하지 않는다.
+   */
+  packagingImage?: UploadedImage | null
+  /**
+   * v3.7: 크기 비교 전용 슬롯 사진(손·동전·자와 함께). 있으면 크기 섹션에 사진 렌더.
+   * 없으면 크기 섹션은 기존 동작(무게 데이터 있으면 카드만, 없으면 미노출).
+   */
+  sizeImage?: UploadedImage | null
   productName: string
   price: number
   origin?: string
@@ -117,7 +128,7 @@ interface ResultViewProps {
 const RED = "#E03131" // 사이드바 편집 컨트롤용 브랜드 색 (내보내는 페이지엔 accent 사용)
 const INK = "#212529"
 const SUB = "#495057"
-const MUTE = "#868E96"
+const MUTE = "#6E7480"
 const BG_SOFT = "#F8F9FA"
 const LINE = "#E9ECEF"
 const PLACEHOLDER = "#ADB5BD"
@@ -163,6 +174,11 @@ export interface ImagePlan {
   whyBrand?: UploadedImage
   keyPoints: (UploadedImage | undefined)[]
   recipe: (UploadedImage | undefined)[]
+  /**
+   * v3.7: PackagingBlock은 전용 슬롯(packagingImage prop)만 쓰도록 바뀌어 이 배정을
+   * 더 이상 소비하지 않는다. 항상 undefined — 일반 풀 사진이 포장 섹션에 새어 들어가지
+   * 않게 한다(무관 사진 배정 사고 방지). 필드는 타입 안정성을 위해 남겨 둔다.
+   */
   packaging?: UploadedImage
   /** 크기 비교 블록용 — "실제 크기 참고" 사진 1장. 남는 사진이 없으면 undefined. */
   sizeRef?: UploadedImage
@@ -267,9 +283,10 @@ export function planImages(
     recipe.push(img)
   }
 
-  // 저순위 슬롯(packaging) — 남는 사진이 있을 때만. 없으면 undefined → 틴트 배경 렌더(규칙 ④).
-  // 히어로 재사용 폴백 제거 — 사진 부족 시 히어로를 packaging에 다시 붙이지 않는다.
-  const packaging = pickFeature()
+  // v3.7: packaging 슬롯 배정 제거 — PackagingBlock은 전용 슬롯(packagingImage prop)만
+  // 사용한다. 예전엔 여기서 pickFeature()로 풀 사진 1장을 포장 섹션에 배정해 "이렇게
+  // 배송되어요"에 포장과 무관한 사진이 붙는 사고가 났다. 이제 그 사진은 갤러리로 흘려보낸다.
+  const packaging = undefined
 
   // 갤러리 — 특징 슬롯에서 "아직 한 번도 안 쓴" rest 사진만 흡수한다.
   // (hero 및 특징 블록에 이미 노출된 사진은 넣지 않아 블록 간 중복 0.)
@@ -983,6 +1000,8 @@ function DeliveryPromiseBand({ isMobile, trust }: { isMobile: boolean; trust?: T
 export function ResultView({
   copy,
   images,
+  packagingImage,
+  sizeImage,
   productName,
   price: _price,
   origin,
@@ -1413,10 +1432,12 @@ export function ResultView({
               isMobile={isMobile}
             />
 
-            {/* 5a. 크기·중량 안내 — 사진/무게 데이터 있을 때만 (추상 원 제거) */}
+            {/* 5a. 크기·중량 안내 — 크기 전용 슬롯 사진 또는 무게 데이터가 있을 때만.
+                v3.7: sizeImage가 있으면 사진 + 무게카드, 없으면 기존 동작(무게 데이터만). */}
             <SizeDiagramBlock
               productName={productName}
               weight={weight}
+              sizeImage={sizeImage}
               isMobile={isMobile}
               noun={noun}
               hasSizeMention={hasSizeMention}
@@ -1483,14 +1504,18 @@ export function ResultView({
               </>
             )}
 
-            <DotDivider />
-
-            {/* v2.8: 8a. 배송 시 구성 (수플린 박스 이미지 레퍼런스) */}
-            <PackagingBlock
-              image={imagePlan.packaging}
-              weight={weight}
-              isMobile={isMobile}
-            />
+            {/* v3.7: 8a. 배송 시 구성 — 포장 전용 슬롯 사진이 있을 때만 노출.
+                포장 사진이 없으면 섹션 자체를 렌더하지 않는다(일반 풀 사진 대체 금지). */}
+            {packagingImage && (
+              <>
+                <DotDivider />
+                <PackagingBlock
+                  image={packagingImage}
+                  weight={weight}
+                  isMobile={isMobile}
+                />
+              </>
+            )}
 
             <DotDivider />
 
@@ -1682,7 +1707,7 @@ function WhyBrandCard({
   const name = productName.trim()
   return (
     // 상단 여백 확대: 돔 정점 원(overhang)이 이 섹션 위로 걸치므로 그만큼 비워둔다.
-    <div style={{ padding: isMobile ? "52px 24px 48px" : "96px 44px", background: "#FFFFFF" }}>
+    <div style={{ padding: isMobile ? "52px 24px 48px" : "76px 44px", background: "#FFFFFF" }}>
       <div
         style={{
           background: accent.soft,
@@ -3128,7 +3153,7 @@ function SpecBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "44px 24px" : "96px 44px",
+        padding: isMobile ? "44px 24px" : "76px 44px",
         background: veilTint(accent.soft),
       }}
     >
@@ -3447,7 +3472,7 @@ function StorageBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "44px 24px" : "96px 44px",
+        padding: isMobile ? "44px 24px" : "76px 44px",
         background: "#FFFFFF",
       }}
     >
@@ -3474,12 +3499,12 @@ function StorageBlock({
                   columnGap: isMobile ? 12 : 22,
                 }}
               >
-                {/* 왼쪽: STEP 라벨 + 점 + 세로 연결선 */}
+                {/* 왼쪽: STEP 라벨 + 점 + 세로 연결선 — 라벨·점·선을 열 중앙 정렬 */}
                 <div
                   style={{
                     display: "flex",
                     flexDirection: "column",
-                    alignItems: "flex-start",
+                    alignItems: "center",
                     position: "relative",
                   }}
                 >
@@ -3508,13 +3533,14 @@ function StorageBlock({
                       flexShrink: 0,
                     }}
                   />
-                  {/* 세로 연결선 (마지막 단계 제외) */}
+                  {/* 세로 연결선 (마지막 단계 제외) — 점과 같은 축(열 중앙) */}
                   {!last && (
                     <span
                       aria-hidden
                       style={{
                         position: "absolute",
-                        left: (dot - (isMobile ? 2 : 3)) / 2,
+                        left: "50%",
+                        marginLeft: isMobile ? -1 : -1.5,
                         top: (isMobile ? 24 : 40) + dot,
                         bottom: 0,
                         width: isMobile ? 2 : 3,
@@ -3607,7 +3633,7 @@ function FaqBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "44px 24px" : "96px 44px",
+        padding: isMobile ? "44px 24px" : "76px 44px",
         background: "#FFFFFF",
       }}
     >
@@ -3689,12 +3715,15 @@ function FaqBlock({
 function SizeDiagramBlock({
   productName,
   weight,
+  sizeImage,
   isMobile,
   noun,
   hasSizeMention,
 }: {
   productName?: string
   weight?: string
+  /** v3.7: 크기 비교 전용 슬롯 사진(손·동전·자와 함께). 있으면 무게카드 위에 렌더. */
+  sizeImage?: UploadedImage | null
   isMobile: boolean
   /** A3: 카테고리 명사 — 편차 안내 문구의 {noun} 치환. */
   noun: string
@@ -3714,14 +3743,15 @@ function SizeDiagramBlock({
       ? sr.boxCount.replace("{weight}", weight.trim()).replace("{count}", boxCount)
       : null
 
-  // 무게 데이터가 없으면 렌더하지 않음.
+  // v3.7: 크기 전용 사진이 있거나 무게 데이터가 있을 때만 렌더.
+  // 둘 다 없으면 기존과 동일하게 섹션 자체를 렌더하지 않는다.
   const hasWeightInfo = !!weight?.trim() || perPieceLabel != null
-  if (!hasWeightInfo) return null
+  if (!hasWeightInfo && !sizeImage) return null
 
   return (
     <>
       <DotDivider />
-      <div style={{ padding: isMobile ? "44px 24px" : "96px 44px", background: "#FFFFFF" }}>
+      <div style={{ padding: isMobile ? "44px 24px" : "76px 44px", background: "#FFFFFF" }}>
         <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 10 : 14, marginBottom: isMobile ? 24 : 36 }}>
           <span
             aria-hidden
@@ -3755,6 +3785,26 @@ function SizeDiagramBlock({
             {name} 크기가 <span style={{ color: accent.accent }}>궁금해요</span>
           </h2>
         </div>
+
+        {/* v3.7: 크기 비교 전용 슬롯 사진 — 있을 때만. 손·동전·자와 함께 찍은 실사진.
+            captureRef 내부라 인라인 style + hex 상수만 사용(필터/CSS 변수 없음). */}
+        {sizeImage && (
+          <div
+            style={{
+              borderRadius: 12,
+              overflow: "hidden",
+              marginBottom: isMobile ? 20 : 28,
+              boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={sizeImage.url}
+              alt={`${name} 실제 크기 참고`}
+              style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", display: "block" }}
+            />
+          </div>
+        )}
 
         {/* 무게·개수 카드 — 개당 g / 박스 개수 환산 / 중량 (있는 행만) */}
         {(perPieceLabel || boxCountLabel || weight?.trim()) && (
@@ -3856,7 +3906,7 @@ function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: b
     { title: "문 앞 도착", desc: "완충 포장으로 신선하게 문 앞까지" },
   ]
   return (
-    <div style={{ padding: isMobile ? "52px 24px" : "104px 44px", background: veilTint(accent.soft) }}>
+    <div style={{ padding: isMobile ? "52px 24px" : "80px 44px", background: veilTint(accent.soft) }}>
       <div style={{ textAlign: "center", marginBottom: isMobile ? 32 : 48 }}>
         <div
           style={{
@@ -4020,7 +4070,7 @@ function PackagingBlock({
 }) {
   const accent = useAccent()
   return (
-    <div style={{ padding: isMobile ? "52px 24px" : "104px 44px", background: "#FFFFFF" }}>
+    <div style={{ padding: isMobile ? "52px 24px" : "80px 44px", background: "#FFFFFF" }}>
       <div style={{ textAlign: "center", marginBottom: isMobile ? 32 : 48 }}>
         <div
           style={{
@@ -4126,7 +4176,7 @@ function DeliveryBlock({ isMobile, trust }: { isMobile: boolean; trust?: TrustIn
   return (
     <div
       style={{
-        padding: isMobile ? "44px 24px" : "96px 44px",
+        padding: isMobile ? "44px 24px" : "76px 44px",
         background: "#FFFFFF",
       }}
     >
@@ -4168,7 +4218,7 @@ function RecommendForBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "48px 24px" : "104px 44px",
+        padding: isMobile ? "48px 24px" : "80px 44px",
         background: "#FFFFFF",
       }}
     >
@@ -4249,7 +4299,7 @@ function ReviewsBlock({
 }) {
   const accent = useAccent()
   return (
-    <div style={{ padding: isMobile ? "48px 24px" : "104px 44px", background: veilTint(accent.soft) }}>
+    <div style={{ padding: isMobile ? "48px 24px" : "80px 44px", background: veilTint(accent.soft) }}>
       <SectionTitle title={t.detail.result.reviews.title} isMobile={isMobile} />
       <div
         style={{
@@ -4360,7 +4410,7 @@ function FarmStoryBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "48px 24px" : "104px 44px",
+        padding: isMobile ? "48px 24px" : "80px 44px",
         background: "#FFFFFF",
       }}
     >
@@ -4382,7 +4432,7 @@ function FarmStoryBlock({
 
       <div
         style={{
-          padding: isMobile ? "32px 26px" : "56px 60px",
+          padding: isMobile ? "28px 26px" : "44px 52px",
           background: accent.soft,
           borderRadius: 14,
           border: `1px solid ${accent.soft}`,
@@ -4410,7 +4460,7 @@ function FarmStoryBlock({
                 letterSpacing: -0.3,
               }}
             >
-              {farmStory}
+              {farmStory.replace(/\n{2,}/g, "\n").trim()}
             </p>
             {farmerMeta && (
               <p
@@ -4445,7 +4495,7 @@ function ReturnsBlock({ isMobile, trust }: { isMobile: boolean; trust?: TrustInf
   return (
     <div
       style={{
-        padding: isMobile ? "44px 24px" : "96px 44px",
+        padding: isMobile ? "44px 24px" : "76px 44px",
         background: "#FFFFFF",
       }}
     >
@@ -4496,7 +4546,7 @@ function CautionsBlock({
     <div
       style={{
         // F(minor): 페이지 말미 과잉 공백 축소 (06·07·08).
-        padding: isMobile ? "44px 24px 40px" : "96px 44px 72px",
+        padding: isMobile ? "44px 24px 40px" : "76px 44px 72px",
         background: "#FFFFFF",
       }}
     >

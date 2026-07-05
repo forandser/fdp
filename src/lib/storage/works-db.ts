@@ -23,6 +23,16 @@ export interface Work {
   copy: CopyOutput | null
   /** 원본 이미지 Blob 배열(IndexedDB가 Blob 직렬화를 지원). */
   imageBlobs: Blob[]
+  /**
+   * v3.7: 포장 전용 슬롯 사진(PackagingBlock "이렇게 배송되어요"). 일반 풀과 분리 저장.
+   * 구버전 저장본엔 없음(옵셔널 — 하위호환). 없거나 null이면 포장 섹션 미노출.
+   */
+  packagingBlob?: Blob | null
+  /**
+   * v3.7: 크기 비교 전용 슬롯 사진(손·동전·자와 함께). 일반 풀과 분리 저장.
+   * 구버전 저장본엔 없음(옵셔널 — 하위호환). 없거나 null이면 크기 섹션은 무게 데이터만.
+   */
+  sizeBlob?: Blob | null
 }
 
 export interface WorkSummary {
@@ -103,6 +113,10 @@ export interface WorkBackupItem {
   input: CopyInput
   copy: CopyOutput | null
   imagesBase64: string[]
+  /** v3.7: 포장 전용 슬롯 사진 base64(dataURL). 없으면 생략(하위호환). */
+  packagingBase64?: string | null
+  /** v3.7: 크기 비교 전용 슬롯 사진 base64(dataURL). 없으면 생략(하위호환). */
+  sizeBase64?: string | null
 }
 export interface WorkBackup {
   format: "fdp-backup"
@@ -142,6 +156,23 @@ export async function exportAllWorksToJson(): Promise<WorkBackup> {
         // skip
       }
     }
+    // v3.7: 전용 슬롯 사진도 base64로 백업(있을 때만).
+    let packagingBase64: string | null = null
+    if (w.packagingBlob) {
+      try {
+        packagingBase64 = await blobToDataUrl(w.packagingBlob)
+      } catch {
+        packagingBase64 = null
+      }
+    }
+    let sizeBase64: string | null = null
+    if (w.sizeBlob) {
+      try {
+        sizeBase64 = await blobToDataUrl(w.sizeBlob)
+      } catch {
+        sizeBase64 = null
+      }
+    }
     items.push({
       id: w.id,
       createdAt: w.createdAt,
@@ -151,6 +182,8 @@ export async function exportAllWorksToJson(): Promise<WorkBackup> {
       input: w.input,
       copy: w.copy,
       imagesBase64,
+      packagingBase64,
+      sizeBase64,
     })
   }
   return {
@@ -189,6 +222,15 @@ export async function importBackupJson(
           blobs.push(await dataUrlToBlob(u))
         }
       }
+      // v3.7: 전용 슬롯 사진 복원(있을 때만). 구버전 백업엔 필드 자체가 없음(하위호환).
+      let packagingBlob: Blob | null = null
+      if (typeof item.packagingBase64 === "string" && item.packagingBase64.startsWith("data:")) {
+        packagingBlob = await dataUrlToBlob(item.packagingBase64)
+      }
+      let sizeBlob: Blob | null = null
+      if (typeof item.sizeBase64 === "string" && item.sizeBase64.startsWith("data:")) {
+        sizeBlob = await dataUrlToBlob(item.sizeBase64)
+      }
       map[item.id] = {
         id: item.id,
         createdAt: item.createdAt ?? Date.now(),
@@ -198,6 +240,8 @@ export async function importBackupJson(
         input: item.input,
         copy: item.copy ?? null,
         imageBlobs: blobs,
+        packagingBlob,
+        sizeBlob,
       }
       imported++
     } catch {

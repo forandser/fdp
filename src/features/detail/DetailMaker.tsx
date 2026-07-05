@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { ImageUploader, type UploadedImage } from "./ImageUploader"
+import { ImageUploader, SingleSlotUploader, type UploadedImage } from "./ImageUploader"
 import { KeywordPicker } from "./KeywordPicker"
 import { ResultView, emptyCopy } from "./ResultView"
 import { SeasonHint } from "./SeasonHint"
@@ -102,6 +102,14 @@ function buildLiveSpec(args: {
 export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   const [stage, setStage] = useState<Stage>(initialWorkId ? "restoring" : "input")
   const [images, setImages] = useState<UploadedImage[]>([])
+  /**
+   * v3.7: 포장·크기비교 전용 슬롯 사진 — 일반 풀(images)과 분리 관리한다.
+   * planImages에 넣지 않고 ResultView에 별도 prop으로 전달한다.
+   * - packagingImage 없으면 PackagingBlock 섹션 자체 미노출(풀 사진 대체 금지).
+   * - sizeImage 있으면 크기 섹션에 사진 렌더, 없으면 기존 동작(무게 데이터만).
+   */
+  const [packagingImage, setPackagingImage] = useState<UploadedImage | null>(null)
+  const [sizeImage, setSizeImage] = useState<UploadedImage | null>(null)
   const [category, setCategory] = useState<ProductCategory>("fruit")
   const [productName, setProductName] = useState("")
   const [variety, setVariety] = useState("")
@@ -293,6 +301,23 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
             restoredUrlsRef.current.push(img.url)
           }
         }
+        // v3.7: 전용 슬롯 사진 복원 — 구버전 저장본엔 필드 없음(옵셔널·하위호환).
+        let restoredPackaging: UploadedImage | null = null
+        if (work.packagingBlob) {
+          const img = await blobToUploadedImage(work.packagingBlob, 1000)
+          if (img) {
+            restoredPackaging = img
+            restoredUrlsRef.current.push(img.url)
+          }
+        }
+        let restoredSize: UploadedImage | null = null
+        if (work.sizeBlob) {
+          const img = await blobToUploadedImage(work.sizeBlob, 1001)
+          if (img) {
+            restoredSize = img
+            restoredUrlsRef.current.push(img.url)
+          }
+        }
         if (cancelled) {
           restoredUrlsRef.current.forEach((u) => URL.revokeObjectURL(u))
           restoredUrlsRef.current = []
@@ -314,6 +339,8 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         }
 
         setImages(restored)
+        setPackagingImage(restoredPackaging)
+        setSizeImage(restoredSize)
         setCategory(input.category)
         setProductName(input.productType)
         setVariety(input.variety ?? "")
@@ -518,6 +545,9 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
           input,
           copy: res.output,
           imageBlobs: images.map((i) => i.file),
+          // v3.7: 전용 슬롯 사진 — 일반 imageBlobs와 별도 저장(없으면 null).
+          packagingBlob: packagingImage?.file ?? null,
+          sizeBlob: sizeImage?.file ?? null,
         }
         void saveWork(work)
       } catch (saveErr) {
@@ -547,6 +577,9 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
             input: currentInput,
             copy: next,
             imageBlobs: images.map((i) => i.file),
+            // v3.7: 전용 슬롯 사진 유지(인라인 편집 저장 시에도 유실 방지).
+            packagingBlob: packagingImage?.file ?? null,
+            sizeBlob: sizeImage?.file ?? null,
           }
           await saveWork(work)
         } catch (e) {
@@ -639,6 +672,46 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
 
       <Step number={1} title={t.detail.step1Image} hint={t.detail.step1Hint}>
         <ImageUploader images={images} onChange={setImages} />
+
+        {/*
+          v3.7: 포장·크기비교 전용 사진 슬롯 (옵션 카드 2개).
+          여기 넣은 사진은 일반 풀에 섞이지 않고 해당 섹션에만 쓰인다.
+          - 포장 사진 없으면 배송 구성 섹션 자체가 안 나온다(무관한 풀 사진 대체 금지).
+          - 크기 사진 넣으면 크기 섹션에 사진이 붙는다(없으면 무게 데이터만).
+        */}
+        <div
+          style={{
+            marginTop: 16,
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            gap: 12,
+          }}
+        >
+          <SingleSlotUploader
+            image={packagingImage}
+            onChange={setPackagingImage}
+            title="포장 사진 (선택)"
+            tip="송장·완충재가 보이게"
+            emoji="📦"
+          />
+          <SingleSlotUploader
+            image={sizeImage}
+            onChange={setSizeImage}
+            title="크기 비교 사진 (선택)"
+            tip="손이나 500원 동전과 함께"
+            emoji="📏"
+          />
+        </div>
+        <p
+          style={{
+            marginTop: 8,
+            fontSize: "var(--font-size-xs)",
+            color: "var(--color-neutral-500)",
+            lineHeight: 1.5,
+          }}
+        >
+          이 두 슬롯 사진은 위 일반 사진 목록과 섞이지 않고, 각 전용 섹션(배송 구성 · 크기 비교)에만 쓰여요. 포장 사진을 넣지 않으면 배송 구성 섹션은 표시되지 않아요.
+        </p>
       </Step>
 
       <Step number={2} title={t.detail.step2Basic}>
@@ -1147,6 +1220,8 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       <ResultView
         copy={liveCopy}
         images={images}
+        packagingImage={packagingImage}
+        sizeImage={sizeImage}
         productName={liveResultMeta.productName}
         price={liveResultMeta.priceNum}
         origin={liveResultMeta.origin}

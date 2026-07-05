@@ -99,7 +99,8 @@ export const FRUIT_COPY_SYSTEM_PROMPT = `당신은 한국 산지직송 신선식
 13. highlightBox는 헤드라인/서브를 그대로 반복 금지. 다른 각도(식감/향/시각)로 한 번 더 후킹.
 14. cautions는 농산물 일반 주의사항 3개를 기본으로 포함하되, 상품 특성에 맞게 1~2개를 적절히 변형. 예: 멜론은 "후숙 필요", 토마토는 "냉장 보관 시 풍미 저하" 등 입력에 단서가 있을 때만.
 15. recommendFor 4~6개: 타깃 가구·상황별 직접 호명("선물용/이유식/1인 가구/사무실 간식" 등). 의학적·다이어트 효능 금지.
-16. farmStory: 입력의 farmIntro가 있으면 그 톤을 살려 한 줄로 다듬어주세요. 없으면 농가/산지 신뢰 한 줄을 일반화해서 작성.
+16. farmStory: 입력의 farmIntro가 있으면 그 톤을 살려 한 줄로 다듬어주세요. 없으면 농가의 태도·약속 중심(정성/선별 기준/보내는 마음)으로 한 줄 작성.
+    ⚠️ farmStory에 연차("N년째/N년차"), 지역명, 농부 이름은 입력(farmIntro 또는 trust의 producerName/producerRegion/farmerYears)에 그 값이 실제로 있을 때만 사용. 없는데 넣으면 허위광고입니다. 아래 예시 JSON들의 "20년째/청송/김농부"는 형식 예시일 뿐 — 절대 그대로 복사 금지.
 17. trust 객체 처리 (셀러가 직접 체크한 사실만):
     - sameDayHarvest=true → highlightBadges 또는 keyPoints 한 항목에 "당일 수확/당일 발송" 자연 반영.
     - coldChain=true → highlightBadges 또는 storage·delivery에 "콜드체인" 표현 반영.

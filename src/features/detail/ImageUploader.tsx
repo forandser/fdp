@@ -261,3 +261,213 @@ export function ImageUploader({
     </div>
   )
 }
+
+/**
+ * v3.7: 전용 사진 슬롯 업로더 — 포장/크기비교 옵션 카드용 소형 단일 슬롯.
+ *
+ * 일반 ImageUploader(다중·드롭존)와 별개로, 한 장만 넣고 교체/삭제하는 카드.
+ * 여기서 넣은 사진은 일반 풀(planImages)에 절대 섞이지 않는다 — 호출부가 별도 상태로 관리.
+ * 촬영 팁 한 줄(tip)을 카드 안에 표시해 셀러가 무엇을 찍어야 하는지 유도한다.
+ */
+export function SingleSlotUploader({
+  image,
+  onChange,
+  title,
+  tip,
+  emoji,
+  maxSizeMB = 10,
+}: {
+  image: UploadedImage | null
+  onChange: (next: UploadedImage | null) => void
+  /** 카드 제목 (예: "📦 포장 사진"). */
+  title: string
+  /** 촬영 팁 한 줄 (예: "송장·완충재가 보이게"). */
+  tip: string
+  /** 좌측 아이콘 이모지 (예: "📦" / "📏"). */
+  emoji: string
+  maxSizeMB?: number
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  const pick = useCallback(
+    async (file: File) => {
+      setErrorMsg(null)
+      if (!file.type.startsWith("image/")) {
+        setErrorMsg("이미지 파일만 넣을 수 있어요")
+        return
+      }
+      if (file.size > maxSizeMB * 1024 * 1024) {
+        setErrorMsg(`${maxSizeMB}MB를 초과해요`)
+        return
+      }
+      try {
+        const meta = await loadImage(file)
+        // 이전 슬롯 사진 objectURL 정리 후 교체.
+        if (image) URL.revokeObjectURL(image.url)
+        onChange({
+          id: `slot-${Date.now()}-${Math.round(performance.now())}`,
+          file,
+          ...meta,
+        })
+      } catch {
+        setErrorMsg("이미지를 불러오지 못했어요")
+      }
+    },
+    [image, onChange, maxSizeMB],
+  )
+
+  const handleRemove = () => {
+    if (image) URL.revokeObjectURL(image.url)
+    onChange(null)
+    setErrorMsg(null)
+  }
+
+  return (
+    <div
+      style={{
+        border: "1px solid var(--color-neutral-100)",
+        borderRadius: "var(--radius-xs)",
+        padding: "12px 14px",
+        background: "var(--color-bg-subtle)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+        <span aria-hidden style={{ fontSize: 22, lineHeight: 1.1 }}>
+          {emoji}
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: "var(--font-size-sm)",
+              fontWeight: 700,
+              color: "var(--color-neutral-900)",
+            }}
+          >
+            {title}
+          </div>
+          <div
+            style={{
+              fontSize: "var(--font-size-xs)",
+              color: "var(--color-neutral-500)",
+              lineHeight: 1.4,
+              marginTop: 2,
+            }}
+          >
+            📸 {tip}
+          </div>
+        </div>
+      </div>
+
+      {image ? (
+        <div
+          style={{
+            position: "relative",
+            borderRadius: "var(--radius-xs)",
+            overflow: "hidden",
+            border: "1px solid var(--color-neutral-100)",
+            background: "#fff",
+          }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={image.url}
+            alt={title}
+            style={{
+              width: "100%",
+              maxHeight: 180,
+              objectFit: "contain",
+              display: "block",
+              background: "#fff",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              top: 6,
+              right: 6,
+              display: "flex",
+              gap: 6,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              style={{
+                padding: "4px 10px",
+                borderRadius: 4,
+                background: "rgba(0,0,0,0.6)",
+                border: "none",
+                color: "#fff",
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              교체
+            </button>
+            <button
+              type="button"
+              onClick={handleRemove}
+              aria-label={`${title} 삭제`}
+              style={{
+                width: 26,
+                height: 26,
+                borderRadius: "50%",
+                background: "rgba(0,0,0,0.6)",
+                border: "none",
+                color: "#fff",
+                fontSize: 14,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 0,
+              }}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          style={{
+            padding: "16px 12px",
+            border: "2px dashed var(--color-neutral-300)",
+            borderRadius: "var(--radius-xs)",
+            background: "var(--color-bg-surface)",
+            color: "var(--color-neutral-700)",
+            fontSize: "var(--font-size-sm)",
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          + 사진 넣기 (선택)
+        </button>
+      )}
+
+      {errorMsg && (
+        <p style={{ fontSize: "var(--font-size-xs)", color: "var(--color-danger)", margin: 0 }}>
+          ⚠️ {errorMsg}
+        </p>
+      )}
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          if (f) void pick(f)
+          e.target.value = ""
+        }}
+        style={{ display: "none" }}
+      />
+    </div>
+  )
+}
