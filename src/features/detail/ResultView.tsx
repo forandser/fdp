@@ -215,8 +215,39 @@ export function planImages(
   }
 
   const hero = images[0]
-  // hero를 뺀 후보 풀. 이 풀에서 "안 쓴 사진 우선"으로 특징 슬롯을 채운다.
-  const rest = images.slice(1)
+  // hero를 뺀 전체 후보 풀.
+  const restAll = images.slice(1)
+
+  /**
+   * v3.8 fix(진단 #1): 갤러리 모자이크가 아예 안 뜨던 사고 교정.
+   * 예전엔 whyBrand + keyPoints(3) + punch 가 rest 사진을 전부 빨아들여(6장 시나리오에서
+   * 5장 rest 를 whyBrand·POINT 3장·punch 로 소비) 갤러리가 0장이 되고, 그래서
+   * buildGalleryRows 의 [풀폭↔2그리드] 리듬이 페이지에 단 한 번도 렌더되지 않았다.
+   *
+   * 교정: 사진이 넉넉하면(hero 제외 rest 가 GALLERY_RESERVE_THRESHOLD 이상) rest 의 뒤쪽
+   * 일부를 "갤러리 전용"으로 떼어 특징 슬롯 후보에서 제외한다. 이렇게 떼어낸 사진은
+   * 특징 블록에 절대 안 쓰이므로 블록 간 중복 0 원칙을 지키면서, 갤러리에 모자이크가
+   * 성립할 최소 장수(풀폭1 + 2그리드 = 3장)를 확보한다.
+   *
+   * 특징 슬롯(whyBrand/keyPoints/punch)은 사진이 없어도 각각 텍스트/틴트로 우아하게
+   * 렌더되므로(규칙 ③④ + SensoryPunchBlock 틴트 폴백) 슬롯 하나가 사진을 잃어도 회귀 아님.
+   * 결정적: 항상 뒤쪽 N장을 고정 예약 — 같은 입력이면 같은 결과. Math.random 없음.
+   *
+   * 예약 장수 계산:
+   *  - 모자이크(풀폭1 + 2그리드)가 성립하려면 갤러리에 최소 GALLERY_RESERVE_TARGET(3)장 필요.
+   *  - 단, 특징 슬롯이 완전히 굶지 않도록 whyBrand + POINT 1장분(FEATURE_KEEP=2)은 rest 에 남긴다.
+   *  - 그래서 예약 = min(목표 3, rest - 특징 최소 확보 2). rest 가 5장 이상일 때만 예약이 켜진다.
+   *    (rest 5 → 예약 3, 특징 후보 2 남음 / rest 4 → 예약 2 / rest 3 이하 → 예약 0, 기존 동작.)
+   */
+  const GALLERY_RESERVE_TARGET = 3 // 모자이크 성립 최소 장수(풀폭1 + 2그리드)
+  const FEATURE_KEEP = 2 // 특징 슬롯에 최소로 남겨 둘 rest 장수(whyBrand + POINT 1)
+  const reserveCount = Math.max(
+    0,
+    Math.min(GALLERY_RESERVE_TARGET, restAll.length - FEATURE_KEEP),
+  )
+  // 예약분은 rest 의 뒤쪽에서 떼어 특징 슬롯 후보(rest)에서 제외한다.
+  const reserved = reserveCount > 0 ? restAll.slice(restAll.length - reserveCount) : []
+  const rest = reserveCount > 0 ? restAll.slice(0, restAll.length - reserveCount) : restAll
 
   // 사용 횟수 추적 — key는 image.id. rest에 있는 사진만 카운트한다.
   const useCount = new Map<string, number>()
@@ -288,18 +319,22 @@ export function planImages(
   // 배송되어요"에 포장과 무관한 사진이 붙는 사고가 났다. 이제 그 사진은 갤러리로 흘려보낸다.
   const packaging = undefined
 
-  // 갤러리 — 특징 슬롯에서 "아직 한 번도 안 쓴" rest 사진만 흡수한다.
+  // 갤러리 — 특징 슬롯에서 "아직 한 번도 안 쓴" rest 사진 + 예약분(reserved)을 흡수한다.
   // (hero 및 특징 블록에 이미 노출된 사진은 넣지 않아 블록 간 중복 0.)
   const unused = rest.filter((img) => (useCount.get(img.id) ?? 0) === 0)
 
   // SensoryPunch용 분위기 컷(저순위 풀블리드) — 아직 안 쓴 사진이 있을 때만(규칙 ④).
   // 히어로 재사용 폴백 제거 — 사진이 부족하면 punch는 undefined(카피만, 틴트 배경).
+  // v3.8 fix: 갤러리 예약분(reserved)에는 손대지 않는다 — punch 는 예약 안 된 잉여(unused)만 사용.
+  //           그래야 갤러리가 모자이크 최소 장수를 온전히 확보한다(진단 #1).
   const punch = unused.length > 0 ? unused[0] : undefined
-  const galleryPool = punch ? unused.slice(1) : unused
+  const leftover = punch ? unused.slice(1) : unused
 
   // v3.1-b: sizeRef 예약 삭제 — 크기와 무관한 사진(비닐하우스 등)에 "실제 크기 참고"
   // 캡션이 붙는 사고가 나서, 남는 사진은 전부 갤러리가 흡수한다.
-  const gallery = galleryPool.slice(0, GALLERY_MAX)
+  // v3.8 fix: 갤러리 = 특징 슬롯이 안 쓴 잉여(leftover) + 갤러리 전용 예약분(reserved).
+  //           원본 업로드 순서를 유지하도록 leftover 뒤에 reserved 를 붙인다(결정적).
+  const gallery = [...leftover, ...reserved].slice(0, GALLERY_MAX)
 
   return { hero, whyBrand, keyPoints, recipe, packaging, sizeRef: undefined, punch, gallery }
 }
@@ -1386,13 +1421,16 @@ export function ResultView({
             />
 
             {/* 3b. SENSORY PUNCH — 검정 배경 임팩트 카피 + 바로 아래 실사진 밀착 (참외 레퍼런스).
-                   highlightBox(기존 StoryBlock 슬로건)를 승격. 비어 있으면 미노출. */}
+                   highlightBox(기존 StoryBlock 슬로건)를 승격. 비어 있으면 미노출.
+                   v3.8(지시5): 이 블록이 페이지 유일의 강조 다크 밴드 — 그 1회 허용분을 쓰므로
+                   검정 유지(tinted=false). 앞으로 다른 다크 풀블리드가 추가되면 그쪽을 tinted로. */}
             {copy.highlightBox.trim() && (
               <SensoryPunchBlock
                 copy={copy}
                 onCopyChange={onCopyChange}
                 image={imagePlan.punch}
                 isMobile={isMobile}
+                tinted={false}
               />
             )}
 
@@ -1552,6 +1590,9 @@ export function ResultView({
                 D17: faq 답변·storage와 정확 일치하는 cautions 항목은 렌더 생략. */}
             <DotDivider />
             <CautionsBlock cautions={copy.cautions ?? []} copy={copy} isMobile={isMobile} />
+
+            {/* v3.8(지시6): 클로징 브랜드 서명 — 잎 라인 아이콘 + 한 줄 + 가는 구분선. */}
+            <ClosingSignature productName={productName} trust={trust} isMobile={isMobile} />
           </div>
             </div>
           </div>
@@ -2621,16 +2662,26 @@ function SensoryPunchBlock({
   onCopyChange,
   image,
   isMobile,
+  tinted = false,
 }: {
   copy: CopyOutput
   onCopyChange: (next: CopyOutput) => void
   image?: UploadedImage
   isMobile: boolean
+  /**
+   * v3.8(지시5) 다크 밴드 1회 제한 — true면 검정 풀블리드 대신 밝은 틴트 버전으로 렌더.
+   * 한 페이지에 강조 다크 밴드는 1회만(희소해야 강함). 이 블록이 그 1회를 쓸 때는
+   * tinted=false(검정 유지)로, 페이지에 이미 다른 다크 밴드가 있으면 tinted=true로 호출.
+   */
+  tinted?: boolean
 }) {
   const accent = useAccent()
+  // 틴트 버전: 밝은 배경(veilTint) + INK 헤드 + accent 하이라이트. 검정 버전: 검정 배경 + 밝은 카피.
+  const bg = tinted ? veilTint(accent.soft) : PUNCH_BG
+  const copyColor = tinted ? accent.dark : accent.soft
   return (
-    <div style={{ background: PUNCH_BG }}>
-      {/* 임팩트 카피 — 검정 배경 위 대형 BlackHanSans. 편집 가능(highlightBox 경로). */}
+    <div style={{ background: bg }}>
+      {/* 임팩트 카피 — 다크(검정 위 밝은 카피) 또는 틴트(밝은 배경 위 accent.dark). 편집 가능(highlightBox 경로). */}
       <div
         style={{
           padding: isMobile ? "56px 24px" : "104px 56px",
@@ -2641,7 +2692,7 @@ function SensoryPunchBlock({
           style={{
             fontSize: isMobile ? 42 : 72,
             fontWeight: 400,
-            color: "#FFFFFF",
+            color: tinted ? INK : "#FFFFFF",
             margin: 0,
             lineHeight: 1.18,
             fontFamily: DISPLAY_FONT,
@@ -2656,7 +2707,8 @@ function SensoryPunchBlock({
             maxLength={60}
             placeholder="한 줄 임팩트 카피 (예: 수분 가득, 과즙 팡팡!)"
             // F(minor): 검정 밴드 위 빨강(저대비) → accent.soft(밝은 틴트)로 가독성 확보(01·04).
-            style={{ color: accent.soft }}
+            // 틴트 버전에선 accent.dark로 대비 확보.
+            style={{ color: copyColor }}
           />
         </p>
       </div>
@@ -2695,6 +2747,69 @@ const GALLERY_SAFE_CAPTIONS = [
   "이렇게 보내드립니다",
 ]
 
+/**
+ * v3.8(지시1) 갤러리 모자이크 — 풀폭↔2그리드 리듬으로 "디자이너가 짠 배치"를 만든다.
+ *
+ * 배치 규칙(진단 #1·#2 해소):
+ *  - 4장 이상: [풀폭 1] → [2그리드] → [풀폭 1] → [2그리드] … 패턴으로 소비.
+ *    자투리 1장이 남으면 풀폭으로 마무리(반토막 그리드 방지).
+ *  - 3장 이하: [풀폭 1] + [나머지 2그리드](2장이면 2열, 1장이면 그 자체가 풀폭).
+ *  - 컬러 캡션 바는 풀폭 사진에만, 페이지 전체 최대 2개(진단 #2: 캡션은 포인트 1~2장만).
+ *    그리드 사진은 캡션 없이 클린.
+ *
+ * JPG 분할 안전(불변): 각 행(풀폭 1장 또는 2그리드 한 쌍)이 flex column의 원자적 자식이라
+ * 슬라이서가 행 내부를 자르지 않는다. 행 자체가 하나의 요소이므로 data-slice-glue 불필요.
+ *
+ * 판단 기준 준수: 2그리드 gap 12px, 각 사진 borderRadius 유지, 세로비 1:1 crop(objectFit cover).
+ */
+type GalleryRow =
+  | { kind: "full"; img: UploadedImage; captionIdx: number | null }
+  | { kind: "pair"; imgs: UploadedImage[] }
+
+function buildGalleryRows(images: UploadedImage[]): GalleryRow[] {
+  const rows: GalleryRow[] = []
+  if (images.length === 0) return rows
+
+  // 3장 이하: 풀폭 1 + 나머지(2그리드 또는 단독). 캡션은 풀폭에만(1개).
+  if (images.length <= 3) {
+    const [first, ...rest] = images
+    rows.push({ kind: "full", img: first, captionIdx: 0 })
+    if (rest.length === 1) {
+      // 남은 1장도 풀폭으로(반폭 외톨이 방지). 캡션은 이미 1개 썼으니 두 번째는 캡션 유지(최대 2).
+      rows.push({ kind: "full", img: rest[0], captionIdx: 1 })
+    } else if (rest.length === 2) {
+      rows.push({ kind: "pair", imgs: rest })
+    }
+    return rows
+  }
+
+  // 4장 이상: 풀폭 → 2그리드 → 풀폭 → 2그리드 … 캡션은 풀폭에만, 최대 2개.
+  let i = 0
+  let captionCount = 0
+  while (i < images.length) {
+    // 풀폭 1장
+    const remaining = images.length - i
+    if (remaining === 1) {
+      // 마지막 1장 자투리 — 풀폭으로 마무리.
+      const captionIdx = captionCount < 2 ? captionCount : null
+      if (captionIdx != null) captionCount++
+      rows.push({ kind: "full", img: images[i], captionIdx })
+      i += 1
+      break
+    }
+    const captionIdx = captionCount < 2 ? captionCount : null
+    if (captionIdx != null) captionCount++
+    rows.push({ kind: "full", img: images[i], captionIdx })
+    i += 1
+    // 2그리드 (남은 게 2장 이상일 때만 쌍으로; 정확히 1장 남으면 다음 루프에서 풀폭 마무리)
+    if (images.length - i >= 2) {
+      rows.push({ kind: "pair", imgs: [images[i], images[i + 1]] })
+      i += 2
+    }
+  }
+  return rows
+}
+
 function GalleryBlock({
   images,
   productName,
@@ -2703,15 +2818,14 @@ function GalleryBlock({
   productName: string
 }) {
   const accent = useAccent()
-  // v2.6: 첫 이미지 대형 통 이미지 + 나머지는 2열 그리드 (아보카도·복숭아 페이지 톤)
-  // v3.0: 5장 고정 제거 — 중앙 배정기(imagePlan.gallery)가 남은 사진 수에 맞춰
-  // 최대 8장까지 넘겨준다. 여기선 그대로 전부 렌더(featured 1 + grid 나머지).
-  const [featured, ...rest] = images
+  // v3.8(지시1): 풀폭↔2그리드 모자이크. buildGalleryRows가 배치·캡션 배정을 결정.
+  const rows = useMemo(() => buildGalleryRows(images), [images])
 
-  // v3.4(지시6): 각 사진 하단 accent 컬러 바 캡션. 사진 순서대로 서로 다른 안전 문구.
+  // 컬러 캡션 바 문구 — 풀폭 사진에만, captionIdx 순서대로 서로 다른 안전 문구.
   const captionFor = (idx: number) =>
     GALLERY_SAFE_CAPTIONS[idx % GALLERY_SAFE_CAPTIONS.length]
 
+  let altSeq = 0
   return (
     <div
       style={{
@@ -2722,101 +2836,95 @@ function GalleryBlock({
         gap: 16,
       }}
     >
-      {featured && (
-        <div
-          style={{
-            position: "relative",
-            background: "#FFFFFF",
-            borderRadius: 8,
-            overflow: "hidden",
-            boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
-          }}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={featured.url}
-            alt={`${productName} 대표`}
-            style={{
-              width: "100%",
-              aspectRatio: "4/3",
-              objectFit: "cover",
-              display: "block",
-            }}
-          />
-          {/* 컬러 타이틀 바 (accent, 흰 글씨) */}
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 0,
-              background: accent.accent,
-              color: "#FFFFFF",
-              padding: "14px 22px",
-              fontSize: 28,
-              fontWeight: 800,
-              fontFamily: BODY_FONT,
-              letterSpacing: -0.3,
-              textAlign: "center",
-              wordBreak: "keep-all",
-            }}
-          >
-            {captionFor(0)}
-          </div>
-        </div>
-      )}
-      {rest.length > 0 && (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: rest.length === 1 ? "1fr" : "repeat(2, 1fr)",
-            gap: 12,
-          }}
-        >
-          {rest.map((img, i) => (
+      {rows.map((row, ri) => {
+        if (row.kind === "full") {
+          altSeq++
+          const caption = row.captionIdx != null ? captionFor(row.captionIdx) : null
+          return (
             <div
-              key={img.id}
+              key={`gal-full-${ri}`}
               style={{
                 position: "relative",
                 background: "#FFFFFF",
-                borderRadius: 6,
+                borderRadius: 8,
                 overflow: "hidden",
+                boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
               }}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={img.url}
-                alt={`${productName} ${i + 3}`}
+                src={row.img.url}
+                alt={`${productName} ${altSeq}`}
                 style={{
                   width: "100%",
-                  aspectRatio: "1",
+                  aspectRatio: "4/3",
                   objectFit: "cover",
                   display: "block",
                 }}
               />
-              <div
-                style={{
-                  position: "absolute",
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  background: accent.accent,
-                  color: "#FFFFFF",
-                  padding: rest.length === 1 ? "12px 18px" : "9px 12px",
-                  fontSize: rest.length === 1 ? 24 : 18,
-                  fontWeight: 800,
-                  fontFamily: BODY_FONT,
-                  letterSpacing: -0.3,
-                  textAlign: "center",
-                  wordBreak: "keep-all",
-                }}
-              >
-                {captionFor(i + 1)}
-              </div>
+              {/* 컬러 타이틀 바 (accent, 흰 글씨) — 풀폭에만, 페이지 최대 2개. */}
+              {caption && (
+                <div
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    background: accent.accent,
+                    color: "#FFFFFF",
+                    padding: "14px 22px",
+                    fontSize: 28,
+                    fontWeight: 800,
+                    fontFamily: BODY_FONT,
+                    letterSpacing: -0.3,
+                    textAlign: "center",
+                    wordBreak: "keep-all",
+                  }}
+                >
+                  {caption}
+                </div>
+              )}
             </div>
-          ))}
-        </div>
-      )}
+          )
+        }
+        // 2그리드 — 각 사진 1:1 crop, borderRadius 유지, gap 12px. 캡션 없이 클린.
+        return (
+          <div
+            key={`gal-pair-${ri}`}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(2, 1fr)",
+              gap: 12,
+            }}
+          >
+            {row.imgs.map((img) => {
+              altSeq++
+              return (
+                <div
+                  key={img.id}
+                  style={{
+                    background: "#FFFFFF",
+                    borderRadius: 6,
+                    overflow: "hidden",
+                  }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={img.url}
+                    alt={`${productName} ${altSeq}`}
+                    style={{
+                      width: "100%",
+                      aspectRatio: "1",
+                      objectFit: "cover",
+                      display: "block",
+                    }}
+                  />
+                </div>
+              )
+            })}
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -3254,6 +3362,22 @@ function KeyPointsBig({
             그래서 이렇게 준비했어요
           </p>
         )}
+        {/* v3.8 fix(진단 #2): 대제목 영문 오버라인 라벨 — WHY(원형 엠블럼)·REVIEW(SectionTitle
+            overline)와 톤을 맞춰 POINT 를 얹는다. 위 한글 문구는 problemArc 서사 브리지라
+            별개(오버라인이 아니었음). SectionTitle hero overline 과 동일 스타일(작은 accent,
+            자간 2)을 인라인으로 재현 — 이 섹션은 SectionTitle 를 안 쓰므로 직접 렌더. */}
+        <div
+          style={{
+            fontSize: isMobile ? 13 : 22,
+            color: accent.accent,
+            fontWeight: 800,
+            letterSpacing: 2,
+            marginBottom: isMobile ? 8 : 12,
+            fontFamily: BODY_FONT,
+          }}
+        >
+          POINT
+        </div>
         {/* 임무D: 섹션 헤드 — 히어로급 임팩트 (모바일 42 / 데스크톱 76) */}
         <h2
           style={{
@@ -3278,6 +3402,143 @@ function KeyPointsBig({
         // v2.8: POINT 배경 변주 — 흰 / 옅은 회색 / 과일 축색 soft 틴트
         const bgTints = ["#FFFFFF", "#FAFBFC", accent.soft]
         const bg = bgTints[i % bgTints.length]
+
+        // v3.8(지시2): 지그재그 — 데스크톱 & 사진 있을 때만 좌우 2열(6:4).
+        //  홀수 POINT(01,03…)는 텍스트 좌·사진 우, 짝수(02…)는 반대. 세로 중앙 정렬.
+        //  모바일 또는 사진 없음 → 세로 스택(현행 유지). 한 행 전체가 이 div 하나라
+        //  JPG 슬라이서가 행 내부(사진+텍스트)를 쪼개지 않는다(불변: 통째 한 그룹).
+        const zigzag = !isMobile && !!img
+        const imageLeft = zigzag && i % 2 === 1 // 짝수 인덱스(POINT 02)면 사진을 왼쪽으로
+
+        // 텍스트 열 — 배경 넘버·POINT 배지·제목·본문. 지그재그/스택 공용.
+        const textCol = (
+          <div style={{ position: "relative", minWidth: 0 }}>
+            {/* 임무D: 배경 넘버 — 스케일에 맞춰 강화(모바일 150 / 데스크톱 240), 얇은 회색선 */}
+            <span
+              aria-hidden
+              style={{
+                position: "absolute",
+                right: 0,
+                top: isMobile ? -48 : -60,
+                fontSize: isMobile ? 150 : 240,
+                fontWeight: 900,
+                color: "transparent",
+                WebkitTextStroke: `${isMobile ? 2 : 3}px ${LINE}`,
+                fontFamily: DISPLAY_FONT,
+                lineHeight: 1,
+                letterSpacing: -6,
+                userSelect: "none",
+                pointerEvents: "none",
+                zIndex: 0,
+              }}
+            >
+              0{p.num}
+            </span>
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: isMobile ? "7px 16px" : "10px 22px",
+                background: accent.accent,
+                color: "#FFF",
+                fontSize: isMobile ? 14 : 24,
+                fontWeight: 800,
+                letterSpacing: 2.5,
+                marginBottom: isMobile ? 20 : 28,
+                fontFamily: BODY_FONT,
+                position: "relative",
+                zIndex: 1,
+              }}
+            >
+              POINT {p.num}
+            </div>
+            <h3
+              style={{
+                fontSize: isMobile ? 34 : 56,
+                fontWeight: 400,
+                margin: 0,
+                marginBottom: isMobile ? 22 : 28,
+                color: INK,
+                lineHeight: 1.2,
+                fontFamily: DISPLAY_FONT,
+                letterSpacing: -1.2,
+                position: "relative",
+                zIndex: 1,
+              }}
+            >
+              <EditableResultText
+                copy={copy}
+                onChange={onCopyChange}
+                path={["keyPoints", i, "title"]}
+                maxLength={40}
+                placeholder={`POINT ${i + 1} 큰 제목 (예: 새벽 5시에 따 보내요)`}
+              />
+            </h3>
+            <p
+              style={{
+                fontSize: isMobile ? 20 : 34,
+                color: SUB,
+                lineHeight: 1.7,
+                margin: 0,
+                // 지그재그에선 사진이 옆 열이라 본문 아래 여백 불필요.
+                marginBottom: zigzag ? 0 : isMobile ? 32 : 44,
+                whiteSpace: "pre-line",
+                fontFamily: BODY_FONT,
+                fontWeight: 500,
+                wordBreak: "keep-all",
+                position: "relative",
+                zIndex: 1,
+              }}
+            >
+              <EditableResultText
+                copy={copy}
+                onChange={onCopyChange}
+                path={["keyPoints", i, "body"]}
+                multiline
+                maxLength={300}
+                preserveWhitespace
+                placeholder="구체 사실 + 숫자 (Brix / kg / 시간 / 재구매율 등)를 담아 2~3문장"
+              />
+            </p>
+          </div>
+        )
+
+        // 이미지 열 — 지그재그면 4:5 세로비, 스택이면 기존 1:1 대형.
+        const imageCol = img ? (
+          <div
+            style={{
+              display: zigzag ? "block" : "flex",
+              justifyContent: "center",
+              marginTop: zigzag ? 0 : 20,
+            }}
+          >
+            <div
+              style={{
+                background: "#FFFFFF",
+                borderRadius: 8,
+                overflow: "hidden",
+                maxWidth: "100%",
+                width: "100%",
+                boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
+              }}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={img.url}
+                alt=""
+                style={{
+                  width: "100%",
+                  // 지그재그: 세로비 4:5(레퍼런스), 스택: 1:1 대형(기존).
+                  aspectRatio: zigzag ? "4/5" : "1",
+                  objectFit: "cover",
+                  display: "block",
+                }}
+              />
+            </div>
+          </div>
+        ) : null
+
         return (
           <div
             key={`kp-big-${i}`}
@@ -3301,125 +3562,34 @@ function KeyPointsBig({
               }}
             />
             <div style={{ paddingLeft: isMobile ? 16 : 32, position: "relative" }}>
-              {/* 임무D: 배경 넘버 — 스케일에 맞춰 강화(모바일 150 / 데스크톱 240), 얇은 회색선 */}
-              <span
-                aria-hidden
-                style={{
-                  position: "absolute",
-                  right: 0,
-                  top: isMobile ? -48 : -60,
-                  fontSize: isMobile ? 150 : 240,
-                  fontWeight: 900,
-                  color: "transparent",
-                  WebkitTextStroke: `${isMobile ? 2 : 3}px ${LINE}`,
-                  fontFamily: DISPLAY_FONT,
-                  lineHeight: 1,
-                  letterSpacing: -6,
-                  userSelect: "none",
-                  pointerEvents: "none",
-                  zIndex: 0,
-                }}
-              >
-                0{p.num}
-              </span>
-              <div
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: isMobile ? "7px 16px" : "10px 22px",
-                  background: accent.accent,
-                  color: "#FFF",
-                  fontSize: isMobile ? 14 : 24,
-                  fontWeight: 800,
-                  letterSpacing: 2.5,
-                  marginBottom: isMobile ? 20 : 28,
-                  fontFamily: BODY_FONT,
-                  position: "relative",
-                  zIndex: 1,
-                }}
-              >
-                POINT {p.num}
-              </div>
-              <h3
-                style={{
-                  fontSize: isMobile ? 34 : 56,
-                  fontWeight: 400,
-                  margin: 0,
-                  marginBottom: isMobile ? 22 : 28,
-                  color: INK,
-                  lineHeight: 1.2,
-                  fontFamily: DISPLAY_FONT,
-                  letterSpacing: -1.2,
-                  position: "relative",
-                  zIndex: 1,
-                }}
-              >
-                <EditableResultText
-                  copy={copy}
-                  onChange={onCopyChange}
-                  path={["keyPoints", i, "title"]}
-                  maxLength={40}
-                  placeholder={`POINT ${i + 1} 큰 제목 (예: 새벽 5시에 따 보내요)`}
-                />
-              </h3>
-              <p
-                style={{
-                  fontSize: isMobile ? 20 : 34,
-                  color: SUB,
-                  lineHeight: 1.7,
-                  margin: 0,
-                  marginBottom: isMobile ? 32 : 44,
-                  whiteSpace: "pre-line",
-                  fontFamily: BODY_FONT,
-                  fontWeight: 500,
-                  wordBreak: "keep-all",
-                  position: "relative",
-                  zIndex: 1,
-                }}
-              >
-                <EditableResultText
-                  copy={copy}
-                  onChange={onCopyChange}
-                  path={["keyPoints", i, "body"]}
-                  multiline
-                  maxLength={300}
-                  preserveWhitespace
-                  placeholder="구체 사실 + 숫자 (Brix / kg / 시간 / 재구매율 등)를 담아 2~3문장"
-                />
-              </p>
-              {img && (
+              {zigzag ? (
+                // 데스크톱 지그재그 — 2열(6:4), 세로 중앙 정렬, 번갈아 좌우 배치.
                 <div
                   style={{
-                    display: "flex",
-                    justifyContent: "center",
-                    marginTop: 20,
+                    display: "grid",
+                    gridTemplateColumns: imageLeft ? "4fr 6fr" : "6fr 4fr",
+                    columnGap: 44,
+                    alignItems: "center",
                   }}
                 >
-                  <div
-                    style={{
-                      background: "#FFFFFF",
-                      borderRadius: 8,
-                      overflow: "hidden",
-                      maxWidth: "100%",
-                      width: "100%",
-                      boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
-                    }}
-                  >
-                    {/* v2.6: 4:3 → 1:1 대형 이미지 (아보카도·복숭아 페이지 톤) */}
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={img.url}
-                      alt=""
-                      style={{
-                        width: "100%",
-                        aspectRatio: "1",
-                        objectFit: "cover",
-                        display: "block",
-                      }}
-                    />
-                  </div>
+                  {imageLeft ? (
+                    <>
+                      {imageCol}
+                      {textCol}
+                    </>
+                  ) : (
+                    <>
+                      {textCol}
+                      {imageCol}
+                    </>
+                  )}
                 </div>
+              ) : (
+                // 모바일 또는 사진 없음 — 세로 스택(현행).
+                <>
+                  {textCol}
+                  {imageCol}
+                </>
               )}
             </div>
           </div>
@@ -4176,11 +4346,13 @@ function DeliveryBlock({ isMobile, trust }: { isMobile: boolean; trust?: TrustIn
   return (
     <div
       style={{
-        padding: isMobile ? "44px 24px" : "76px 44px",
+        // v3.8(지시4): 약관류 3연속(배송/교환환불/주의)은 상하 패딩을 48px로 묶어 클러스터링.
+        padding: isMobile ? "32px 24px" : "48px 44px",
         background: "#FFFFFF",
       }}
     >
-      <SectionTitle title={t.detail.result.deliveryTitle} isMobile={isMobile} />
+      {/* v3.8(지시3): 배송 안내는 약관류 — quiet 위계(작고 SUB 색). */}
+      <SectionTitle title={t.detail.result.deliveryTitle} variant="quiet" isMobile={isMobile} />
       {/* v2.4: 초록 배경·주황 원형 이모지 삭제 → 얇은 라인 카드 */}
       <div
         style={{
@@ -4298,9 +4470,11 @@ function ReviewsBlock({
   isMobile: boolean
 }) {
   const accent = useAccent()
+  // v3.8(지시4): 후기 진입은 대형 전환점 — 상단 100px 브레이크로 앞 클러스터와 분리.
   return (
-    <div style={{ padding: isMobile ? "48px 24px" : "80px 44px", background: veilTint(accent.soft) }}>
-      <SectionTitle title={t.detail.result.reviews.title} isMobile={isMobile} />
+    <div style={{ padding: isMobile ? "64px 24px 48px" : "100px 44px 80px", background: veilTint(accent.soft) }}>
+      {/* v3.8(지시3): 후기는 전환점 — hero 위계 + REVIEW 오버라인. */}
+      <SectionTitle title={t.detail.result.reviews.title} variant="hero" overline="REVIEW" isMobile={isMobile} />
       <div
         style={{
           display: "flex",
@@ -4495,11 +4669,13 @@ function ReturnsBlock({ isMobile, trust }: { isMobile: boolean; trust?: TrustInf
   return (
     <div
       style={{
-        padding: isMobile ? "44px 24px" : "76px 44px",
+        // v3.8(지시4): 약관류 클러스터 — 상하 패딩 48px로 압축.
+        padding: isMobile ? "32px 24px" : "48px 44px",
         background: "#FFFFFF",
       }}
     >
-      <SectionTitle title={t.detail.result.returnsTitle} isMobile={isMobile} />
+      {/* v3.8(지시3): 교환·환불은 약관류 — quiet 위계. */}
+      <SectionTitle title={t.detail.result.returnsTitle} variant="quiet" isMobile={isMobile} />
       {/* v2.4: 원형 이모지·BG_SOFT 배경 삭제 → 얇은 라인 카드 */}
       <div
         style={{
@@ -4545,8 +4721,8 @@ function CautionsBlock({
   return (
     <div
       style={{
-        // F(minor): 페이지 말미 과잉 공백 축소 (06·07·08).
-        padding: isMobile ? "44px 24px 40px" : "76px 44px 72px",
+        // v3.8(지시4): 약관류 클러스터 마지막 — 상단 48px로 묶고, 페이지 말미 하단만 여유.
+        padding: isMobile ? "32px 24px 40px" : "48px 44px 72px",
         background: "#FFFFFF",
       }}
     >
@@ -4615,43 +4791,162 @@ function CautionsBlock({
   )
 }
 
+/**
+ * v3.8(지시6) 클로징 브랜드 서명 — 페이지 맨 끝 마무리.
+ * 가는 accent 구분선 → 잎 라인 아이콘 → 한 줄 마무리 문구 → 서명(농가명/상품명).
+ * proj3 키위 레퍼런스의 "브랜드 서명" 톤: 조용하고 담백한 한 줄로 페이지를 닫는다.
+ *
+ * 지어내지 않는다 — 마무리 문구는 고정 감사 표현, 서명은 trust.producerName(있으면)
+ * 또는 상품명으로만. producer가 없으면 "{상품명} 드림" 형태로 폴백.
+ * captureRef 내부라 인라인 style + hex 상수 + 인라인 SVG(LeafIcon)만 사용 — filter/CSS 변수 없음.
+ */
+function ClosingSignature({
+  productName,
+  trust,
+  isMobile,
+}: {
+  productName: string
+  trust?: TrustInfo
+  isMobile: boolean
+}) {
+  const accent = useAccent()
+  const producer = trust?.producerName?.trim()
+  const name = productName.trim()
+  // 서명 — 농가명 우선, 없으면 상품명, 둘 다 없으면 서명 줄 생략.
+  const signature = producer ? `${producer} 농가 드림` : name ? `${name} 드림` : null
+  return (
+    <div
+      style={{
+        padding: isMobile ? "8px 24px 52px" : "16px 44px 88px",
+        background: "#FFFFFF",
+        textAlign: "center",
+      }}
+    >
+      {/* 가는 구분선 — 중앙 정렬, accent 옅은 톤 */}
+      <div
+        aria-hidden
+        style={{
+          width: isMobile ? 40 : 64,
+          height: 2,
+          background: accent.accent,
+          borderRadius: 2,
+          margin: isMobile ? "0 auto 22px" : "0 auto 32px",
+        }}
+      />
+      {/* 잎 라인 아이콘 */}
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: isMobile ? 14 : 20 }}>
+        <LeafIcon color={accent.accent} size={isMobile ? 34 : 52} />
+      </div>
+      {/* 한 줄 마무리 문구 — 고정 감사 표현(지어내지 않음). */}
+      <p
+        style={{
+          fontSize: isMobile ? 18 : 30,
+          color: SUB,
+          fontWeight: 600,
+          fontFamily: BODY_FONT,
+          lineHeight: 1.5,
+          margin: 0,
+          letterSpacing: -0.3,
+          wordBreak: "keep-all",
+        }}
+      >
+        정성껏 골라 담았습니다. 맛있게 드세요.
+      </p>
+      {signature && (
+        <p
+          style={{
+            fontSize: isMobile ? 15 : 24,
+            color: accent.dark,
+            fontWeight: 800,
+            fontFamily: BODY_FONT,
+            margin: isMobile ? "10px 0 0" : "14px 0 0",
+            letterSpacing: 0.3,
+            wordBreak: "keep-all",
+          }}
+        >
+          {signature}
+        </p>
+      )}
+    </div>
+  )
+}
+
 /* ============================================================ */
 /* Reusable bits                                                 */
 /* ============================================================ */
 
+/**
+ * v3.8(지시3) 타이틀 3단 위계 시스템.
+ *  - "hero": 전환점(WHY·특별한 이유·후기). 데스크톱 60px + 오버라인 영문 라벨 동반.
+ *  - "main": 콘텐츠 섹션(상품정보·크기·보관·FAQ·추천). 데스크톱 46px (기존 톤 근처).
+ *  - "quiet": 약관류(배송·교환환불·구매 전 확인). 데스크톱 34px, SUB 색으로 조용하게.
+ *
+ * 오버라인 영문 라벨(overline)은 hero에서만 노출 — DeliveryFlowBlock/PackagingBlock의
+ * 기존 대문자 라벨 스타일(작은 accent, letterSpacing 2)을 재사용해 톤을 맞춘다.
+ * 미지정(레거시 호출)은 "main"으로 동작해 회귀 없음.
+ */
+type SectionTitleVariant = "hero" | "main" | "quiet"
 function SectionTitle({
   title,
   regen,
   isMobile,
+  variant = "main",
+  overline,
 }: {
   title: string
   regen?: React.ReactNode
   /** 폰 미리보기(≤414)면 축소 스케일. 미지정 시 데스크톱(이미지 매체) 크기. */
   isMobile?: boolean
+  /** v3.8: 3단 위계 — hero(전환점)/main(콘텐츠)/quiet(약관류). 미지정 시 main. */
+  variant?: SectionTitleVariant
+  /** v3.8: hero 변주에서만 노출하는 오버라인 영문 라벨(예: REVIEW). */
+  overline?: string
 }) {
+  const accent = useAccent()
+  // 크기·색 — 데스크톱 기준 hero 60 / main 46 / quiet 34. 모바일은 각 톤에 맞춰 축소.
+  const fontSize =
+    variant === "hero" ? (isMobile ? 34 : 60) : variant === "quiet" ? (isMobile ? 21 : 34) : (isMobile ? 27 : 46)
+  const color = variant === "quiet" ? SUB : INK
+  const showOverline = variant === "hero" && !!overline?.trim()
   return (
     <div
       style={{
         display: "flex",
-        alignItems: "center",
+        alignItems: showOverline ? "flex-end" : "center",
         justifyContent: "space-between",
         marginBottom: isMobile ? 24 : 36,
       }}
     >
-      {/* 임무D: 섹션 h2 — 이미지 매체 표준으로 대형화 (모바일 30 / 데스크톱 52) */}
-      <h2
-        style={{
-          fontSize: isMobile ? 30 : 52,
-          fontWeight: 400,
-          color: INK,
-          margin: 0,
-          lineHeight: 1.05,
-          fontFamily: DISPLAY_FONT,
-          letterSpacing: -1,
-        }}
-      >
-        {title}
-      </h2>
+      <div>
+        {/* hero 전용 오버라인 영문 라벨 — 기존 대문자 라벨 톤(작은 accent, 넓은 자간) 재사용. */}
+        {showOverline && (
+          <div
+            style={{
+              fontSize: isMobile ? 13 : 22,
+              color: accent.accent,
+              fontWeight: 800,
+              letterSpacing: 2,
+              marginBottom: isMobile ? 8 : 12,
+              fontFamily: BODY_FONT,
+            }}
+          >
+            {overline}
+          </div>
+        )}
+        <h2
+          style={{
+            fontSize,
+            fontWeight: 400,
+            color,
+            margin: 0,
+            lineHeight: 1.05,
+            fontFamily: DISPLAY_FONT,
+            letterSpacing: -1,
+          }}
+        >
+          {title}
+        </h2>
+      </div>
       {regen}
     </div>
   )
