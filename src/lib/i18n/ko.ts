@@ -216,7 +216,7 @@ export const ko = {
         good: "일반적인 맛 기준 (참고)",
         ceiling: "품종 최대",
         ours: "우리 {brix}",
-        caption: "품종 일반 정보 참고, 개체차 있음",
+        caption: "※ 당도는 한 알마다 조금씩 다를 수 있어요",
       },
       /** 중량 → 개수 환산 행 (개당 무게 데이터 있을 때만). */
       countEstimate: {

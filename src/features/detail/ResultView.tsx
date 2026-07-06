@@ -253,6 +253,49 @@ const DISPLAY_FONT =
 const BODY_FONT = '"Pretendard", "NotoSansKR", sans-serif'
 
 /**
+ * textWrap(balance/pretty)은 Edge/Chrome이 지원하지만 React CSSProperties 타입에는
+ * 아직 없어 얇게 확장한다. html-to-image는 같은 엔진으로 렌더하므로 JPG에도 동일 적용된다.
+ */
+type CSSPropertiesExt = React.CSSProperties & {
+  textWrap?: "wrap" | "nowrap" | "balance" | "pretty" | "stable"
+}
+/** 헤딩류 — 마지막 줄 외톨이 단어 방지(줄 길이 균형). */
+const WRAP_BALANCE: CSSPropertiesExt = { textWrap: "balance" }
+/** 본문 p — 마지막 줄 한 단어만 남는 들쭉날쭉 방지. */
+const WRAP_PRETTY: CSSPropertiesExt = { textWrap: "pretty" }
+
+/**
+ * 괄호 구간 줄바꿈 금지 렌더 헬퍼 (스펙 값·라벨, 크기/포장 카드 등 짧은 값용).
+ * "(여름 햇과일)" 같은 괄호 그룹이 괄호 안에서 줄이 갈리지 않도록 nowrap span으로 감싼다.
+ * 긴 괄호(내용 8자 이상)는 폰트를 살짝 줄여(0.88em) 한 줄 유지 확률을 높인다.
+ * 괄호 밖 텍스트는 그대로 두어 정상적으로 줄바꿈된다. 인라인 span만 반환(JPG 위생 안전).
+ */
+function renderNoBreakParens(text: string): React.ReactNode {
+  if (!text || text.indexOf("(") < 0) return text
+  const parts: React.ReactNode[] = []
+  const re = /\(([^()]*)\)/g
+  let last = 0
+  let k = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index))
+    const long = m[1].length >= 8
+    parts.push(
+      <span
+        key={`np${k++}`}
+        style={{ whiteSpace: "nowrap", fontSize: long ? "0.88em" : undefined }}
+      >
+        {m[0]}
+      </span>,
+    )
+    last = m.index + m[0].length
+    if (re.lastIndex === m.index) re.lastIndex++ // 빈 괄호 무한루프 방지
+  }
+  if (last < text.length) parts.push(text.slice(last))
+  return <>{parts}</>
+}
+
+/**
  * v3.0 중앙 이미지 배정기 (임무 C).
  *
  * 문제: 예전엔 각 블록이 제각기 images 인덱스를 계산해 같은 사진이 2~3번 붙어 나왔고
@@ -849,6 +892,53 @@ const SENSORY_WORDS = [
   "입안", "한입", "베어", "베이", "터지", "녹", "고소",
 ]
 
+/** 부정어 사전 — 강조 박스에 넣으면 안 되는 불만/우려 표현. */
+const NEGATIVE_WORDS = [
+  "밍밍", "속상", "왜", "걱정", "실망", "별로", "아쉽", "후회", "질리", "물러",
+  "무르", "맛없", "싱거", "떫", "상한", "썩", "불안", "짜증", "화나", "불만", "그저 그",
+]
+
+/**
+ * "불만형" 문장 판별 — 물음표로 끝나며(또는 포함) 부정어를 담은 문장.
+ * 예: "왜 이렇게 밍밍하죠?" → 강조 박스로 렌더하면 안 됨.
+ */
+function isComplaintSentence(s: string): boolean {
+  const text = (s ?? "").trim()
+  if (!text) return false
+  if (!/[?？]/.test(text)) return false
+  return NEGATIVE_WORDS.some((w) => text.includes(w))
+}
+
+/**
+ * "긍정·감각" 문장 판별 — 느낌표 또는 감각어를 포함하고 의문문이 아닌 문장.
+ * 불만형 카피를 대체할 발췌 후보 판별에 사용.
+ */
+function isPositiveSensory(s: string): boolean {
+  const text = (s ?? "").trim()
+  if (!text) return false
+  if (/[?？]/.test(text)) return false
+  return /!/.test(text) || SENSORY_WORDS.some((w) => text.includes(w))
+}
+
+/**
+ * story에서 긍정·감각 문장(느낌표/감각어, 비의문문)을 하나 발췌한다. 없으면 null.
+ * 강조 박스가 불만형 카피로 채워지지 않게 하는 대체 소스(불변: 원문 그대로, 지어내지 않음).
+ * exclude: 이미 다른 장치(스토리 풀쿼트)가 쓴 문장 — 같은 문장 2회 노출 방지용으로 건너뛴다.
+ */
+export function extractPositiveSentence(story: string, exclude?: string | null): string | null {
+  const text = story ?? ""
+  if (!text.trim()) return null
+  const parts = text.match(/[^.!?\n]*(?:[.!?]+|\n+|$)/g) ?? []
+  const sentences = parts.map((p) => p.trim()).filter((p) => p.length > 0)
+  const skip = exclude?.trim()
+  for (const s of sentences) {
+    if (skip && s === skip) continue
+    if (isComplaintSentence(s)) continue
+    if (isPositiveSensory(s)) return s
+  }
+  return null
+}
+
 /**
  * story 문단에서 형광펜으로 강조할 "핵심(감각) 문장"을 결정적으로 하나 고른다.
  *
@@ -884,13 +974,18 @@ export function splitStoryHighlight(
   const isSensory = (s: string) =>
     /!/.test(s) || SENSORY_WORDS.some((w) => s.includes(w))
 
+  // 강조 박스 부정문 안전장치 — 불만형(물음표+부정어) 문장은 강조 대상에서 제외한다.
+  // (예: "왜 이렇게 밍밍하죠?"가 풀쿼트 박스로 승격되던 문제 차단.)
+  const eligible = sentences.filter((s) => !isComplaintSentence(s))
+  if (eligible.length === 0) return null // 불만형뿐이면 강조 박스 생략(본문만 렌더)
+
   let targetTrimmed: string | null = null
-  const firstSensory = sentences.find(isSensory)
+  const firstSensory = eligible.find(isSensory)
   if (firstSensory) {
     targetTrimmed = firstSensory
   } else {
-    // 감지 애매 → 두 번째 문장 기본 강조(결정적 폴백).
-    targetTrimmed = sentences[1] ?? null
+    // 감지 애매 → 불만형 아닌 문장 중 두 번째 기본 강조(결정적 폴백).
+    targetTrimmed = eligible[1] ?? eligible[0] ?? null
   }
   if (!targetTrimmed) return null
 
@@ -1354,6 +1449,23 @@ export function ResultView({
     return `${name || "이 상품"}, 정직하게 준비했습니다`
   }, [productName])
 
+  /**
+   * 강조 박스(SensoryPunch) 부정문 안전장치 — highlightBox가 불만형(물음표+부정어)이면
+   * 그대로 강조 박스로 띄우지 않고 story에서 긍정·감각 문장을 대신 발췌한다.
+   * 발췌할 문장이 없으면 null → 박스 자체를 생략. 비어 있으면 기존대로 미노출.
+   *  - editable: highlightBox 원문 그대로 → 인라인 편집 유지.
+   *  - !editable: story에서 파생한 대체 문구 → 표시 전용(편집은 story 쪽).
+   */
+  const punchDisplay = useMemo<{ text: string; editable: boolean } | null>(() => {
+    const hb = copy.highlightBox?.trim() ?? ""
+    if (!hb) return null
+    if (!isComplaintSentence(hb)) return { text: hb, editable: true }
+    // 스토리 풀쿼트가 쓰는 문장은 제외 — 폴백끼리 같은 문장 2회 노출 방지.
+    const quoted = splitStoryHighlight(copy.story)?.highlight ?? null
+    const alt = extractPositiveSentence(copy.story, quoted)
+    return alt ? { text: alt, editable: false } : null
+  }, [copy.highlightBox, copy.story])
+
   return (
     <AccentContext.Provider value={accent}>
     <EditContext.Provider value={{ copy, onCopyChange }}>
@@ -1544,13 +1656,14 @@ export function ResultView({
                    highlightBox(기존 StoryBlock 슬로건)를 승격. 비어 있으면 미노출.
                    v3.8(지시5): 이 블록이 페이지 유일의 강조 다크 밴드 — 그 1회 허용분을 쓰므로
                    검정 유지(tinted=false). 앞으로 다른 다크 풀블리드가 추가되면 그쪽을 tinted로. */}
-            {copy.highlightBox.trim() && (
+            {punchDisplay && (
               <SensoryPunchBlock
                 copy={copy}
                 onCopyChange={onCopyChange}
                 image={imagePlan.punch}
                 isMobile={isMobile}
                 tinted={false}
+                overrideText={punchDisplay.editable ? undefined : punchDisplay.text}
               />
             )}
 
@@ -2728,6 +2841,7 @@ function StoryBlock({
               position: "relative",
               zIndex: 1,
               wordBreak: "keep-all",
+              ...WRAP_PRETTY,
             }}
           >
             {displayStory}
@@ -2870,6 +2984,7 @@ function SensoryPunchBlock({
   image,
   isMobile,
   tinted = false,
+  overrideText,
 }: {
   copy: CopyOutput
   onCopyChange: (next: CopyOutput) => void
@@ -2881,6 +2996,11 @@ function SensoryPunchBlock({
    * tinted=false(검정 유지)로, 페이지에 이미 다른 다크 밴드가 있으면 tinted=true로 호출.
    */
   tinted?: boolean
+  /**
+   * v4.x 부정문 안전장치 — highlightBox가 불만형이라 story에서 대체 발췌한 문구.
+   * 지정되면 highlightBox(편집 가능) 대신 이 문구를 표시 전용으로 렌더한다(편집은 story 쪽).
+   */
+  overrideText?: string
 }) {
   const accent = useAccent()
   // 틴트 버전: 밝은 배경(veilTint) + INK 헤드 + accent 하이라이트. 검정 버전: 검정 배경 + 밝은 카피.
@@ -2905,18 +3025,24 @@ function SensoryPunchBlock({
             fontFamily: DISPLAY_FONT,
             letterSpacing: -1.5,
             wordBreak: "keep-all",
+            ...WRAP_BALANCE,
           }}
         >
-          <EditableResultText
-            copy={copy}
-            onChange={onCopyChange}
-            path={["highlightBox"]}
-            maxLength={60}
-            placeholder="한 줄 임팩트 카피 (예: 수분 가득, 과즙 팡팡!)"
-            // F(minor): 검정 밴드 위 빨강(저대비) → accent.soft(밝은 틴트)로 가독성 확보(01·04).
-            // 틴트 버전에선 accent.dark로 대비 확보.
-            style={{ color: copyColor }}
-          />
+          {overrideText != null ? (
+            // 부정문 안전장치로 story에서 발췌한 대체 문구 — 표시 전용(편집은 story 쪽).
+            <span style={{ color: copyColor }}>{overrideText}</span>
+          ) : (
+            <EditableResultText
+              copy={copy}
+              onChange={onCopyChange}
+              path={["highlightBox"]}
+              maxLength={60}
+              placeholder="한 줄 임팩트 카피 (예: 수분 가득, 과즙 팡팡!)"
+              // F(minor): 검정 밴드 위 빨강(저대비) → accent.soft(밝은 틴트)로 가독성 확보(01·04).
+              // 틴트 버전에선 accent.dark로 대비 확보.
+              style={{ color: copyColor }}
+            />
+          )}
         </p>
       </div>
 
@@ -3080,8 +3206,9 @@ function GalleryBlock({
                     bottom: 16,
                     background: "rgba(33,37,41,0.62)",
                     color: "#FFFFFF",
-                    padding: "8px 18px",
-                    fontSize: isMobile ? 13 : 20,
+                    // v4.x: 캡션 알약 크기 상향("너무 작아" 실물 피드백). 폰트·패딩 비례 확대.
+                    padding: isMobile ? "9px 20px" : "12px 26px",
+                    fontSize: isMobile ? 16 : 26,
                     fontWeight: 700,
                     fontFamily: BODY_FONT,
                     letterSpacing: -0.3,
@@ -3388,6 +3515,7 @@ function SpecBlock({
               onChange={onCopyChange}
               path={["spec", i, "label"]}
               maxLength={30}
+              renderDisplay={renderNoBreakParens}
             />
           </span>
         </div>
@@ -3468,6 +3596,7 @@ function SpecBlock({
                   path={["spec", i, "value"]}
                   maxLength={100}
                   placeholder={s.label}
+                  renderDisplay={renderNoBreakParens}
                 />
               </div>
             )
@@ -3607,6 +3736,7 @@ function KeyPointsBig({
             lineHeight: 1.1,
             fontFamily: DISPLAY_FONT,
             letterSpacing: -1.5,
+            ...WRAP_BALANCE,
           }}
         >
           <OverrideText
@@ -3688,6 +3818,7 @@ function KeyPointsBig({
                 letterSpacing: -1.2,
                 position: "relative",
                 zIndex: 1,
+                ...WRAP_BALANCE,
               }}
             >
               <EditableResultText
@@ -3712,6 +3843,7 @@ function KeyPointsBig({
                 wordBreak: "keep-all",
                 position: "relative",
                 zIndex: 1,
+                ...WRAP_PRETTY,
               }}
             >
               <EditableResultText
@@ -4235,17 +4367,17 @@ function SizeDiagramBlock({
                   letterSpacing: -0.3,
                 }}
               >
-                <OverrideText id="size.weightLabel" fallback="중량" maxLength={16} /> · {weight.trim()}
+                <OverrideText id="size.weightLabel" fallback="중량" maxLength={16} /> · {renderNoBreakParens(weight.trim())}
               </div>
             )}
             {perPieceLabel && (
               <div style={{ fontSize: isMobile ? 18 : 30, color: SUB, fontFamily: BODY_FONT, fontWeight: 600 }}>
-                {perPieceLabel}
+                {renderNoBreakParens(perPieceLabel)}
               </div>
             )}
             {boxCountLabel && (
               <div style={{ fontSize: isMobile ? 18 : 32, color: accent.dark, fontFamily: BODY_FONT, fontWeight: 800 }}>
-                {boxCountLabel}
+                {renderNoBreakParens(boxCountLabel)}
               </div>
             )}
           </div>
@@ -4586,7 +4718,7 @@ function PackagingBlock({
               <OverrideText id="package.weightLabel" fallback="중량" maxLength={16} />
             </span>
             <span style={{ fontSize: isMobile ? 18 : 30, fontWeight: 700, color: INK, fontFamily: BODY_FONT }}>
-              {weight.trim()}
+              {renderNoBreakParens(weight.trim())}
             </span>
           </div>
         )}
@@ -5283,6 +5415,7 @@ function SectionTitle({
             lineHeight: 1.05,
             fontFamily: DISPLAY_FONT,
             letterSpacing: -1,
+            ...WRAP_BALANCE,
           }}
         >
           {editId ? <OverrideText id={editId} fallback={title} maxLength={40} /> : title}

@@ -13,7 +13,7 @@
  * 이 래퍼가 immutable update를 담당.
  */
 
-import type { CSSProperties } from "react"
+import type { CSSProperties, ReactNode } from "react"
 import type { CopyOutput, CopySpec, CopyFAQ, CopyKeyPoint } from "@/lib/ai/types"
 import { InlineEdit } from "./InlineEdit"
 
@@ -45,6 +45,11 @@ export interface EditableResultTextProps {
   disabled?: boolean
   ariaLabel?: string
   preserveWhitespace?: boolean
+  /**
+   * 표시 모드 리치 렌더 (InlineEdit로 그대로 전달). 예: 괄호 구간 nowrap 처리.
+   * 편집(클릭 후 input)·hover 연필·JPG 위생은 InlineEdit이 그대로 유지한다.
+   */
+  renderDisplay?: (value: string) => ReactNode
 }
 
 export function EditableResultText({
@@ -58,6 +63,7 @@ export function EditableResultText({
   disabled,
   ariaLabel,
   preserveWhitespace,
+  renderDisplay,
 }: EditableResultTextProps) {
   const current = readPath(copy, path)
 
@@ -72,6 +78,7 @@ export function EditableResultText({
       disabled={disabled}
       ariaLabel={ariaLabel}
       preserveWhitespace={preserveWhitespace}
+      renderDisplay={renderDisplay}
     />
   )
 }
