@@ -30,6 +30,7 @@ import {
   type Work,
 } from "@/lib/storage/works-db"
 import { PRESET_KEYWORDS } from "@/domain/keywords"
+import { getEnhancedUrl } from "@/lib/image-enhance/enhance-runner"
 import { t } from "@/lib/i18n"
 import { validateProductNameSeo } from "@/lib/ai/validate"
 import { detectFruitFactKey, FRUIT_FACTS } from "@/domain/fruit-facts"
@@ -64,10 +65,47 @@ async function blobToUploadedImage(blob: Blob, idx: number): Promise<UploadedIma
       id: `restored-${Date.now()}-${idx}`,
       file,
       url,
+      // 복원 직후엔 원본을 표시(url=rawUrl). 보정 ON이면 아래 동기화 effect가 보정본으로 스왑.
+      rawUrl: url,
       ...dims,
     }
   } catch {
     return null
+  }
+}
+
+/**
+ * 단일 슬롯(포장/크기) 사진의 자동 보정 표시 상태를 토글에 맞춰 동기화.
+ * - ON: 현재 원본을 표시 중이면(url===rawUrl) 보정본 URL로 스왑(캐시 dedup).
+ * - OFF: 보정본을 표시 중이면 원본(rawUrl)으로 되돌림(재보정 없음).
+ * setImages 계열과 동일하게, 변화가 없으면 이전 값을 그대로 반환해 불필요한 렌더/루프를 막는다.
+ */
+function syncSingleEnhance(
+  img: UploadedImage | null,
+  enabled: boolean,
+  isCancelled: () => boolean,
+  setImg: React.Dispatch<React.SetStateAction<UploadedImage | null>>,
+): void {
+  if (!img || !img.rawUrl) return
+  if (enabled) {
+    if (img.url !== img.rawUrl) return // 이미 보정본 표시 중
+    const { id, file } = img
+    void getEnhancedUrl(file)
+      .then((enhUrl) => {
+        if (isCancelled()) return
+        setImg((cur) =>
+          cur && cur.id === id && cur.file === file && cur.rawUrl && cur.url === cur.rawUrl
+            ? { ...cur, url: enhUrl }
+            : cur,
+        )
+      })
+      .catch(() => {
+        /* 보정 실패 시 원본 유지 */
+      })
+  } else {
+    setImg((cur) =>
+      cur && cur.rawUrl && cur.url !== cur.rawUrl ? { ...cur, url: cur.rawUrl } : cur,
+    )
   }
 }
 
@@ -144,6 +182,12 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
    * 생성 시 web_search로 품종 일반 참고 정보를 조사해 카피 깊이를 높인다(회당 약 30~70원·10~20초 추가).
    */
   const [researchEnabled, setResearchEnabled] = useState(true)
+  /**
+   * 사진 자동 보정 토글 — 기본 ON. Work 레코드(enhanceImages)에 저장·복원.
+   * ON이면 업로드/복원된 이미지의 url을 보정본으로 스왑, OFF면 원본 유지.
+   * 저장 blob은 항상 원본(보정본 저장 안 함 → 알고리즘 개선 시 재적용 가능).
+   */
+  const [enhanceImages, setEnhanceImages] = useState(true)
   const tone: CopyTone = "sincere"
   /** v2.7: 게이트 UI 삭제. 내부 상수 true 유지 (API 안전망 / 규칙 5 준수) */
   const isOrdinaryProduce = true
@@ -341,6 +385,8 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         setImages(restored)
         setPackagingImage(restoredPackaging)
         setSizeImage(restoredSize)
+        // 사진 자동 보정 토글 복원 — 구버전 저장본엔 없음(undefined → 기본 ON, 하위호환).
+        setEnhanceImages(work.enhanceImages ?? true)
         setCategory(input.category)
         setProductName(input.productType)
         setVariety(input.variety ?? "")
@@ -396,6 +442,76 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       ref.current = []
     }
   }, [])
+
+  /**
+   * 사진 자동 보정 동기화 — images(추가/복원)·enhanceImages(토글) 변화에 맞춰 각 이미지의 url을 스왑.
+   * - ON: 아직 원본을 표시 중인(url===rawUrl) 이미지를 보정본으로(캐시 dedup, 동시 2개 제한).
+   * - OFF: 보정본 표시 중인 이미지를 원본(rawUrl)으로 즉시 되돌림(재보정 없음).
+   * 변화 없으면 이전 배열 참조를 그대로 반환해 렌더/effect 재실행 루프를 끊는다.
+   */
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    let cancelled = false
+    if (enhanceImages) {
+      for (const img of images) {
+        if (!img.rawUrl || img.url !== img.rawUrl) continue // 이미 보정본 표시 중
+        const { id, file } = img
+        void getEnhancedUrl(file)
+          .then((enhUrl) => {
+            if (cancelled) return
+            setImages((prev) => {
+              let changed = false
+              const next = prev.map((im) => {
+                if (im.id === id && im.file === file && im.rawUrl && im.url === im.rawUrl) {
+                  changed = true
+                  return { ...im, url: enhUrl }
+                }
+                return im
+              })
+              return changed ? next : prev
+            })
+          })
+          .catch(() => {
+            /* 보정 실패 시 원본 유지 */
+          })
+      }
+    } else {
+      setImages((prev) => {
+        let changed = false
+        const next = prev.map((im) => {
+          if (im.rawUrl && im.url !== im.rawUrl) {
+            changed = true
+            return { ...im, url: im.rawUrl }
+          }
+          return im
+        })
+        return changed ? next : prev
+      })
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [images, enhanceImages])
+
+  /** 포장 슬롯 사진 보정 동기화. */
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    let cancelled = false
+    syncSingleEnhance(packagingImage, enhanceImages, () => cancelled, setPackagingImage)
+    return () => {
+      cancelled = true
+    }
+  }, [packagingImage, enhanceImages])
+
+  /** 크기 비교 슬롯 사진 보정 동기화. */
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    let cancelled = false
+    syncSingleEnhance(sizeImage, enhanceImages, () => cancelled, setSizeImage)
+    return () => {
+      cancelled = true
+    }
+  }, [sizeImage, enhanceImages])
 
   const hasMin =
     images.length >= 1 && productName.trim() && isOrdinaryProduce
@@ -548,6 +664,8 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
           // v3.7: 전용 슬롯 사진 — 일반 imageBlobs와 별도 저장(없으면 null).
           packagingBlob: packagingImage?.file ?? null,
           sizeBlob: sizeImage?.file ?? null,
+          // 사진 자동 보정 토글 — 표시 옵션. 저장 blob은 항상 원본.
+          enhanceImages,
         }
         void saveWork(work)
       } catch (saveErr) {
@@ -580,6 +698,8 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
             // v3.7: 전용 슬롯 사진 유지(인라인 편집 저장 시에도 유실 방지).
             packagingBlob: packagingImage?.file ?? null,
             sizeBlob: sizeImage?.file ?? null,
+            // 사진 자동 보정 토글 유지.
+            enhanceImages,
           }
           await saveWork(work)
         } catch (e) {
@@ -1122,6 +1242,88 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
               position: "absolute",
               top: 3,
               left: researchEnabled ? 23 : 3,
+              width: 18,
+              height: 18,
+              borderRadius: "50%",
+              background: "#fff",
+              transition: "left 0.15s",
+              boxShadow: "0 1px 2px rgba(0,0,0,0.2)",
+            }}
+          />
+        </label>
+      </div>
+
+      {/* 사진 자동 보정 토글 — 기본 ON. 업로드/복원된 사진을 과일 특화 자동 보정으로 표시(내보내기 반영). */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          padding: "12px 14px",
+          marginBottom: 12,
+          background: "var(--color-bg-subtle)",
+          border: "1px solid var(--color-neutral-200)",
+          borderRadius: "var(--radius-xs)",
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: 14,
+              fontWeight: 700,
+              color: "var(--color-neutral-900)",
+            }}
+          >
+            🎨 사진 자동 보정
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--color-neutral-600)",
+              lineHeight: 1.5,
+              marginTop: 2,
+            }}
+          >
+            밝기·색감·선명도를 과일 사진에 맞게 자동 보정해요. 원본은 그대로 보관돼요.
+          </div>
+        </div>
+        <label
+          style={{
+            position: "relative",
+            display: "inline-block",
+            width: 44,
+            height: 24,
+            flexShrink: 0,
+            cursor: isGenerating ? "not-allowed" : "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            role="switch"
+            aria-label="사진 자동 보정"
+            checked={enhanceImages}
+            disabled={isGenerating}
+            onChange={(e) => setEnhanceImages(e.target.checked)}
+            style={{ opacity: 0, width: 0, height: 0 }}
+          />
+          <span
+            aria-hidden
+            style={{
+              position: "absolute",
+              inset: 0,
+              borderRadius: 999,
+              transition: "background 0.15s",
+              background: enhanceImages
+                ? "var(--color-primary-600)"
+                : "var(--color-neutral-300)",
+            }}
+          />
+          <span
+            aria-hidden
+            style={{
+              position: "absolute",
+              top: 3,
+              left: enhanceImages ? 23 : 3,
               width: 18,
               height: 18,
               borderRadius: "50%",

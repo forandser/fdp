@@ -26,6 +26,8 @@ const LIMITS = {
   highlightBox: 30,
   problemArcQuestion: 44,
   problemArcProblem: 28,
+  // v4.3: 히어로 후킹 캡션 — 목표 12~24자이나 관대하게 40자까지 허용(초과분만 절삭).
+  heroKicker: 40,
 } as const
 
 /** problemArc.problems 최대 개수 (keyPoints 3개와 1:1 호응 — 2~3개). */
@@ -315,6 +317,9 @@ const RESEARCH_LIMITS = {
   sellingAngles: 5,
   commonComplaints: 4,
   namingNotes: 160,
+  // v4.3: 시장 후킹 문구 — 개수 6개, 각 60자로 관대하게 절삭(하위호환).
+  hookPhrases: 6,
+  hookPhraseLen: 60,
 } as const
 
 /** 안전한 출처 URL만 통과 (http/https + 파싱 가능). 그 외(javascript: 등)는 버린다. */
@@ -348,9 +353,13 @@ function pickResearchSources(v: unknown): ResearchSource[] {
   return out
 }
 
-function pickResearchList(v: unknown, max: number = RESEARCH_LIMITS.listItems): string[] {
+function pickResearchList(
+  v: unknown,
+  max: number = RESEARCH_LIMITS.listItems,
+  itemLen: number = RESEARCH_LIMITS.listItemLen,
+): string[] {
   return safeStringArray(v)
-    .map((s) => trimTo(s, RESEARCH_LIMITS.listItemLen))
+    .map((s) => trimTo(s, itemLen))
     .filter(Boolean)
     .slice(0, max)
 }
@@ -367,6 +376,12 @@ export function validateResearchResult(raw: unknown): ResearchResult | null {
   const sellingAngles = pickResearchList(raw.sellingAngles, RESEARCH_LIMITS.sellingAngles)
   const commonComplaints = pickResearchList(raw.commonComplaints, RESEARCH_LIMITS.commonComplaints)
   const namingNotes = trimTo(safeString(raw.namingNotes), RESEARCH_LIMITS.namingNotes)
+  // v4.3: 시장 후킹 문구 — 최대 6개, 각 60자로 관대하게 절삭. 비면 키 생략(하위호환).
+  const hookPhrases = pickResearchList(
+    raw.hookPhrases,
+    RESEARCH_LIMITS.hookPhrases,
+    RESEARCH_LIMITS.hookPhraseLen,
+  )
 
   const result: ResearchResult = {
     varietyNotes: pickResearchList(raw.varietyNotes),
@@ -378,6 +393,7 @@ export function validateResearchResult(raw: unknown): ResearchResult | null {
     ...(sellingAngles.length > 0 ? { sellingAngles } : {}),
     ...(commonComplaints.length > 0 ? { commonComplaints } : {}),
     ...(namingNotes ? { namingNotes } : {}),
+    ...(hookPhrases.length > 0 ? { hookPhrases } : {}),
     sources: pickResearchSources(raw.sources),
   }
 
@@ -389,7 +405,8 @@ export function validateResearchResult(raw: unknown): ResearchResult | null {
     result.storageTips.length > 0 ||
     sellingAngles.length > 0 ||
     commonComplaints.length > 0 ||
-    namingNotes.length > 0
+    namingNotes.length > 0 ||
+    hookPhrases.length > 0
   return hasContent ? result : null
 }
 
@@ -412,11 +429,16 @@ export function validateCopyOutput(raw: unknown): CopyOutput {
 
   const headlineCandidates = pickHeadlineCandidates(raw.headlineCandidates)
   const problemArc = pickProblemArc(raw.problemArc)
+  // v4.3: 히어로 후킹 캡션 — 40자로 관대하게 절삭. 비면 키 생략(구버전 저장본과 동일 형태,
+  // A 렌더가 기본 캡션으로 폴백). 필드명 정확히 "heroKicker" — A 에이전트 소비 계약.
+  const heroKicker = trimTo(safeString(raw.heroKicker), LIMITS.heroKicker)
 
   return {
     headline: trimTo(safeString(raw.headline), LIMITS.headline),
     // 옵셔널 — 후보 없으면 키 자체를 넣지 않아 하위호환 유지.
     ...(headlineCandidates ? { headlineCandidates } : {}),
+    // 옵셔널 — 히어로 후킹 캡션 없으면(구버전/생성 실패) 키 생략.
+    ...(heroKicker ? { heroKicker } : {}),
     // 옵셔널 — 서사 아크 없으면(구버전/생성 실패) 키 생략 → 블록 미노출.
     ...(problemArc ? { problemArc } : {}),
     subheadline: trimTo(safeString(raw.subheadline), LIMITS.subheadline),

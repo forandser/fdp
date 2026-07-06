@@ -167,6 +167,13 @@ export function mergeSection(
   if (nextCandidates && nextCandidates.length > 0) {
     merged.headlineCandidates = nextCandidates
   }
+  // v4.3: heroKicker(히어로 후킹 캡션)도 옵셔널 — 섹션 재생성 patch엔 없으므로 current 값을 보존한다.
+  // (이 처리가 없으면 headline 등 아무 섹션이나 재생성할 때 히어로 캡션이 사라진다.)
+  const nextHeroKicker =
+    "heroKicker" in patch ? patch.heroKicker : current.heroKicker
+  if (nextHeroKicker && nextHeroKicker.trim()) {
+    merged.heroKicker = nextHeroKicker
+  }
   // problemArc도 옵셔널 — 섹션 재생성 patch엔 없으므로 current 값을 보존한다.
   // (이 처리가 없으면 아무 섹션이나 재생성할 때 서사 아크가 사라진다.)
   const nextProblemArc = "problemArc" in patch

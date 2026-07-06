@@ -57,6 +57,7 @@ export function ResearchSummaryPanel({ research }: { research?: ResearchResult }
     sellingAngles,
     commonComplaints,
     namingNotes,
+    hookPhrases,
     sources,
   } = research
 
@@ -105,6 +106,7 @@ export function ResearchSummaryPanel({ research }: { research?: ResearchResult }
         <Section title="소비자 관심 포인트" items={consumerInterests} />
         <Section title="시장 소구점" items={sellingAngles ?? []} />
         <Section title="구매자 실제 불만" items={commonComplaints ?? []} />
+        <Section title="시장 후킹 문구" items={hookPhrases ?? []} />
         <Section title="자주 묻는 질문" items={faqSeeds} />
 
         {sources.length > 0 && (

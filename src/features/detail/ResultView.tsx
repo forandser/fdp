@@ -237,19 +237,20 @@ const LINE = "#E9ECEF"
 const PLACEHOLDER = "#ADB5BD"
 
 /**
- * v2.5 폰트 계층 — 잘 팔리는 스마트스토어 톤 (임팩트 강력).
+ * v5.0 폰트 계층 — 실사용자(과일 셀러) 피드백 반영. 기존 무료 검은고딕(단일 400 굵기,
+ * 응축형)이 대형 사이즈에서 뭉개져 "깨진" 인상을 줘서 전면 퇴출하고,
+ * 이미 임베드된 Pretendard Black(900)로 통일한다(상위 커머스 페이지의 실제 관행).
  *
- * DISPLAY (Hero 초대형, highlightBox 슬로건, POINT 넘버)
- *   = BlackHanSans — 검은 고딕, 스마트스토어·쿠팡 상위 셀러 표준
- * HEAD (섹션 타이틀 h2, POINT title, 스펙 큰 값)
- *   = Pretendard 900 — 가독성 + 임팩트 균형
- * BODY (본문·스토리·설명)
- *   = Pretendard 500/700
- * CAPTION (라벨·뱃지·소형 강조)
- *   = Pretendard 700 + letterSpacing 강조
+ * ⚠️ DISPLAY_FONT를 쓰는 곳은 반드시 fontWeight 900을 명시할 것.
+ *    (직전 검은고딕은 weight 400 자체가 검은 굵기였으나, Pretendard는 400이면
+ *     Regular로 떨어져 헤딩이 완전히 망가진다.)
+ *
+ * DISPLAY (Hero 초대형, highlightBox 슬로건, POINT 넘버, 섹션 타이틀)
+ *   = Pretendard 900 — 굵고 또렷한 검은고딕 대체
+ * BODY (본문·스토리·설명·라벨·뱃지)
+ *   = Pretendard 500/700/800
  */
-const DISPLAY_FONT =
-  '"BlackHanSans", "Pretendard", "NotoSansKR", sans-serif'
+const DISPLAY_FONT = '"Pretendard", "NotoSansKR", sans-serif'
 const BODY_FONT = '"Pretendard", "NotoSansKR", sans-serif'
 
 /**
@@ -292,6 +293,36 @@ function renderNoBreakParens(text: string): React.ReactNode {
     if (re.lastIndex === m.index) re.lastIndex++ // 빈 괄호 무한루프 방지
   }
   if (last < text.length) parts.push(text.slice(last))
+  return <>{parts}</>
+}
+
+/**
+ * 헤드라인 안의 "숫자+단위" 사실 토큰만 accent 색으로 하이라이트한다 (Hero h1 표시 전용).
+ * 예: "13Brix", "13 브릭스", "2kg", "당도 13" → 그 부분만 accent.
+ * 지어내는 것 없음 — 이미 입력에 있는 문자열의 색만 바꾼다. 편집 UX는 InlineEdit이 유지
+ * (renderDisplay는 표시 모드에서만 호출). 토큰이 없으면 원문(단색)을 그대로 돌려준다 —
+ * 상품명 등을 억지로 강조하지 않는다.
+ */
+const HEADLINE_TOKEN_RE =
+  /당도\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s?(?:brix|Brix|BRIX|브릭스|kg|Kg|KG|g|통|구|알|과|송이|미|호|개(?!월)|팩|박스|입)/g
+function renderHeadlineAccent(value: string, accentColor: string): React.ReactNode {
+  HEADLINE_TOKEN_RE.lastIndex = 0
+  const parts: React.ReactNode[] = []
+  let last = 0
+  let k = 0
+  let m: RegExpExecArray | null
+  while ((m = HEADLINE_TOKEN_RE.exec(value)) !== null) {
+    if (m.index > last) parts.push(value.slice(last, m.index))
+    parts.push(
+      <span key={`ht${k++}`} style={{ color: accentColor }}>
+        {m[0]}
+      </span>,
+    )
+    last = m.index + m[0].length
+    if (HEADLINE_TOKEN_RE.lastIndex === m.index) HEADLINE_TOKEN_RE.lastIndex++
+  }
+  if (k === 0) return value // 토큰 없음 → 단색 유지
+  if (last < value.length) parts.push(value.slice(last))
   return <>{parts}</>
 }
 
@@ -640,9 +671,10 @@ function DomeTransition({
   isMobile: boolean
 }) {
   const circle = isMobile ? 56 : 88
-  // v3.4 fix(이슈1): 'WHY'(BlackHanSans 36px)가 88px 원을 좌우로 뚫고 링과 겹쳤다.
-  // BlackHanSans 대문자는 글자당 폭이 커(≈0.75em) 3글자 "WHY"의 실폭이 원 안지름을
-  // 넘겼다. 라벨 길이에 맞춰 폰트를 계산해 좌우 여백(안지름의 ~78%)을 확보한다:
+  // v3.4 fix(이슈1): 'WHY'(구 검은고딕 36px)가 88px 원을 좌우로 뚫고 링과 겹쳤다.
+  // 대문자 실폭이 원 안지름을 넘겼던 문제라, 라벨 길이에 맞춰 폰트를 계산해 좌우
+  // 여백(안지름의 ~78%)을 확보한다. (v5.0 Pretendard 900은 라틴 대문자 폭이 더 좁아
+  // 아래 0.75em 가정보다 실제로 더 작게 들어가므로 넘침 여유가 오히려 커졌다.)
   //   fontSize ≈ (원 안지름 * 0.78) / (글자수 * 0.75).  원지름의 ~55%를 상한으로 둔다.
   const border = isMobile ? 3 : 4
   const inner = circle - border * 2
@@ -681,7 +713,7 @@ function DomeTransition({
           overflow: "hidden",
           color: accent.dark,
           fontSize: labelFont,
-          fontWeight: 400,
+          fontWeight: 900,
           fontFamily: DISPLAY_FONT,
           lineHeight: 1,
           letterSpacing: -1,
@@ -805,9 +837,9 @@ function TiltSticker({
         padding: isMobile ? "10px 22px" : "16px 36px",
         borderRadius: 12,
         fontSize: isMobile ? 22 : 40,
-        fontWeight: 400,
+        fontWeight: 900,
         fontFamily: DISPLAY_FONT,
-        letterSpacing: -0.5,
+        letterSpacing: -1,
         lineHeight: 1.1,
         boxShadow: `0 4px 12px ${accent.accent}55`,
       }}
@@ -1144,9 +1176,9 @@ function CtaPill({ text, isMobile, editId }: { text: string; isMobile: boolean; 
         justifyContent: "center",
         gap: isMobile ? 8 : 12,
         fontSize: isMobile ? 22 : 40,
-        fontWeight: 400,
+        fontWeight: 900,
         fontFamily: DISPLAY_FONT,
-        letterSpacing: -0.8,
+        letterSpacing: -1,
         color: INK,
         lineHeight: 1.25,
         wordBreak: "keep-all",
@@ -1994,13 +2026,13 @@ function WhyBrandCard({
         <h2
           style={{
             fontSize: isMobile ? 30 : 52,
-            fontWeight: 400,
+            fontWeight: 900,
             margin: 0,
             marginBottom: isMobile ? 28 : 40,
             lineHeight: 1.2,
             color: INK,
             fontFamily: DISPLAY_FONT,
-            letterSpacing: -1,
+            letterSpacing: -1.2,
           }}
         >
           <OverrideText
@@ -2078,11 +2110,11 @@ function RecipeBlock({
         <h2
           style={{
             fontSize: isMobile ? 30 : 50,
-            fontWeight: 400,
+            fontWeight: 900,
             margin: 0,
             color: INK,
             fontFamily: DISPLAY_FONT,
-            letterSpacing: -1.5,
+            letterSpacing: -1.2,
             lineHeight: 1.15,
           }}
         >
@@ -2284,6 +2316,10 @@ function HeroBlock({
   const originText = origin?.trim()
   // C12: origin이 "국내산/수입산/해외산"류(특정 지역 아님)면 "From. {origin}" 배지 숨김.
   const showOriginBadge = !!originText && !isGenericOrigin(originText)
+  // v5.0 킥커(후킹 캡션): heroKicker(B 에이전트 생성) 우선, 없으면 기존 "오늘도 신선한 {name}".
+  // 지어내지 않음 — 둘 다 없으면 킥커 미노출. 편집 슬롯 id는 "hero.caption" 그대로 유지.
+  const kickerText = (copy.heroKicker?.trim() || (name ? `오늘도 신선한 ${name}` : "")).trim()
+  const showKicker = kickerText.length > 0
   return (
     <div style={{ background: "#FFFFFF" }}>
       {/* v2.9: 상단 캡션 + 대형 헤드 (수플린 레퍼런스 — 헤드가 이미지 위) */}
@@ -2294,58 +2330,91 @@ function HeroBlock({
           background: accent.soft,
         }}
       >
-        {(name || showOriginBadge) && (
+        {/* v5.0 위계: From 배지(상단) → 넉넉한 여백 → 킥커(rule 선 동반) → 좁은 간격 → 헤드라인.
+            "킥커 위 여백 > 킥커–헤드라인 간격"으로 킥커+헤드라인을 한 쌍으로 묶는다. */}
+        {showOriginBadge && (
           <div
             style={{
               display: "flex",
-              alignItems: "center",
               justifyContent: "center",
-              flexWrap: "wrap",
-              gap: isMobile ? 8 : 12,
-              marginBottom: isMobile ? 18 : 24,
+              marginBottom: showKicker ? (isMobile ? 22 : 34) : isMobile ? 18 : 24,
             }}
           >
-            {name && (
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                padding: isMobile ? "5px 14px" : "8px 20px",
+                borderRadius: 999,
+                background: accent.accent,
+                color: "#FFFFFF",
+                fontSize: isMobile ? 14 : 24,
+                fontWeight: 800,
+                letterSpacing: 0.5,
+                fontFamily: BODY_FONT,
+              }}
+            >
+              From. {originText}
+            </span>
+          </div>
+        )}
+        {showKicker && (
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              marginBottom: isMobile ? 12 : 18,
+            }}
+          >
+            <span style={{ display: "inline-flex", alignItems: "center", gap: isMobile ? 10 : 14 }}>
+              {/* 좌측 짧은 rule — 디자이너 킥커 디테일 */}
               <span
+                aria-hidden
                 style={{
-                  fontSize: isMobile ? 15 : 26,
-                  color: SUB,
-                  fontWeight: 600,
-                  fontFamily: BODY_FONT,
-                }}
-              >
-                <OverrideText id="hero.caption" fallback={`오늘도 신선한 ${name}`} maxLength={40} />
-              </span>
-            )}
-            {showOriginBadge && (
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  padding: isMobile ? "5px 14px" : "8px 20px",
-                  borderRadius: 999,
+                  width: isMobile ? 18 : 30,
+                  height: 2,
+                  borderRadius: 1,
                   background: accent.accent,
-                  color: "#FFFFFF",
-                  fontSize: isMobile ? 14 : 24,
+                  flexShrink: 0,
+                }}
+              />
+              <span
+                style={{
+                  fontSize: isMobile ? 14 : 22,
+                  color: accent.accent,
                   fontWeight: 800,
-                  letterSpacing: 0.5,
+                  letterSpacing: isMobile ? 1.5 : 2.5,
                   fontFamily: BODY_FONT,
+                  lineHeight: 1.3,
+                  wordBreak: "keep-all",
                 }}
               >
-                From. {originText}
+                <OverrideText id="hero.caption" fallback={kickerText} maxLength={40} />
               </span>
-            )}
+              {/* 우측 짧은 rule */}
+              <span
+                aria-hidden
+                style={{
+                  width: isMobile ? 18 : 30,
+                  height: 2,
+                  borderRadius: 1,
+                  background: accent.accent,
+                  flexShrink: 0,
+                }}
+              />
+            </span>
           </div>
         )}
         <h1
           style={{
-            fontSize: isMobile ? 52 : 90,
-            fontWeight: 400,
+            fontSize: isMobile ? 48 : 80,
+            fontWeight: 900,
             margin: 0,
             color: INK,
-            lineHeight: 1.08,
-            letterSpacing: -2,
+            lineHeight: 1.14,
+            letterSpacing: isMobile ? -1.2 : -2,
             fontFamily: DISPLAY_FONT,
+            ...WRAP_BALANCE,
           }}
         >
           <EditableResultText
@@ -2354,6 +2423,7 @@ function HeroBlock({
             path={["headline"]}
             maxLength={40}
             placeholder={factPlaceholder?.headline ?? "여기에 상품 헤드라인을 적어보세요"}
+            renderDisplay={(v) => renderHeadlineAccent(v, accent.accent)}
           />
         </h1>
 
@@ -2538,7 +2608,7 @@ function HeroBlock({
  * 서사 긴장을 만들고, 이어지는 keyPoints(POINT 카드)가 그 problems의 해결책이 되게 한다.
  *
  * 구성:
- *  - 공감 질문 (BlackHanSans 46~52px 중앙)
+ *  - 공감 질문 (Pretendard 900, 46~54px 중앙)
  *  - "{n}가지 이유" pill 배지 (accent)
  *  - 문제 카드 세로 스택 — 번호 01/02/03 + 문제 한 줄 (34px). 사진 슬롯 없음(텍스트 카드).
  *
@@ -2625,11 +2695,11 @@ function ProblemArcBlock({
         <h2
           style={{
             fontSize: isMobile ? 30 : 54,
-            fontWeight: 400,
+            fontWeight: 900,
             margin: 0,
             color: accent.dark,
             lineHeight: 1.24,
-            letterSpacing: -1,
+            letterSpacing: -1.4,
             fontFamily: DISPLAY_FONT,
             wordBreak: "keep-all",
           }}
@@ -2734,17 +2804,17 @@ function ProblemArcBlock({
               padding: isMobile ? "20px 22px" : "32px 40px",
             }}
           >
-            {/* 번호 01/02/03 — accent, BlackHanSans */}
+            {/* 번호 01/02/03 — accent, Pretendard 900 */}
             <span
               aria-hidden
               style={{
                 flexShrink: 0,
                 fontSize: isMobile ? 32 : 54,
-                fontWeight: 400,
+                fontWeight: 900,
                 color: accent.accent,
                 fontFamily: DISPLAY_FONT,
                 lineHeight: 1,
-                letterSpacing: -1,
+                letterSpacing: -1.5,
               }}
             >
               {String(i + 1).padStart(2, "0")}
@@ -2969,7 +3039,7 @@ function StoryBlock({
 /**
  * SensoryPunchBlock — 임팩트 카피-사진 밀착 블록 (참외 레퍼런스).
  *
- * 검정(#1A1A1A) 풀블리드 배경 + 대형 임팩트 카피(BlackHanSans) + 바로 아래 실사진 1장 밀착.
+ * 검정(#1A1A1A) 풀블리드 배경 + 대형 임팩트 카피(Pretendard 900) + 바로 아래 실사진 1장 밀착.
  * 카피 소스는 copy.highlightBox(기존 검정 슬로건) — StoryBlock에서 이 블록으로 승격.
  * highlightBox가 비어 있으면 호출부에서 렌더하지 않는다(게이팅).
  *
@@ -3017,13 +3087,13 @@ function SensoryPunchBlock({
       >
         <p
           style={{
-            fontSize: isMobile ? 42 : 72,
-            fontWeight: 400,
+            fontSize: isMobile ? 40 : 70,
+            fontWeight: 900,
             color: tinted ? INK : "#FFFFFF",
             margin: 0,
             lineHeight: 1.18,
             fontFamily: DISPLAY_FONT,
-            letterSpacing: -1.5,
+            letterSpacing: -2,
             wordBreak: "keep-all",
             ...WRAP_BALANCE,
           }}
@@ -3540,7 +3610,7 @@ function SpecBlock({
                   }}
                 >
                   {/* v2.5: 당도 대형 숫자 — 임무D 확대(모바일 64 / 데스크톱 108, 시각 앵커) */}
-                  <span style={{ fontSize: isMobile ? 64 : 108, fontWeight: 400, letterSpacing: -3 }}>
+                  <span style={{ fontSize: isMobile ? 60 : 100, fontWeight: 900, letterSpacing: -3 }}>
                     {sweetnessMatch[1]}
                   </span>
                   <span
@@ -3729,13 +3799,13 @@ function KeyPointsBig({
         {/* 임무D: 섹션 헤드 — 히어로급 임팩트 (모바일 42 / 데스크톱 76) */}
         <h2
           style={{
-            fontSize: isMobile ? 42 : 76,
-            fontWeight: 400,
+            fontSize: isMobile ? 40 : 72,
+            fontWeight: 900,
             margin: 0,
             color: INK,
-            lineHeight: 1.1,
+            lineHeight: 1.12,
             fontFamily: DISPLAY_FONT,
-            letterSpacing: -1.5,
+            letterSpacing: -2,
             ...WRAP_BALANCE,
           }}
         >
@@ -3808,14 +3878,14 @@ function KeyPointsBig({
             </div>
             <h3
               style={{
-                fontSize: isMobile ? 34 : 56,
-                fontWeight: 400,
+                fontSize: isMobile ? 32 : 54,
+                fontWeight: 900,
                 margin: 0,
                 marginBottom: isMobile ? 22 : 28,
                 color: INK,
                 lineHeight: 1.2,
                 fontFamily: DISPLAY_FONT,
-                letterSpacing: -1.2,
+                letterSpacing: -1.5,
                 position: "relative",
                 zIndex: 1,
                 ...WRAP_BALANCE,
@@ -4036,7 +4106,7 @@ function StorageBlock({
                   <span
                     style={{
                       fontSize: isMobile ? 18 : 30,
-                      fontWeight: 400,
+                      fontWeight: 900,
                       color: accent.accent,
                       fontFamily: DISPLAY_FONT,
                       letterSpacing: -0.5,
@@ -4299,11 +4369,11 @@ function SizeDiagramBlock({
           <h2
             style={{
               fontSize: isMobile ? 30 : 52,
-              fontWeight: 400,
+              fontWeight: 900,
               margin: 0,
               color: INK,
               fontFamily: DISPLAY_FONT,
-              letterSpacing: -1,
+              letterSpacing: -1.2,
               lineHeight: 1.1,
             }}
           >
@@ -4469,7 +4539,7 @@ function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: b
         <h2
           style={{
             fontSize: isMobile ? 34 : 60,
-            fontWeight: 400,
+            fontWeight: 900,
             margin: 0,
             color: INK,
             fontFamily: DISPLAY_FONT,
@@ -4651,7 +4721,7 @@ function PackagingBlock({
         <h2
           style={{
             fontSize: isMobile ? 30 : 52,
-            fontWeight: 400,
+            fontWeight: 900,
             margin: 0,
             color: INK,
             fontFamily: DISPLAY_FONT,
@@ -5409,10 +5479,10 @@ function SectionTitle({
         <h2
           style={{
             fontSize,
-            fontWeight: 400,
+            fontWeight: 900,
             color,
             margin: 0,
-            lineHeight: 1.05,
+            lineHeight: 1.08,
             fontFamily: DISPLAY_FONT,
             letterSpacing: -1,
             ...WRAP_BALANCE,

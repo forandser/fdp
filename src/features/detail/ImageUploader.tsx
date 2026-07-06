@@ -2,11 +2,21 @@
 
 import { useCallback, useRef, useState } from "react"
 import { t } from "@/lib/i18n"
+import { revokeEnhanced } from "@/lib/image-enhance/enhance-runner"
 
 export interface UploadedImage {
   id: string
   file: File
+  /**
+   * 표시·내보내기용 URL. 자동 보정 ON이면 보정본 objectURL, OFF면 rawUrl과 동일.
+   * ResultView는 이 url만 읽는다(보정 여부와 무관하게 동작).
+   */
   url: string
+  /**
+   * 원본(무보정) objectURL. 보정 토글 OFF로 되돌릴 때 이 값으로 url을 교체한다.
+   * 없으면(구코드 경로) url을 원본으로 간주.
+   */
+  rawUrl?: string
   width: number
   height: number
 }
@@ -64,6 +74,8 @@ export function ImageUploader({
             id: `${Date.now()}-${Math.round(performance.now())}-${loaded.length}`,
             file: f,
             ...meta,
+            // 업로드 직후엔 원본을 표시(url=rawUrl). 보정 ON이면 DetailMaker가 보정본으로 스왑.
+            rawUrl: meta.url,
           })
         } catch {
           // skip
@@ -78,7 +90,11 @@ export function ImageUploader({
 
   const handleRemove = (id: string) => {
     const removed = images.find((i) => i.id === id)
-    if (removed) URL.revokeObjectURL(removed.url)
+    if (removed) {
+      // 원본 URL revoke + 보정본 캐시 URL revoke(있으면). url은 둘 중 하나이므로 별도 revoke 불필요.
+      URL.revokeObjectURL(removed.rawUrl ?? removed.url)
+      revokeEnhanced(removed.file)
+    }
     onChange(images.filter((i) => i.id !== id))
   }
 
@@ -303,12 +319,16 @@ export function SingleSlotUploader({
       }
       try {
         const meta = await loadImage(file)
-        // 이전 슬롯 사진 objectURL 정리 후 교체.
-        if (image) URL.revokeObjectURL(image.url)
+        // 이전 슬롯 사진 objectURL 정리 후 교체(원본 + 보정본 캐시).
+        if (image) {
+          URL.revokeObjectURL(image.rawUrl ?? image.url)
+          revokeEnhanced(image.file)
+        }
         onChange({
           id: `slot-${Date.now()}-${Math.round(performance.now())}`,
           file,
           ...meta,
+          rawUrl: meta.url,
         })
       } catch {
         setErrorMsg("이미지를 불러오지 못했어요")
@@ -318,7 +338,10 @@ export function SingleSlotUploader({
   )
 
   const handleRemove = () => {
-    if (image) URL.revokeObjectURL(image.url)
+    if (image) {
+      URL.revokeObjectURL(image.rawUrl ?? image.url)
+      revokeEnhanced(image.file)
+    }
     onChange(null)
     setErrorMsg(null)
   }

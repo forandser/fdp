@@ -105,6 +105,14 @@ export interface ResearchResult {
    * 품종 오표기·오용 방지 참고. 못 찾았거나 품종 토큰이 없으면 undefined.
    */
   namingNotes?: string
+  /**
+   * v4.3: 시장에서 실제 쓰이는 후킹 문구·헤드라인 표현 (3~6개, 옵셔널·하위호환).
+   * 상세페이지·후기·블로그가 이 품목에 실제로 쓰는 후킹 표현·헤드라인의 채집.
+   * 카피 생성 시 headline/heroKicker/highlightBox 의 "리듬·구조·관용구" 재료로만 차용
+   * (문장 그대로 복사 금지 — 표절 방지). 이 문구 안의 수치·산지는 이 상품 고유 사실이
+   * 아니므로 승격 금지. 못 찾았으면 undefined(하위호환 — 요약 패널 섹션 미노출).
+   */
+  hookPhrases?: string[]
   /** 인용 출처 목록 (제목+URL). */
   sources: ResearchSource[]
 }
@@ -197,6 +205,15 @@ export interface CopyProblemArc {
 export interface CopyOutput {
   /** 1차 헤드라인 — 가운데 큰 한글 (예: "썬프레 천도 복숭아") */
   headline: string
+  /**
+   * v4.3: 히어로 최상단 후킹 캡션 (선택) — 헤드라인 위에 얹는 12~24자 한 줄.
+   * "오늘도 신선한 {상품명}" 류 범용 기본값을 대체하는, 상품 특화 후킹 문구.
+   * 렌더 소비는 ResultView(A 에이전트) 담당. hookPhrases 의 리듬·구조·관용구를
+   * 1순위 재료로 차용하되 문장 그대로 복사 금지, 입력에 없는 수치·산지·인증 금지,
+   * headline 과 표현 중복 금지, 완결된 구/문장(규칙 58).
+   * 하위호환: 구버전 저장본/생성 실패 시 undefined — A 렌더가 기본 캡션으로 폴백.
+   */
+  heroKicker?: string
   /**
    * 헤드라인 후보 목록 (선택). 서로 다른 후킹 유형 5개
    * (산지 고유명사형/정량 수치형/감각 트리거형/시간·시즌형/미니 서사형)을

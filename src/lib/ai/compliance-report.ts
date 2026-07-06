@@ -125,6 +125,8 @@ export function detectOriginMismatches(
 function flattenCopy(output: CopyOutput): { field: string; text: string }[] {
   const out: { field: string; text: string }[] = []
   if (output.headline) out.push({ field: "headline", text: output.headline })
+  // v4.3: 히어로 후킹 캡션도 허위표현·산지 불일치 스캔 대상(식약처 게이팅).
+  if (output.heroKicker) out.push({ field: "heroKicker", text: output.heroKicker })
   if (output.subheadline) out.push({ field: "subheadline", text: output.subheadline })
   if (output.story) out.push({ field: "story", text: output.story })
   if (output.storage) out.push({ field: "storage", text: output.storage })

@@ -33,6 +33,11 @@ export interface Work {
    * 구버전 저장본엔 없음(옵셔널 — 하위호환). 없거나 null이면 크기 섹션은 무게 데이터만.
    */
   sizeBlob?: Blob | null
+  /**
+   * 사진 자동 보정 토글 상태. 저장은 항상 원본 blob이므로 이 값은 "표시/내보내기 시 보정 적용 여부"만 뜻한다.
+   * 구버전 저장본엔 없음(옵셔널) — undefined면 기본 ON(true)으로 복원(하위호환).
+   */
+  enhanceImages?: boolean
 }
 
 export interface WorkSummary {
@@ -117,6 +122,8 @@ export interface WorkBackupItem {
   packagingBase64?: string | null
   /** v3.7: 크기 비교 전용 슬롯 사진 base64(dataURL). 없으면 생략(하위호환). */
   sizeBase64?: string | null
+  /** 사진 자동 보정 토글 상태. 없으면 기본 ON(하위호환). */
+  enhanceImages?: boolean
 }
 export interface WorkBackup {
   format: "fdp-backup"
@@ -184,6 +191,7 @@ export async function exportAllWorksToJson(): Promise<WorkBackup> {
       imagesBase64,
       packagingBase64,
       sizeBase64,
+      enhanceImages: w.enhanceImages,
     })
   }
   return {
@@ -242,6 +250,7 @@ export async function importBackupJson(
         imageBlobs: blobs,
         packagingBlob,
         sizeBlob,
+        enhanceImages: item.enhanceImages,
       }
       imported++
     } catch {
