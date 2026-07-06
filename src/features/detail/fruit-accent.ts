@@ -21,12 +21,16 @@ export interface AccentPalette {
   soft: string
 }
 
-const RED: AccentPalette = { accent: "#E03131", dark: "#C92A2A", soft: "#FFF5F5" }
-const ORANGE: AccentPalette = { accent: "#E8590C", dark: "#D9480F", soft: "#FFF4E6" }
-const GOLD: AccentPalette = { accent: "#F08C00", dark: "#E67700", soft: "#FFF9DB" }
-const PURPLE: AccentPalette = { accent: "#7048E8", dark: "#5F3DC4", soft: "#F3F0FF" }
-const GREEN: AccentPalette = { accent: "#2F9E44", dark: "#2B8A3E", soft: "#EBFBEE" }
-const PEACH: AccentPalette = { accent: "#F06595", dark: "#E64980", soft: "#FFF0F6" }
+// v2.9 디자이너 뮤트 톤 — 형광기 제거(채도 ↓ + 웜 시프트). 실물 레퍼런스(peach-s02)의
+// 더스티 로즈 블러시처럼 "사람 디자이너가 고른" 차분한 톤. accent엔 흰 글씨 배지가 올라가
+// 므로 흰색 대비를 이전 버전 이상으로 유지(RED/PURPLE ≥ 4.5:1). 웜 계열(주황/골드/복숭아)은
+// 색상 자체가 밝아 흰색 4.5:1이 물리적으로 불가 → 이전 버전과 동등 이상 대비로 맞춤(회귀 없음).
+const RED: AccentPalette = { accent: "#D13F37", dark: "#B93A34", soft: "#FBF1EE" }
+const ORANGE: AccentPalette = { accent: "#DB6129", dark: "#C55524", soft: "#FCF3EA" }
+const GOLD: AccentPalette = { accent: "#D59527", dark: "#C08420", soft: "#FBF6E8" }
+const PURPLE: AccentPalette = { accent: "#7A5FBF", dark: "#64489F", soft: "#F5F2FB" }
+const GREEN: AccentPalette = { accent: "#3F9155", dark: "#337946", soft: "#EFF7F0" }
+const PEACH: AccentPalette = { accent: "#DF7484", dark: "#C75F6E", soft: "#FBF0EE" }
 
 /** 브랜드 기본값 (미매칭 과일). 기존 빨강 유지. */
 export const DEFAULT_ACCENT = RED

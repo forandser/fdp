@@ -1454,7 +1454,7 @@ export function ResultView({
             {galleryImages.length > 0 && (
               <>
                 <DotDivider />
-                <GalleryBlock images={galleryImages} productName={productName} />
+                <GalleryBlock images={galleryImages} productName={productName} isMobile={isMobile} />
               </>
             )}
 
@@ -2813,11 +2813,12 @@ function buildGalleryRows(images: UploadedImage[]): GalleryRow[] {
 function GalleryBlock({
   images,
   productName,
+  isMobile,
 }: {
   images: UploadedImage[]
   productName: string
+  isMobile: boolean
 }) {
-  const accent = useAccent()
   // v3.8(지시1): 풀폭↔2그리드 모자이크. buildGalleryRows가 배치·캡션 배정을 결정.
   const rows = useMemo(() => buildGalleryRows(images), [images])
 
@@ -2862,22 +2863,22 @@ function GalleryBlock({
                   display: "block",
                 }}
               />
-              {/* 컬러 타이틀 바 (accent, 흰 글씨) — 풀폭에만, 페이지 최대 2개. */}
+              {/* v2.9(지시2): 풀폭 단색 캡션 바 → 사진 좌하단 오버레이 알약.
+                  반투명 잉크 배경(rgba, html-to-image 호환) + 흰 글씨. filter류 없음. */}
               {caption && (
                 <div
                   style={{
                     position: "absolute",
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    background: accent.accent,
+                    left: 16,
+                    bottom: 16,
+                    background: "rgba(33,37,41,0.62)",
                     color: "#FFFFFF",
-                    padding: "14px 22px",
-                    fontSize: 28,
-                    fontWeight: 800,
+                    padding: "8px 18px",
+                    fontSize: isMobile ? 13 : 20,
+                    fontWeight: 700,
                     fontFamily: BODY_FONT,
                     letterSpacing: -0.3,
-                    textAlign: "center",
+                    borderRadius: 999,
                     wordBreak: "keep-all",
                   }}
                 >
