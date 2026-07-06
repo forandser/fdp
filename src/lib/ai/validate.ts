@@ -311,6 +311,10 @@ const RESEARCH_LIMITS = {
   sources: 8,
   sourceTitle: 120,
   sourceUrl: 300,
+  // v4.2: 상품명 리서치 강화 필드 상한.
+  sellingAngles: 5,
+  commonComplaints: 4,
+  namingNotes: 160,
 } as const
 
 /** 안전한 출처 URL만 통과 (http/https + 파싱 가능). 그 외(javascript: 등)는 버린다. */
@@ -344,11 +348,11 @@ function pickResearchSources(v: unknown): ResearchSource[] {
   return out
 }
 
-function pickResearchList(v: unknown): string[] {
+function pickResearchList(v: unknown, max: number = RESEARCH_LIMITS.listItems): string[] {
   return safeStringArray(v)
     .map((s) => trimTo(s, RESEARCH_LIMITS.listItemLen))
     .filter(Boolean)
-    .slice(0, RESEARCH_LIMITS.listItems)
+    .slice(0, max)
 }
 
 /**
@@ -359,12 +363,21 @@ function pickResearchList(v: unknown): string[] {
 export function validateResearchResult(raw: unknown): ResearchResult | null {
   if (!isObject(raw)) return null
 
+  // v4.2: 상품명 리서치 강화 필드 — 개수 상한으로 자르고, 비면 키 자체를 생략(하위호환).
+  const sellingAngles = pickResearchList(raw.sellingAngles, RESEARCH_LIMITS.sellingAngles)
+  const commonComplaints = pickResearchList(raw.commonComplaints, RESEARCH_LIMITS.commonComplaints)
+  const namingNotes = trimTo(safeString(raw.namingNotes), RESEARCH_LIMITS.namingNotes)
+
   const result: ResearchResult = {
     varietyNotes: pickResearchList(raw.varietyNotes),
     seasonInfo: trimTo(safeString(raw.seasonInfo), RESEARCH_LIMITS.seasonInfo),
     storageTips: trimTo(safeString(raw.storageTips), RESEARCH_LIMITS.storageTips),
     consumerInterests: pickResearchList(raw.consumerInterests),
     faqSeeds: pickResearchList(raw.faqSeeds),
+    // 옵셔널 — 빈 값이면 키를 넣지 않아 구버전 저장본과 동일 형태 유지.
+    ...(sellingAngles.length > 0 ? { sellingAngles } : {}),
+    ...(commonComplaints.length > 0 ? { commonComplaints } : {}),
+    ...(namingNotes ? { namingNotes } : {}),
     sources: pickResearchSources(raw.sources),
   }
 
@@ -373,7 +386,10 @@ export function validateResearchResult(raw: unknown): ResearchResult | null {
     result.consumerInterests.length > 0 ||
     result.faqSeeds.length > 0 ||
     result.seasonInfo.length > 0 ||
-    result.storageTips.length > 0
+    result.storageTips.length > 0 ||
+    sellingAngles.length > 0 ||
+    commonComplaints.length > 0 ||
+    namingNotes.length > 0
   return hasContent ? result : null
 }
 

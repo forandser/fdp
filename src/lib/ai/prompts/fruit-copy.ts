@@ -524,6 +524,12 @@ function buildResearchContext(research: ResearchResult): string {
     "- 특정 판매자 문구를 베끼지 말고, 품종 일반 지식으로만 활용하세요(표절 금지).",
     "- 활용 범위: 품종 일반 특성 이해, storage 보관법 분기, faq·problemArc의 소비자 공감 포인트 참고.",
   ]
+  if (research.namingNotes) {
+    // 품종 명칭 메모 — 품종 오표기·오용 방지(규칙 55와 연동). 산지·수치 승격 아님.
+    lines.push(
+      `- 품종 명칭 메모(참고): ${research.namingNotes}. 이 메모는 품종 표기 정확도 참고용이며, 입력에 없는 품종을 카피에 새로 넣는 근거가 아닙니다(규칙 55).`,
+    )
+  }
   if (research.varietyNotes.length > 0) {
     lines.push(`- 품종 일반 특성: ${research.varietyNotes.join(" / ")}`)
   }
@@ -534,6 +540,20 @@ function buildResearchContext(research: ResearchResult): string {
   }
   if (research.faqSeeds.length > 0) {
     lines.push(`- 자주 묻는 질문(씨앗): ${research.faqSeeds.join(" / ")}`)
+  }
+  // v4.2: 구매자 실제 불만 — problemArc(규칙 57·63) 문제 제기의 우선 재료.
+  if (research.commonComplaints && research.commonComplaints.length > 0) {
+    lines.push(
+      `- 구매자 실제 불만(problemArc 우선 재료): ${research.commonComplaints.join(" / ")}`,
+      `  → problemArc.question·problems(규칙 57·63)를 쓸 때 이 불만을 우선 참고해 실제 구매 실패 공감을 만드세요. 단, 이 상품 고유 결함으로 단정하지 말고 품종 일반의 "흔한 아쉬움"으로 다루고(승격 금지), 완결형 문장(규칙 58)으로 다듬으세요.`,
+    )
+  }
+  // v4.2: 시장 소구점 각도 — keyPoints 각도(규칙 12·47)의 우선 재료.
+  if (research.sellingAngles && research.sellingAngles.length > 0) {
+    lines.push(
+      `- 시장 소구점 각도(keyPoints 우선 재료): ${research.sellingAngles.join(" / ")}`,
+      `  → keyPoints·highlightBox의 "각도"를 잡을 때 이 소구점을 우선 참고하세요. 단 슬로건을 그대로 베끼지 말고(표절 금지) 각도만 빌리며, 여기 담긴 수치·산지는 이 상품 고유 사실이 아니므로 카피 사실값은 입력값만 씁니다(규칙 6·55·56).`,
+    )
   }
   return lines.join("\n")
 }

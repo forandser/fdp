@@ -54,6 +54,9 @@ export function ResearchSummaryPanel({ research }: { research?: ResearchResult }
     storageTips,
     consumerInterests,
     faqSeeds,
+    sellingAngles,
+    commonComplaints,
+    namingNotes,
     sources,
   } = research
 
@@ -95,10 +98,13 @@ export function ResearchSummaryPanel({ research }: { research?: ResearchResult }
           카피의 산지·수치는 입력하신 값만 사용했어요.
         </div>
 
+        <Line title="품종 명칭 메모" text={namingNotes ?? ""} />
         <Section title="품종 일반 특성" items={varietyNotes} />
         <Line title="제철·수확기" text={seasonInfo} />
         <Line title="보관법" text={storageTips} />
         <Section title="소비자 관심 포인트" items={consumerInterests} />
+        <Section title="시장 소구점" items={sellingAngles ?? []} />
+        <Section title="구매자 실제 불만" items={commonComplaints ?? []} />
         <Section title="자주 묻는 질문" items={faqSeeds} />
 
         {sources.length > 0 && (

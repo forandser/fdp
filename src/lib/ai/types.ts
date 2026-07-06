@@ -89,6 +89,22 @@ export interface ResearchResult {
   consumerInterests: string[]
   /** 자주 묻는 질문 씨앗 (2~6개) — draft가 faq로 각색. */
   faqSeeds: string[]
+  /**
+   * v4.2: 시장 소구점 각도 (3~5개, 옵셔널·하위호환).
+   * 이 품종이 시장에서 실제로 팔리는 "각도"의 일반화 — 특정 판매자 슬로건 복사 아님.
+   * draft에서 keyPoints 각도의 우선 참고 재료로만 주입(고유 사실 승격 금지).
+   */
+  sellingAngles?: string[]
+  /**
+   * v4.2: 구매자 실제 불만·실패 경험 (2~4개, 옵셔널·하위호환).
+   * 후기·커뮤니티에 반복되는 소비자 언어. draft에서 problemArc(문제 제기)의 우선 참고 재료.
+   */
+  commonComplaints?: string[]
+  /**
+   * v4.2: 품종 정확 명칭·별칭·혼동 주의 한두 줄 (옵셔널·하위호환).
+   * 품종 오표기·오용 방지 참고. 못 찾았거나 품종 토큰이 없으면 undefined.
+   */
+  namingNotes?: string
   /** 인용 출처 목록 (제목+URL). */
   sources: ResearchSource[]
 }
