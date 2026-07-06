@@ -223,6 +223,16 @@ export interface CopyOutput {
    * 하위호환: 구버전 저장본엔 없음(undefined) — 블록 미노출.
    */
   problemArc?: CopyProblemArc
+  /**
+   * v4.0: 고정 문구(섹션 제목·오버라인·아이콘 트리오 라벨·4단계 스텝·배송/교환/주의
+   * 보일러플레이트·사진 캡션·CTA·클로징 서명 등) 인라인 편집 오버라이드 저장소.
+   * 키는 렌더 위치 기준 안정 문자열(예: "sect.spec.title", "returns.body",
+   * "flow.step1.title", "gallery.caption.0", "cta.top", "closing.note").
+   * 값이 있으면 기본 문구 대신 그 값을 렌더하고, 빈 값이면 키를 삭제해 기본 문구로 복귀한다.
+   * 하위호환: 구버전 저장본엔 없음(undefined) — 전부 기본 문구로 렌더.
+   * 검수: compliance-report가 이 값들도 식약처 금지어·산지 불일치 스캔 대상에 포함한다.
+   */
+  textOverrides?: Record<string, string>
 }
 
 export interface UsageInfo {

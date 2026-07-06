@@ -22,6 +22,7 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent,
+  type ReactNode,
 } from "react"
 import { t } from "@/lib/i18n"
 
@@ -47,6 +48,13 @@ export interface InlineEditProps {
   ariaLabel?: string
   /** 표시 시 줄바꿈 유지 여부. multiline=true면 자동으로 pre-line. */
   preserveWhitespace?: boolean
+  /**
+   * 표시 모드에서 값을 리치하게 렌더할 때 사용 (예: 액센트 색 span, 물결 밑줄 강조).
+   * 값이 비어있지 않을 때만 호출된다. 미지정 시 값 문자열을 그대로 렌더.
+   * 편집(클릭 후 textarea/input)·hover 연필·JPG 위생 동작은 그대로 유지된다.
+   * 주의: 반환 노드는 표시용 <span> 안에 들어가므로 block 요소(p/h2 등)를 넣으면 안 된다.
+   */
+  renderDisplay?: (value: string) => ReactNode
 }
 
 export function InlineEdit({
@@ -59,6 +67,7 @@ export function InlineEdit({
   disabled,
   ariaLabel,
   preserveWhitespace,
+  renderDisplay,
 }: InlineEditProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(value)
@@ -169,7 +178,7 @@ export function InlineEdit({
         onMouseLeave={() => setHovering(false)}
         style={baseStyle}
       >
-        {displayValue}
+        {!isEmpty && renderDisplay ? renderDisplay(value) : displayValue}
         {hovering && !disabled && (
           <span
             aria-hidden="true"

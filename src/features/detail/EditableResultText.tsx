@@ -28,6 +28,11 @@ export type CopyTextPath =
   | readonly ["faq", number, "q" | "a"]
   | readonly ["highlightBadges", number]
   | readonly ["keyPoints", number, "title" | "body"]
+  | readonly ["farmStory"]
+  | readonly ["cautions", number]
+  | readonly ["recommendFor", number]
+  | readonly ["problemArc", "question"]
+  | readonly ["problemArc", "problems", number]
 
 export interface EditableResultTextProps {
   copy: CopyOutput
@@ -104,6 +109,18 @@ function readPath(copy: CopyOutput, path: CopyTextPath): string {
       if (!item) return ""
       return path[2] === "title" ? item.title : item.body
     }
+    case "farmStory":
+      return copy.farmStory
+    case "cautions":
+      return copy.cautions[path[1]] ?? ""
+    case "recommendFor":
+      return copy.recommendFor[path[1]] ?? ""
+    case "problemArc": {
+      const arc = copy.problemArc
+      if (!arc) return ""
+      if (path[1] === "question") return arc.question
+      return arc.problems[path[2]] ?? ""
+    }
   }
 }
 
@@ -148,6 +165,28 @@ function writePath(copy: CopyOutput, path: CopyTextPath, next: string): CopyOutp
         i === idx ? { ...p, [field]: next } : p,
       )
       return { ...copy, keyPoints: nextPoints }
+    }
+    case "farmStory":
+      return { ...copy, farmStory: next }
+    case "cautions": {
+      const idx = path[1]
+      const nextCautions = copy.cautions.map((c, i) => (i === idx ? next : c))
+      return { ...copy, cautions: nextCautions }
+    }
+    case "recommendFor": {
+      const idx = path[1]
+      const nextItems = copy.recommendFor.map((r, i) => (i === idx ? next : r))
+      return { ...copy, recommendFor: nextItems }
+    }
+    case "problemArc": {
+      const arc = copy.problemArc
+      if (!arc) return copy
+      if (path[1] === "question") {
+        return { ...copy, problemArc: { ...arc, question: next } }
+      }
+      const idx = path[2]
+      const nextProblems = arc.problems.map((p, i) => (i === idx ? next : p))
+      return { ...copy, problemArc: { ...arc, problems: nextProblems } }
     }
   }
 }

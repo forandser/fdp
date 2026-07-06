@@ -7,6 +7,7 @@ import type { SectionId } from "@/lib/ai/section-regenerate"
 import type { UploadedImage } from "./ImageUploader"
 import { ExportPanel } from "./ExportPanel"
 import { EditableResultText } from "./EditableResultText"
+import { InlineEdit } from "./InlineEdit"
 import { RegenButton } from "./RegenButton"
 import { CertCaption } from "./CertCaption"
 import { FreshnessTimeline } from "./FreshnessTimeline"
@@ -83,6 +84,108 @@ function isGenericOrigin(origin: string): boolean {
 const AccentContext = createContext<AccentPalette>(DEFAULT_ACCENT)
 function useAccent(): AccentPalette {
   return useContext(AccentContext)
+}
+
+/**
+ * v4.0 전체 텍스트 인라인 편집 Context.
+ *
+ * 아트보드의 모든 고정 문구(섹션 제목·오버라인·아이콘 트리오·4단계 스텝·배송/교환/주의
+ * 보일러플레이트·사진 캡션·CTA·클로징 등)를 편집하려면 copy(textOverrides 저장소)와
+ * onCopyChange가 필요한데, 이 문구들을 렌더하는 하위 블록 대부분은 copy/onCopyChange를
+ * prop으로 받지 않는다. AccentContext와 동일하게 ResultView가 한 번 Provider로 내려주고,
+ * 각 블록이 OverrideText(고정 문구)·EditableResultText(실제 카피 필드)로 소비한다.
+ */
+interface EditCtx {
+  copy: CopyOutput
+  onCopyChange: (next: CopyOutput) => void
+}
+const EditContext = createContext<EditCtx | null>(null)
+function useEdit(): EditCtx {
+  const ctx = useContext(EditContext)
+  if (!ctx) {
+    // Provider 없이 렌더될 일은 없지만(항상 아트보드 루트에서 감싼다) 타입 안전용 폴백.
+    throw new Error("EditContext missing — ResultView 아트보드 밖에서 편집 컴포넌트를 렌더했습니다.")
+  }
+  return ctx
+}
+
+/**
+ * 고정 문구 한 개의 오버라이드를 immutable 하게 기록/삭제한다.
+ * - 빈 값이거나 기본 문구(fallback)와 같으면 키를 삭제해 기본 문구로 복귀(오버라이드 제거).
+ * - 남은 오버라이드가 하나도 없으면 textOverrides 자체를 undefined 로 정리(하위호환 저장본과 동일 형태).
+ */
+function writeTextOverride(
+  copy: CopyOutput,
+  id: string,
+  next: string,
+  fallback: string,
+): CopyOutput {
+  const map: Record<string, string> = { ...(copy.textOverrides ?? {}) }
+  if (next.trim().length === 0 || next === fallback) {
+    delete map[id]
+  } else {
+    map[id] = next
+  }
+  const hasAny = Object.keys(map).length > 0
+  return { ...copy, textOverrides: hasAny ? map : undefined }
+}
+
+/** 고정 문구 오버라이드의 현재 표시값 — 오버라이드가 있으면 그 값, 없으면 기본 문구. */
+function resolveOverride(
+  copy: CopyOutput,
+  id: string,
+  fallback: string,
+): string {
+  const v = copy.textOverrides?.[id]
+  return v != null && v.length > 0 ? v : fallback
+}
+
+/**
+ * ot() — 고정 문구 인라인 편집 렌더 헬퍼 (기획 설계 2).
+ *
+ * 오버라이드가 있으면 그 값, 없으면 fallback(기본 문구)을 InlineEdit(기존 패턴)로 감싼다.
+ * 클릭 편집 → onCopyChange({...copy, textOverrides:{...}}) 전파. 빈 값이면 오버라이드 삭제.
+ * 편집 UI(연필·hover·placeholder)와 JPG 위생(data-inline-edit)은 InlineEdit이 그대로 담당한다.
+ *
+ * renderDisplay: 기본 문구가 액센트 색 span·물결 밑줄 강조 등 리치 렌더일 때 사용.
+ * 값이 fallback 그대로면 리치 렌더를, 셀러가 고치면 평문을 보여주는 식으로 색/강조를 보존한다.
+ */
+function OverrideText({
+  id,
+  fallback,
+  multiline,
+  maxLength,
+  placeholder,
+  style,
+  ariaLabel,
+  preserveWhitespace,
+  renderDisplay,
+}: {
+  id: string
+  fallback: string
+  multiline?: boolean
+  maxLength?: number
+  placeholder?: string
+  style?: React.CSSProperties
+  ariaLabel?: string
+  preserveWhitespace?: boolean
+  renderDisplay?: (value: string) => React.ReactNode
+}) {
+  const { copy, onCopyChange } = useEdit()
+  const value = resolveOverride(copy, id, fallback)
+  return (
+    <InlineEdit
+      value={value}
+      onChange={(next) => onCopyChange(writeTextOverride(copy, id, next, fallback))}
+      multiline={multiline}
+      maxLength={maxLength}
+      placeholder={placeholder ?? fallback}
+      style={style}
+      ariaLabel={ariaLabel}
+      preserveWhitespace={preserveWhitespace}
+      renderDisplay={renderDisplay}
+    />
+  )
 }
 
 /**
@@ -549,7 +652,7 @@ function DomeTransition({
             textOverflow: "clip",
           }}
         >
-          {label}
+          <OverrideText id="dome.label" fallback={label} maxLength={12} />
         </span>
       </div>
     </div>
@@ -564,10 +667,13 @@ function RibbonLabel({
   text,
   accent,
   isMobile,
+  editId,
 }: {
   text: string
   accent: AccentPalette
   isMobile: boolean
+  /** v4.0: 리본 라벨 인라인 편집 키(있으면 OverrideText로 감싼다). */
+  editId?: string
 }) {
   const tail = isMobile ? 12 : 18
   const padY = isMobile ? 8 : 13
@@ -626,7 +732,7 @@ function RibbonLabel({
           lineHeight: isMobile ? "20px" : "34px",
         }}
       >
-        {text}
+        {editId ? <OverrideText id={editId} fallback={text} maxLength={24} /> : text}
       </span>
     </span>
   )
@@ -897,7 +1003,7 @@ function ValuePropStrip({ isMobile, trust }: { isMobile: boolean; trust?: TrustI
                 wordBreak: "keep-all",
               }}
             >
-              {label}
+              <OverrideText id={`trio.${i}`} fallback={label} maxLength={20} />
             </span>
           </div>
         ))}
@@ -911,9 +1017,30 @@ function ValuePropStrip({ isMobile, trust }: { isMobile: boolean; trust?: TrustI
  * 버튼처럼 보이지 않는 캡션/리본 스타일로 교체. 채워진 알약·검정 배경 없이,
  * accent 물결 밑줄이 들어간 강조 문구로 시선만 모은다 (Hero·하단 공용 — 하단은 제목형 변주 문구).
  */
-function CtaPill({ text, isMobile }: { text: string; isMobile: boolean }) {
+function CtaPill({ text, isMobile, editId }: { text: string; isMobile: boolean; editId?: string }) {
   const accent = useAccent()
-  const { lead, mark, tail } = splitPhraseEmphasis(text)
+  // 물결 밑줄 강조 렌더 — 편집(OverrideText)·비편집 공용. 셀러가 고친 문구에도 동일 적용.
+  const renderEmphasis = (value: string): React.ReactNode => {
+    const { lead, mark, tail } = splitPhraseEmphasis(value)
+    if (!mark) return value
+    return (
+      <>
+        {lead}
+        <span
+          style={{
+            color: accent.dark,
+            textDecoration: "underline wavy",
+            textDecorationColor: accent.accent,
+            textDecorationThickness: isMobile ? 2 : 3,
+            textUnderlineOffset: isMobile ? 5 : 8,
+          }}
+        >
+          {mark}
+        </span>
+        {tail}
+      </>
+    )
+  }
   return (
     <div
       style={{
@@ -943,24 +1070,10 @@ function CtaPill({ text, isMobile }: { text: string; isMobile: boolean }) {
         }}
       />
       <span>
-        {mark ? (
-          <>
-            {lead}
-            <span
-              style={{
-                color: accent.dark,
-                textDecoration: "underline wavy",
-                textDecorationColor: accent.accent,
-                textDecorationThickness: isMobile ? 2 : 3,
-                textUnderlineOffset: isMobile ? 5 : 8,
-              }}
-            >
-              {mark}
-            </span>
-            {tail}
-          </>
+        {editId ? (
+          <OverrideText id={editId} fallback={text} maxLength={40} renderDisplay={renderEmphasis} />
         ) : (
-          text
+          renderEmphasis(text)
         )}
       </span>
     </div>
@@ -1004,29 +1117,35 @@ function DeliveryPromiseBand({ isMobile, trust }: { isMobile: boolean; trust?: T
           wordBreak: "keep-all",
         }}
       >
-        {/* 부분 밑줄 형광펜 — 배송 약속 문장 앞 핵심 구를 accent 물결 밑줄로 강조. */}
-        {(() => {
-          const { lead, mark, tail } = splitPhraseEmphasis(text)
-          if (!mark) return text
-          return (
-            <>
-              {lead}
-              <span
-                style={{
-                  fontWeight: 900,
-                  color: accent.dark,
-                  textDecoration: "underline wavy",
-                  textDecorationColor: accent.accent,
-                  textDecorationThickness: 2,
-                  textUnderlineOffset: isMobile ? 4 : 6,
-                }}
-              >
-                {mark}
-              </span>
-              {tail}
-            </>
-          )
-        })()}
+        {/* 부분 밑줄 형광펜 — 배송 약속 문장 앞 핵심 구를 accent 물결 밑줄로 강조.
+            v4.0: OverrideText로 인라인 편집 가능(강조는 편집된 문구에도 동일 적용). */}
+        <OverrideText
+          id="deliveryPromise.text"
+          fallback={text}
+          maxLength={80}
+          renderDisplay={(value) => {
+            const { lead, mark, tail } = splitPhraseEmphasis(value)
+            if (!mark) return value
+            return (
+              <>
+                {lead}
+                <span
+                  style={{
+                    fontWeight: 900,
+                    color: accent.dark,
+                    textDecoration: "underline wavy",
+                    textDecorationColor: accent.accent,
+                    textDecorationThickness: 2,
+                    textUnderlineOffset: isMobile ? 4 : 6,
+                  }}
+                >
+                  {mark}
+                </span>
+                {tail}
+              </>
+            )
+          }}
+        />
       </span>
     </div>
   )
@@ -1237,6 +1356,7 @@ export function ResultView({
 
   return (
     <AccentContext.Provider value={accent}>
+    <EditContext.Provider value={{ copy, onCopyChange }}>
     <div
       style={{
         display: "grid",
@@ -1501,7 +1621,6 @@ export function ResultView({
               <>
                 <DotDivider />
                 <FarmStoryBlock
-                  farmStory={copy.farmStory}
                   isMobile={isMobile}
                   trust={trust}
                 />
@@ -1583,7 +1702,7 @@ export function ResultView({
                 background: "#FFFFFF",
               }}
             >
-              <CtaPill text={ctaTextBottom} isMobile={isMobile} />
+              <CtaPill text={ctaTextBottom} isMobile={isMobile} editId="cta.bottom" />
             </div>
 
             {/* 10. CAUTIONS — 신선식품 면책 박스 자동 표시 (cautions 비어 있어도 노출).
@@ -1720,6 +1839,7 @@ export function ResultView({
 
       {/* v2.7: StickyMobileCta 삭제 (사이드바에 이미 있으므로 중복 제거) */}
     </div>
+    </EditContext.Provider>
     </AccentContext.Provider>
   )
 }
@@ -1770,7 +1890,20 @@ function WhyBrandCard({
             letterSpacing: -1,
           }}
         >
-          WHY <span style={{ color: accent.accent }}>{name || "이 상품"}</span>일까요?
+          <OverrideText
+            id="why.title"
+            fallback={`WHY ${name || "이 상품"}일까요?`}
+            maxLength={40}
+            renderDisplay={(v) =>
+              v === `WHY ${name || "이 상품"}일까요?` ? (
+                <>
+                  WHY <span style={{ color: accent.accent }}>{name || "이 상품"}</span>일까요?
+                </>
+              ) : (
+                v
+              )
+            }
+          />
         </h2>
 
         {image && (
@@ -1840,7 +1973,20 @@ function RecipeBlock({
             lineHeight: 1.15,
           }}
         >
-          {name} <span style={{ color: accent.accent }}>이렇게 즐겨보세요</span>
+          <OverrideText
+            id="recipe.title"
+            fallback={`${name} 이렇게 즐겨보세요`}
+            maxLength={40}
+            renderDisplay={(v) =>
+              v === `${name} 이렇게 즐겨보세요` ? (
+                <>
+                  {name} <span style={{ color: accent.accent }}>이렇게 즐겨보세요</span>
+                </>
+              ) : (
+                v
+              )
+            }
+          />
         </h2>
       </div>
 
@@ -2055,7 +2201,7 @@ function HeroBlock({
                   fontFamily: BODY_FONT,
                 }}
               >
-                오늘도 신선한 {name}
+                <OverrideText id="hero.caption" fallback={`오늘도 신선한 ${name}`} maxLength={40} />
               </span>
             )}
             {showOriginBadge && (
@@ -2185,7 +2331,7 @@ function HeroBlock({
         </p>
 
         {/* CTA pill (수플린 "○○를 선택하세요!" 레퍼런스) — 하단에서 재사용 */}
-        <CtaPill text={ctaText} isMobile={isMobile} />
+        <CtaPill text={ctaText} isMobile={isMobile} editId="cta.top" />
 
         {(onRegenHeadline || onRegenSub) && (
           <div
@@ -2206,7 +2352,11 @@ function HeroBlock({
           // C12: origin과 동일 문자열인 highlightBadge 중복 제거
           // (히어로 첫 화면 "국내산" 3회 방지 — 캡션·From배지·이 배지 중복).
           const oNorm = originText?.trim()
-          const heroBadges = copy.highlightBadges.filter((b) => !oNorm || b.trim() !== oNorm)
+          // 원본 인덱스를 보존해 편집 경로(highlightBadges[origIdx])가 정확히 꽂히게 한다
+          // (origin 중복 제거로 걸러진 뒤 필터 인덱스로 편집하면 엉뚱한 배지를 고치게 됨).
+          const heroBadges = copy.highlightBadges
+            .map((b, origIdx) => ({ b, origIdx }))
+            .filter(({ b }) => !oNorm || b.trim() !== oNorm)
           if (heroBadges.length === 0) return null
           return (
           <div
@@ -2218,9 +2368,9 @@ function HeroBlock({
               marginTop: isMobile ? 24 : 32,
             }}
           >
-            {heroBadges.slice(0, 4).map((b, i) => (
+            {heroBadges.slice(0, 4).map(({ origIdx }) => (
               <span
-                key={`b-${i}`}
+                key={`b-${origIdx}`}
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
@@ -2252,7 +2402,12 @@ function HeroBlock({
                 >
                   ✓
                 </span>
-                {b}
+                <EditableResultText
+                  copy={copy}
+                  onChange={onCopyChange}
+                  path={["highlightBadges", origIdx]}
+                  maxLength={20}
+                />
               </span>
             ))}
           </div>
@@ -2285,6 +2440,7 @@ function ProblemArcBlock({
   isMobile: boolean
 }) {
   const accent = useAccent()
+  const { copy, onCopyChange } = useEdit()
   const problems = arc.problems.slice(0, 3)
   if (problems.length === 0) return null
 
@@ -2392,8 +2548,54 @@ function ProblemArcBlock({
             fontFamily: BODY_FONT,
           }}
         >
-          {problems.length}가지 이유
+          <OverrideText
+            id="problemArc.reasonsLabel"
+            fallback={`${problems.length}가지 이유`}
+            maxLength={20}
+          />
         </span>
+      </div>
+
+      {/* 질문 편집 — 편집 전용(JPG 제외). 위 qLead/qMain 2줄 위계는 이 원문에서 파생된다.
+          (StoryBlock·StorageBlock과 동일: 파생 표시 + 원문 편집 진입 분리.) */}
+      <div
+        data-edit-chrome
+        style={{
+          maxWidth: 720,
+          margin: isMobile ? "16px auto 0" : "24px auto 0",
+          padding: isMobile ? "16px 18px" : "22px 28px",
+          background: "#FFFFFF",
+          borderRadius: 10,
+          border: `1px dashed ${LINE}`,
+        }}
+      >
+        <p
+          style={{
+            margin: "0 0 8px",
+            fontSize: isMobile ? 12 : 14,
+            color: MUTE,
+            fontWeight: 700,
+            fontFamily: BODY_FONT,
+          }}
+        >
+          공감 질문 편집
+        </p>
+        <p
+          style={{
+            fontSize: isMobile ? 16 : 22,
+            color: INK,
+            lineHeight: 1.5,
+            margin: 0,
+            fontFamily: BODY_FONT,
+          }}
+        >
+          <EditableResultText
+            copy={copy}
+            onChange={onCopyChange}
+            path={["problemArc", "question"]}
+            maxLength={80}
+          />
+        </p>
       </div>
 
       {/* 문제 카드 세로 스택 — 번호 + 문제 한 줄. 사진 없음(텍스트 카드). */}
@@ -2406,7 +2608,7 @@ function ProblemArcBlock({
           margin: "0 auto",
         }}
       >
-        {problems.map((p, i) => (
+        {problems.map((_p, i) => (
           <div
             key={`pa-${i}`}
             style={{
@@ -2446,7 +2648,12 @@ function ProblemArcBlock({
                 wordBreak: "keep-all",
               }}
             >
-              {p}
+              <EditableResultText
+                copy={copy}
+                onChange={onCopyChange}
+                path={["problemArc", "problems", i]}
+                maxLength={40}
+              />
             </span>
           </div>
         ))}
@@ -2493,7 +2700,7 @@ function StoryBlock({
             marginBottom: isMobile ? 30 : 40,
           }}
         >
-          <RibbonLabel text="STORY" accent={accent} isMobile={isMobile} />
+          <RibbonLabel text="STORY" accent={accent} isMobile={isMobile} editId="story.ribbon" />
         </div>
       )}
 
@@ -2882,7 +3089,11 @@ function GalleryBlock({
                     wordBreak: "keep-all",
                   }}
                 >
-                  {caption}
+                  <OverrideText
+                    id={`gallery.caption.${row.captionIdx}`}
+                    fallback={caption}
+                    maxLength={24}
+                  />
                 </div>
               )}
             </div>
@@ -3051,7 +3262,7 @@ function BrixScaleBar({
             fontFamily: BODY_FONT,
           }}
         >
-          {bs.good}
+          <OverrideText id="brix.goodLabel" fallback={bs.good} maxLength={30} />
           <br />
           {goodBrix}
         </div>
@@ -3068,7 +3279,7 @@ function BrixScaleBar({
           lineHeight: 1.4,
         }}
       >
-        {bs.caption}
+        <OverrideText id="brix.caption" fallback={bs.caption} maxLength={60} />
       </div>
     </div>
   )
@@ -3171,7 +3382,14 @@ function SpecBlock({
             const MiniIcon = specLabelIcon(s.label)
             return <MiniIcon color={accent.accent} size={isMobile ? 20 : 30} />
           })()}
-          <span>{s.label}</span>
+          <span>
+            <EditableResultText
+              copy={copy}
+              onChange={onCopyChange}
+              path={["spec", i, "label"]}
+              maxLength={30}
+            />
+          </span>
         </div>
         {isSweetness && sweetnessMatch ? (
           (() => {
@@ -3266,7 +3484,7 @@ function SpecBlock({
         background: veilTint(accent.soft),
       }}
     >
-      <SectionTitle title={t.detail.result.spec} regen={onRegen} isMobile={isMobile} />
+      <SectionTitle title={t.detail.result.spec} regen={onRegen} isMobile={isMobile} editId="sect.spec.title" />
 
       {specCount > 0 ? (
         <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 10 : 16 }}>
@@ -3360,7 +3578,7 @@ function KeyPointsBig({
               wordBreak: "keep-all",
             }}
           >
-            그래서 이렇게 준비했어요
+            <OverrideText id="keypoints.bridge" fallback="그래서 이렇게 준비했어요" maxLength={30} />
           </p>
         )}
         {/* v3.8 fix(진단 #2): 대제목 영문 오버라인 라벨 — WHY(원형 엠블럼)·REVIEW(SectionTitle
@@ -3377,7 +3595,7 @@ function KeyPointsBig({
             fontFamily: BODY_FONT,
           }}
         >
-          POINT
+          <OverrideText id="keypoints.overline" fallback="POINT" maxLength={24} />
         </div>
         {/* 임무D: 섹션 헤드 — 히어로급 임팩트 (모바일 42 / 데스크톱 76) */}
         <h2
@@ -3391,9 +3609,13 @@ function KeyPointsBig({
             letterSpacing: -1.5,
           }}
         >
-          {t.detail.result.keyPointsSectionTitle
-            .replace("{noun}", noun)
-            .replace("{josa}", subjectJosa(noun))}
+          <OverrideText
+            id="sect.keypoints.title"
+            fallback={t.detail.result.keyPointsSectionTitle
+              .replace("{noun}", noun)
+              .replace("{josa}", subjectJosa(noun))}
+            maxLength={40}
+          />
         </h2>
       </div>
 
@@ -3647,7 +3869,7 @@ function StorageBlock({
         background: "#FFFFFF",
       }}
     >
-      <SectionTitle title={t.detail.result.storage} regen={onRegen} isMobile={isMobile} />
+      <SectionTitle title={t.detail.result.storage} regen={onRegen} isMobile={isMobile} editId="sect.storage.title" />
 
       {steps.length > 0 && (
         <div
@@ -3808,7 +4030,7 @@ function FaqBlock({
         background: "#FFFFFF",
       }}
     >
-      <SectionTitle title={t.detail.result.faq} regen={onRegen} isMobile={isMobile} />
+      <SectionTitle title={t.detail.result.faq} regen={onRegen} isMobile={isMobile} editId="sect.faq.title" />
       <div
         style={{
           background: "#FFFFFF",
@@ -3953,7 +4175,20 @@ function SizeDiagramBlock({
               lineHeight: 1.1,
             }}
           >
-            {name} 크기가 <span style={{ color: accent.accent }}>궁금해요</span>
+            <OverrideText
+              id="size.title"
+              fallback={`${name} 크기가 궁금해요`}
+              maxLength={40}
+              renderDisplay={(v) =>
+                v === `${name} 크기가 궁금해요` ? (
+                  <>
+                    {name} 크기가 <span style={{ color: accent.accent }}>궁금해요</span>
+                  </>
+                ) : (
+                  v
+                )
+              }
+            />
           </h2>
         </div>
 
@@ -4000,7 +4235,7 @@ function SizeDiagramBlock({
                   letterSpacing: -0.3,
                 }}
               >
-                중량 · {weight.trim()}
+                <OverrideText id="size.weightLabel" fallback="중량" maxLength={16} /> · {weight.trim()}
               </div>
             )}
             {perPieceLabel && (
@@ -4031,11 +4266,20 @@ function SizeDiagramBlock({
               fontFamily: BODY_FONT,
             }}
           >
-            <strong style={{ color: INK }}>꼭 확인해 주세요</strong>
+            <strong style={{ color: INK }}>
+              <OverrideText id="size.confirmLabel" fallback="꼭 확인해 주세요" maxLength={24} />
+            </strong>
             <br />
-            {boxCountLabel
-              ? sr.deviation.replace("{noun}", noun)
-              : sr.deviationSize.replace("{noun}", noun)}
+            <OverrideText
+              id="size.deviation"
+              fallback={
+                boxCountLabel
+                  ? sr.deviation.replace("{noun}", noun)
+                  : sr.deviationSize.replace("{noun}", noun)
+              }
+              multiline
+              maxLength={200}
+            />
           </div>
         )}
       </div>
@@ -4088,7 +4332,7 @@ function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: b
             fontFamily: BODY_FONT,
           }}
         >
-          산지에서 문 앞까지
+          <OverrideText id="flow.overline" fallback="산지에서 문 앞까지" maxLength={24} />
         </div>
         <h2
           style={{
@@ -4101,7 +4345,20 @@ function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: b
             lineHeight: 1.1,
           }}
         >
-          신선함을 잇는 <span style={{ color: accent.accent }}>4단계</span>
+          <OverrideText
+            id="flow.title"
+            fallback="신선함을 잇는 4단계"
+            maxLength={30}
+            renderDisplay={(v) =>
+              v === "신선함을 잇는 4단계" ? (
+                <>
+                  신선함을 잇는 <span style={{ color: accent.accent }}>4단계</span>
+                </>
+              ) : (
+                v
+              )
+            }
+          />
         </h2>
       </div>
 
@@ -4205,7 +4462,7 @@ function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: b
                   wordBreak: "keep-all",
                 }}
               >
-                {step.title}
+                <OverrideText id={`flow.step${i + 1}.title`} fallback={step.title} maxLength={20} />
               </div>
               <div
                 style={{
@@ -4216,7 +4473,7 @@ function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: b
                   wordBreak: "keep-all",
                 }}
               >
-                {step.desc}
+                <OverrideText id={`flow.step${i + 1}.desc`} fallback={step.desc} maxLength={40} />
               </div>
             </div>
           )
@@ -4257,7 +4514,7 @@ function PackagingBlock({
           }}
         >
           <PackIcon color={accent.accent} size={isMobile ? 20 : 30} />
-          PACKAGE
+          <OverrideText id="package.overline" fallback="PACKAGE" maxLength={24} />
         </div>
         <h2
           style={{
@@ -4270,7 +4527,20 @@ function PackagingBlock({
             lineHeight: 1.15,
           }}
         >
-          배송 시 이렇게 <span style={{ color: accent.accent }}>구성돼요</span>
+          <OverrideText
+            id="package.title"
+            fallback="배송 시 이렇게 구성돼요"
+            maxLength={30}
+            renderDisplay={(v) =>
+              v === "배송 시 이렇게 구성돼요" ? (
+                <>
+                  배송 시 이렇게 <span style={{ color: accent.accent }}>구성돼요</span>
+                </>
+              ) : (
+                v
+              )
+            }
+          />
         </h2>
       </div>
 
@@ -4313,7 +4583,7 @@ function PackagingBlock({
                 fontFamily: BODY_FONT,
               }}
             >
-              중량
+              <OverrideText id="package.weightLabel" fallback="중량" maxLength={16} />
             </span>
             <span style={{ fontSize: isMobile ? 18 : 30, fontWeight: 700, color: INK, fontFamily: BODY_FONT }}>
               {weight.trim()}
@@ -4330,10 +4600,15 @@ function PackagingBlock({
               fontFamily: BODY_FONT,
             }}
           >
-            포장
+            <OverrideText id="package.packLabel" fallback="포장" maxLength={16} />
           </span>
           <span style={{ fontSize: isMobile ? 18 : 30, color: SUB, lineHeight: 1.6, fontFamily: BODY_FONT }}>
-            완충재로 흔들림 없이 담아, 신선한 상태 그대로 보내드려요.
+            <OverrideText
+              id="package.packBody"
+              fallback="완충재로 흔들림 없이 담아, 신선한 상태 그대로 보내드려요."
+              multiline
+              maxLength={120}
+            />
           </span>
         </div>
       </div>
@@ -4353,7 +4628,7 @@ function DeliveryBlock({ isMobile, trust }: { isMobile: boolean; trust?: TrustIn
       }}
     >
       {/* v3.8(지시3): 배송 안내는 약관류 — quiet 위계(작고 SUB 색). */}
-      <SectionTitle title={t.detail.result.deliveryTitle} variant="quiet" isMobile={isMobile} />
+      <SectionTitle title={t.detail.result.deliveryTitle} variant="quiet" isMobile={isMobile} editId="sect.delivery.title" />
       {/* v2.4: 초록 배경·주황 원형 이모지 삭제 → 얇은 라인 카드 */}
       <div
         style={{
@@ -4372,8 +4647,24 @@ function DeliveryBlock({ isMobile, trust }: { isMobile: boolean; trust?: TrustIn
             fontFamily: BODY_FONT,
           }}
         >
-          {t.detail.result.deliveryBody}
-          {sameDay && ` ${t.detail.result.deliverySameDayNote}`}
+          <OverrideText
+            id="delivery.body"
+            fallback={t.detail.result.deliveryBody}
+            multiline
+            preserveWhitespace
+            maxLength={400}
+          />
+          {sameDay && (
+            <>
+              {" "}
+              <OverrideText
+                id="delivery.sameDayNote"
+                fallback={t.detail.result.deliverySameDayNote}
+                multiline
+                maxLength={200}
+              />
+            </>
+          )}
         </p>
       </div>
     </div>
@@ -4388,6 +4679,7 @@ function RecommendForBlock({
   isMobile: boolean
 }) {
   const accent = useAccent()
+  const { copy, onCopyChange } = useEdit()
   return (
     <div
       style={{
@@ -4395,7 +4687,7 @@ function RecommendForBlock({
         background: "#FFFFFF",
       }}
     >
-      <SectionTitle title={t.detail.result.recommendForTitle} isMobile={isMobile} />
+      <SectionTitle title={t.detail.result.recommendForTitle} isMobile={isMobile} editId="sect.recommend.title" />
       <div
         style={{
           background: "#FFFFFF",
@@ -4407,7 +4699,7 @@ function RecommendForBlock({
           gap: isMobile ? 16 : 22,
         }}
       >
-        {items.slice(0, 6).map((it, i) => (
+        {items.slice(0, 6).map((_it, i) => (
           <div
             key={`r-${i}`}
             style={{
@@ -4446,7 +4738,14 @@ function RecommendForBlock({
             >
               ✓
             </span>
-            <span style={{ fontWeight: 600 }}>{it}</span>
+            <span style={{ fontWeight: 600 }}>
+              <EditableResultText
+                copy={copy}
+                onChange={onCopyChange}
+                path={["recommendFor", i]}
+                maxLength={60}
+              />
+            </span>
           </div>
         ))}
       </div>
@@ -4475,7 +4774,7 @@ function ReviewsBlock({
   return (
     <div style={{ padding: isMobile ? "64px 24px 48px" : "100px 44px 80px", background: veilTint(accent.soft) }}>
       {/* v3.8(지시3): 후기는 전환점 — hero 위계 + REVIEW 오버라인. */}
-      <SectionTitle title={t.detail.result.reviews.title} variant="hero" overline="REVIEW" isMobile={isMobile} />
+      <SectionTitle title={t.detail.result.reviews.title} variant="hero" overline="REVIEW" isMobile={isMobile} editId="sect.reviews.title" editOverlineId="sect.reviews.overline" />
       <div
         style={{
           display: "flex",
@@ -4561,15 +4860,14 @@ function ReviewsBlock({
 }
 
 function FarmStoryBlock({
-  farmStory,
   isMobile,
   trust,
 }: {
-  farmStory: string
   isMobile: boolean
   trust?: TrustInfo
 }) {
   const accent = useAccent()
+  const { copy, onCopyChange } = useEdit()
   // trust에 농부 정보 있으면 ProducerCard + 서명, 없으면 서명 줄 자체를 생략.
   // 지어낸 지역·연차·이름을 기본값으로 넣는 것은 허위광고 — 절대 금지.
   const hasProducer = !!(trust?.producerName || trust?.producerRegion || trust?.farmerYears)
@@ -4589,7 +4887,7 @@ function FarmStoryBlock({
         background: "#FFFFFF",
       }}
     >
-      <SectionTitle title={t.detail.result.farmStoryTitle} isMobile={isMobile} />
+      <SectionTitle title={t.detail.result.farmStoryTitle} isMobile={isMobile} editId="sect.farm.title" />
 
       {/* v1.8: trust에 농부 정보 있으면 ProducerCard로 노출 */}
       {hasProducer && (
@@ -4635,7 +4933,15 @@ function FarmStoryBlock({
                 letterSpacing: -0.3,
               }}
             >
-              {farmStory.replace(/\n{2,}/g, "\n").trim()}
+              <EditableResultText
+                copy={copy}
+                onChange={onCopyChange}
+                path={["farmStory"]}
+                multiline
+                maxLength={500}
+                preserveWhitespace
+                placeholder="농가 한 마디를 적어보세요"
+              />
             </p>
             {farmerMeta && (
               <p
@@ -4676,7 +4982,7 @@ function ReturnsBlock({ isMobile, trust }: { isMobile: boolean; trust?: TrustInf
       }}
     >
       {/* v3.8(지시3): 교환·환불은 약관류 — quiet 위계. */}
-      <SectionTitle title={t.detail.result.returnsTitle} variant="quiet" isMobile={isMobile} />
+      <SectionTitle title={t.detail.result.returnsTitle} variant="quiet" isMobile={isMobile} editId="sect.returns.title" />
       {/* v2.4: 원형 이모지·BG_SOFT 배경 삭제 → 얇은 라인 카드 */}
       <div
         style={{
@@ -4695,7 +5001,13 @@ function ReturnsBlock({ isMobile, trust }: { isMobile: boolean; trust?: TrustInf
             fontFamily: BODY_FONT,
           }}
         >
-          {body}
+          <OverrideText
+            id="returns.body"
+            fallback={body}
+            multiline
+            preserveWhitespace
+            maxLength={400}
+          />
         </p>
       </div>
     </div>
@@ -4712,13 +5024,17 @@ function CautionsBlock({
   copy: CopyOutput
   isMobile: boolean
 }) {
+  const { onCopyChange } = useEdit()
   // D17: cautions 항목이 faq 답변(a) 또는 storage와 트림 기준 정확 일치하면 렌더 생략.
   const dupeSet = new Set<string>()
   if (copy.storage?.trim()) dupeSet.add(copy.storage.trim())
   for (const f of copy.faq ?? []) {
     if (f.a?.trim()) dupeSet.add(f.a.trim())
   }
-  const shownCautions = cautions.filter((c) => c.trim() && !dupeSet.has(c.trim()))
+  // 원본 인덱스 보존 — dedupe 필터 뒤 인덱스로 편집하면 엉뚱한 항목을 고치게 됨.
+  const shownCautions = cautions
+    .map((c, origIdx) => ({ c, origIdx }))
+    .filter(({ c }) => c.trim() && !dupeSet.has(c.trim()))
   return (
     <div
       style={{
@@ -4746,7 +5062,12 @@ function CautionsBlock({
             fontFamily: BODY_FONT,
           }}
         >
-          {t.detail.result.cautionsAutoNotice}
+          <OverrideText
+            id="cautions.notice"
+            fallback={t.detail.result.cautionsAutoNotice}
+            multiline
+            maxLength={200}
+          />
         </p>
         {shownCautions.length > 0 && (
           <>
@@ -4760,7 +5081,7 @@ function CautionsBlock({
                 fontFamily: BODY_FONT,
               }}
             >
-              {t.detail.result.cautionsTitle}
+              <OverrideText id="sect.cautions.title" fallback={t.detail.result.cautionsTitle} maxLength={40} />
             </h3>
             <ul
               style={{
@@ -4771,9 +5092,9 @@ function CautionsBlock({
                 gap: isMobile ? 8 : 12,
               }}
             >
-              {shownCautions.map((c, i) => (
+              {shownCautions.map(({ origIdx }) => (
                 <li
-                  key={`c-${i}`}
+                  key={`c-${origIdx}`}
                   style={{
                     fontSize: isMobile ? 18 : 30,
                     color: SUB,
@@ -4781,7 +5102,12 @@ function CautionsBlock({
                     fontFamily: BODY_FONT,
                   }}
                 >
-                  {c}
+                  <EditableResultText
+                    copy={copy}
+                    onChange={onCopyChange}
+                    path={["cautions", origIdx]}
+                    maxLength={100}
+                  />
                 </li>
               ))}
             </ul>
@@ -4851,7 +5177,11 @@ function ClosingSignature({
           wordBreak: "keep-all",
         }}
       >
-        정성껏 골라 담았습니다. 맛있게 드세요.
+        <OverrideText
+          id="closing.note"
+          fallback="정성껏 골라 담았습니다. 맛있게 드세요."
+          maxLength={60}
+        />
       </p>
       {signature && (
         <p
@@ -4893,6 +5223,8 @@ function SectionTitle({
   isMobile,
   variant = "main",
   overline,
+  editId,
+  editOverlineId,
 }: {
   title: string
   regen?: React.ReactNode
@@ -4902,6 +5234,10 @@ function SectionTitle({
   variant?: SectionTitleVariant
   /** v3.8: hero 변주에서만 노출하는 오버라인 영문 라벨(예: REVIEW). */
   overline?: string
+  /** v4.0: 섹션 제목 인라인 편집 키. 있으면 title을 OverrideText로 감싼다(고정 문구 편집). */
+  editId?: string
+  /** v4.0: 오버라인 라벨 인라인 편집 키. hero 변주에서 overline과 함께 있을 때만. */
+  editOverlineId?: string
 }) {
   const accent = useAccent()
   // 크기·색 — 데스크톱 기준 hero 60 / main 46 / quiet 34. 모바일은 각 톤에 맞춰 축소.
@@ -4931,7 +5267,11 @@ function SectionTitle({
               fontFamily: BODY_FONT,
             }}
           >
-            {overline}
+            {editOverlineId ? (
+              <OverrideText id={editOverlineId} fallback={overline!} maxLength={24} />
+            ) : (
+              overline
+            )}
           </div>
         )}
         <h2
@@ -4945,7 +5285,7 @@ function SectionTitle({
             letterSpacing: -1,
           }}
         >
-          {title}
+          {editId ? <OverrideText id={editId} fallback={title} maxLength={40} /> : title}
         </h2>
       </div>
       {regen}

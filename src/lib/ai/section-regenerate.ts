@@ -181,5 +181,13 @@ export function mergeSection(
   if (nextResearch) {
     merged.research = nextResearch
   }
+  // v4.0: textOverrides(고정 문구 인라인 편집)도 옵셔널 — 섹션 재생성 patch엔 없으므로
+  // current 값을 그대로 보존한다. (이 처리가 없으면 아무 섹션이나 재생성할 때 셀러가
+  // 고쳐 둔 섹션 제목·배송 안내 등 고정 문구 수정이 전부 사라진다.)
+  const nextOverrides =
+    "textOverrides" in patch ? patch.textOverrides : current.textOverrides
+  if (nextOverrides && Object.keys(nextOverrides).length > 0) {
+    merged.textOverrides = nextOverrides
+  }
   return merged
 }

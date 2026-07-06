@@ -150,6 +150,16 @@ function flattenCopy(output: CopyOutput): { field: string; text: string }[] {
   output.recommendFor.forEach((r, i) =>
     out.push({ field: `recommendFor[${i}]`, text: r }),
   )
+  // v4.0: 고정 문구 인라인 편집 오버라이드 값도 검수 대상에 합류 —
+  // 셀러가 섹션 제목·배송 안내 등 고정 문구를 과장 광고(식약처 금지어)나
+  // 산지 불일치 지역명으로 바꾸는 경우를 감지한다.
+  if (output.textOverrides) {
+    for (const [key, value] of Object.entries(output.textOverrides)) {
+      if (value && value.trim()) {
+        out.push({ field: `textOverrides.${key}`, text: value })
+      }
+    }
+  }
   return out
 }
 
