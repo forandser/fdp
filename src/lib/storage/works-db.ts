@@ -10,7 +10,8 @@
 
 import { get, set } from "idb-keyval"
 import { STORAGE_KEYS } from "./keys"
-import type { CopyInput, CopyOutput } from "@/lib/ai/types"
+import type { CopyInput, CopyOutput, PhotoAnalysisItem } from "@/lib/ai/types"
+import { validatePhotoAnalysis } from "@/lib/ai/validate"
 
 export interface Work {
   id: string
@@ -23,6 +24,14 @@ export interface Work {
   copy: CopyOutput | null
   /** 원본 이미지 Blob 배열(IndexedDB가 Blob 직렬화를 지원). */
   imageBlobs: Blob[]
+  /**
+   * v4.4: 업로드 이미지 id 목록(imageBlobs 와 같은 순서·길이). 복원 시 이 id 를 그대로
+   * 되살려 photoAnalysis[].imageId 와 정합을 맞춘다 — 재분석 캐시(photoAnalysisMatchesImages)·
+   * ResultView 배치(planImages)·갤러리 캡션이 재로딩 후에도 매칭되게 한다.
+   * 구버전 저장본엔 없음(옵셔널) — undefined면 복원 시 새 id 를 부여하고 photoAnalysis 는
+   * 순서 기반 폴백으로 동작(하위호환).
+   */
+  imageIds?: string[]
   /**
    * v3.7: 포장 전용 슬롯 사진(PackagingBlock "이렇게 배송되어요"). 일반 풀과 분리 저장.
    * 구버전 저장본엔 없음(옵셔널 — 하위호환). 없거나 null이면 포장 섹션 미노출.
@@ -38,6 +47,22 @@ export interface Work {
    * 구버전 저장본엔 없음(옵셔널) — undefined면 기본 ON(true)으로 복원(하위호환).
    */
   enhanceImages?: boolean
+  /**
+   * v4.4: 사진 분석 결과(역할·대표컷 점수·품질 플래그·"보이는 것" 메모). 생성 시 AI가 채운다.
+   * 같은 사진으로 재생성할 때 재분석을 건너뛰는 캐시로도 쓰인다(imageId 집합 일치 시).
+   * 구버전 저장본엔 없음(옵셔널) — undefined면 ResultView가 순서 기반 로직으로 폴백.
+   */
+  photoAnalysis?: PhotoAnalysisItem[]
+  /**
+   * v4.4: 사진 분석 토글 상태. 구버전 저장본엔 없음(옵셔널) — undefined면 기본 ON(true, 하위호환).
+   */
+  photoAnalysisEnabled?: boolean
+  /**
+   * v4.6: 레이아웃 무드 변주(디자인 토큰만 다름 — 섹션 순서·게이팅·카피 불변).
+   * 구버전 저장본엔 없음(옵셔널) — undefined면 복원 시 "standard"로 폴백(기존 렌더와
+   * 픽셀 동일, 하위호환). 저장/복원/백업 모두 이 값을 라운드트립한다.
+   */
+  layoutVariant?: "standard" | "soft" | "editorial"
 }
 
 export interface WorkSummary {
@@ -69,8 +94,12 @@ export function newWorkId(): string {
 /** 단일 work 저장(upsert). updatedAt은 호출자가 채우거나 여기서 자동 갱신. */
 export async function saveWork(work: Work): Promise<void> {
   const map = await readMap()
+  // 같은 id 재저장(인라인 편집·변주 변경 등) 시 원본 생성시각 보존 —
+  // 호출부들이 createdAt: Date.now()로 Work를 재구성해도 목록 정렬이 안 흔들리게.
+  const prevCreatedAt = map[work.id]?.createdAt
   map[work.id] = {
     ...work,
+    createdAt: prevCreatedAt ?? work.createdAt,
     updatedAt: work.updatedAt > 0 ? work.updatedAt : Date.now(),
   }
   await writeMap(map)
@@ -118,12 +147,23 @@ export interface WorkBackupItem {
   input: CopyInput
   copy: CopyOutput | null
   imagesBase64: string[]
+  /**
+   * v4.4: 업로드 이미지 id 목록(imagesBase64 와 같은 순서). 복원 시 photoAnalysis 와
+   * 정합을 맞추기 위해 백업에도 함께 실어 라운드트립한다. 구버전 백업엔 없음(하위호환).
+   */
+  imageIds?: string[]
   /** v3.7: 포장 전용 슬롯 사진 base64(dataURL). 없으면 생략(하위호환). */
   packagingBase64?: string | null
   /** v3.7: 크기 비교 전용 슬롯 사진 base64(dataURL). 없으면 생략(하위호환). */
   sizeBase64?: string | null
   /** 사진 자동 보정 토글 상태. 없으면 기본 ON(하위호환). */
   enhanceImages?: boolean
+  /** v4.4: 사진 분석 결과. 없으면 생략(하위호환). */
+  photoAnalysis?: PhotoAnalysisItem[]
+  /** v4.4: 사진 분석 토글 상태. 없으면 기본 ON(하위호환). */
+  photoAnalysisEnabled?: boolean
+  /** v4.6: 레이아웃 변주. 없으면 생략(하위호환 — 로드 시 standard). */
+  layoutVariant?: "standard" | "soft" | "editorial"
 }
 export interface WorkBackup {
   format: "fdp-backup"
@@ -189,9 +229,16 @@ export async function exportAllWorksToJson(): Promise<WorkBackup> {
       input: w.input,
       copy: w.copy,
       imagesBase64,
+      // v4.4: 이미지 id 도 함께 백업 — 복원 시 photoAnalysis imageId 정합용.
+      imageIds: w.imageIds,
       packagingBase64,
       sizeBase64,
       enhanceImages: w.enhanceImages,
+      // v4.4: 사진 분석 결과·토글도 백업(있을 때만 — undefined면 JSON에서 생략).
+      photoAnalysis: w.photoAnalysis,
+      photoAnalysisEnabled: w.photoAnalysisEnabled,
+      // v4.6: 레이아웃 변주도 백업(undefined면 JSON에서 생략 → 로드 시 standard).
+      layoutVariant: w.layoutVariant,
     })
   }
   return {
@@ -239,6 +286,22 @@ export async function importBackupJson(
       if (typeof item.sizeBase64 === "string" && item.sizeBase64.startsWith("data:")) {
         sizeBlob = await dataUrlToBlob(item.sizeBase64)
       }
+      // v4.4: 이미지 id 복원(구버전 백업엔 없음 — 하위호환). 문자열만 통과.
+      const imageIds = Array.isArray(item.imageIds)
+        ? item.imageIds.filter((x): x is string => typeof x === "string")
+        : []
+      // v4.4: 사진 분석은 신뢰 없는 외부 입력이므로 저장 시점 id 를 knownIds 로 재검증한다
+      //   (role 화이트리스트·heroScore 클램프·visibleNote 절삭·미지 imageId 드롭·형태 오류 방어).
+      //   imageIds 가 없으면(구버전 백업) 매칭 불가 → null → 복원 시 순서 기반 폴백.
+      const photoAnalysis = validatePhotoAnalysis(item.photoAnalysis, imageIds) ?? undefined
+      // v4.6: 레이아웃 변주는 신뢰 없는 외부 입력 — 화이트리스트(3개) 밖(손상/조작/구버전)이면
+      //   undefined(→ 복원 시 standard). 하위호환: 필드 없어도 안전.
+      const layoutVariant =
+        item.layoutVariant === "soft" ||
+        item.layoutVariant === "editorial" ||
+        item.layoutVariant === "standard"
+          ? item.layoutVariant
+          : undefined
       map[item.id] = {
         id: item.id,
         createdAt: item.createdAt ?? Date.now(),
@@ -248,9 +311,15 @@ export async function importBackupJson(
         input: item.input,
         copy: item.copy ?? null,
         imageBlobs: blobs,
+        imageIds: imageIds.length > 0 ? imageIds : undefined,
         packagingBlob,
         sizeBlob,
         enhanceImages: item.enhanceImages,
+        // v4.4: 재검증 통과분만 저장(형태 오류·환각 imageId 방어). 없으면 undefined.
+        photoAnalysis,
+        photoAnalysisEnabled: item.photoAnalysisEnabled,
+        // v4.6: 검증 통과한 레이아웃 변주만 저장(없으면 undefined → standard).
+        layoutVariant,
       }
       imported++
     } catch {

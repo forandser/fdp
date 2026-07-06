@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { ImageUploader, SingleSlotUploader, type UploadedImage } from "./ImageUploader"
 import { KeywordPicker } from "./KeywordPicker"
-import { ResultView, emptyCopy } from "./ResultView"
+import { ResultView, emptyCopy, type LayoutVariant } from "./ResultView"
 import { SeasonHint } from "./SeasonHint"
 import { SellingPointsSuggester } from "./SellingPointsSuggester"
 import { getAIProvider } from "@/lib/ai/provider"
@@ -12,6 +12,8 @@ import type {
   CopyOutput,
   CopySpec,
   CopyTone,
+  PhotoAnalysisItem,
+  PhotoAnalysisResult,
   ProductCategory,
   SellerReview,
   TrustInfo,
@@ -45,7 +47,11 @@ const PRESET_LABEL_SET = new Set(PRESET_KEYWORDS.map((k) => k.label))
 /** 좌/우 분할 분기점 (px). 이 아래는 적층 레이아웃. */
 const SPLIT_BREAKPOINT = 1280
 
-async function blobToUploadedImage(blob: Blob, idx: number): Promise<UploadedImage | null> {
+async function blobToUploadedImage(
+  blob: Blob,
+  idx: number,
+  preferredId?: string,
+): Promise<UploadedImage | null> {
   if (typeof window === "undefined") return null
   try {
     const type = blob.type || "image/jpeg"
@@ -62,7 +68,9 @@ async function blobToUploadedImage(blob: Blob, idx: number): Promise<UploadedIma
       img.src = url
     })
     return {
-      id: `restored-${Date.now()}-${idx}`,
+      // v4.4: 저장된 원본 upload id 를 그대로 되살린다(있을 때). 없으면 신규 restored id.
+      //   이 정합이 있어야 복원 후에도 photoAnalysis[].imageId 가 매칭된다(재분석 캐시·배치·캡션).
+      id: preferredId && preferredId.trim() ? preferredId : `restored-${Date.now()}-${idx}`,
       file,
       url,
       // 복원 직후엔 원본을 표시(url=rawUrl). 보정 ON이면 아래 동기화 effect가 보정본으로 스왑.
@@ -137,6 +145,66 @@ function buildLiveSpec(args: {
   return spec
 }
 
+/**
+ * v4.4: 사진 분석 입력용 512px 다운스케일 dataURL 생성.
+ * img.url(원본/보정본 objectURL)을 fetch → bitmap → canvas → JPEG dataURL로 축소.
+ * works-db의 makeThumbDataUrl 패턴을 따르되 maxSize 512·품질 0.8. 실패 시 null(해당 사진만 제외).
+ */
+async function toAnalysisDataUrl(url: string, maxSize = 512): Promise<string | null> {
+  if (typeof window === "undefined") return null
+  try {
+    const res = await fetch(url)
+    const blob = await res.blob()
+    const bitmap = await createImageBitmap(blob)
+    const scale = Math.min(1, maxSize / Math.max(bitmap.width, bitmap.height))
+    const w = Math.max(1, Math.round(bitmap.width * scale))
+    const h = Math.max(1, Math.round(bitmap.height * scale))
+    const canvas = document.createElement("canvas")
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext("2d")
+    if (!ctx) {
+      bitmap.close()
+      return null
+    }
+    ctx.drawImage(bitmap, 0, 0, w, h)
+    bitmap.close()
+    return canvas.toDataURL("image/jpeg", 0.8)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * v4.4: 기존 사진 분석이 현재 이미지 목록과 정확히 일치하는지(재분석 스킵 판단).
+ * imageId 집합이 완전히 같을 때만 재사용 — 한 장이라도 추가/삭제/교체되면 재분석.
+ */
+function photoAnalysisMatchesImages(
+  analysis: PhotoAnalysisItem[] | null,
+  imgs: UploadedImage[],
+): boolean {
+  if (!analysis || analysis.length === 0 || imgs.length === 0) return false
+  const analyzed = new Set(analysis.map((p) => p.imageId))
+  if (analyzed.size !== imgs.length) return false
+  for (const img of imgs) {
+    if (!analyzed.has(img.id)) return false
+  }
+  return true
+}
+
+/** v4.4: 카피 생성 usage에 사진 분석 usage를 합산(비용 표시 투명성). extra 없으면 base 그대로. */
+function mergeUsage(base: UsageInfo, extra?: UsageInfo): UsageInfo {
+  if (!extra) return base
+  const ws = (base.webSearchRequests ?? 0) + (extra.webSearchRequests ?? 0)
+  return {
+    inputTokens: base.inputTokens + extra.inputTokens,
+    outputTokens: base.outputTokens + extra.outputTokens,
+    estimatedCostKRW: base.estimatedCostKRW + extra.estimatedCostKRW,
+    truncated: base.truncated || extra.truncated,
+    webSearchRequests: ws > 0 ? ws : undefined,
+  }
+}
+
 export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   const [stage, setStage] = useState<Stage>(initialWorkId ? "restoring" : "input")
   const [images, setImages] = useState<UploadedImage[]>([])
@@ -188,6 +256,22 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
    * 저장 blob은 항상 원본(보정본 저장 안 함 → 알고리즘 개선 시 재적용 가능).
    */
   const [enhanceImages, setEnhanceImages] = useState(true)
+  /**
+   * v4.4: 사진 분석 토글 — 기본 ON. Work 레코드(photoAnalysisEnabled)에 저장·복원.
+   * ON이면 생성 시 리서치와 병렬로 AI가 사진을 보고 역할·대표컷·품질을 분석한다.
+   */
+  const [photoAnalysisEnabled, setPhotoAnalysisEnabled] = useState(true)
+  /**
+   * v4.4: 마지막 사진 분석 결과 — 생성 시 채워지고 ResultView 배치 로직에 전달.
+   * 복원 시 Work.photoAnalysis로 채운다. 같은 사진 재생성 시 재분석 스킵 캐시로도 쓰인다.
+   * 분석 실패/OFF면 null → ResultView가 순서 기반 로직으로 폴백.
+   */
+  const [photoAnalysis, setPhotoAnalysis] = useState<PhotoAnalysisItem[] | null>(null)
+  /**
+   * v4.6: 레이아웃 무드 변주 — 기본 "standard"(기존 렌더와 픽셀 동일). Work(layoutVariant)에
+   * 저장·복원. 결과 화면에서 즉시 전환되며 섹션 순서·게이팅·카피는 불변, 디자인 토큰만 달라진다.
+   */
+  const [layoutVariant, setLayoutVariant] = useState<LayoutVariant>("standard")
   const tone: CopyTone = "sincere"
   /** v2.7: 게이트 UI 삭제. 내부 상수 true 유지 (API 안전망 / 규칙 5 준수) */
   const isOrdinaryProduce = true
@@ -339,7 +423,8 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         for (let i = 0; i < work.imageBlobs.length; i++) {
           const blob = work.imageBlobs[i]
           if (!blob) continue
-          const img = await blobToUploadedImage(blob, i)
+          // v4.4: 저장된 이미지 id 를 그대로 복원(imageBlobs 와 같은 인덱스)해 photoAnalysis 와 정합.
+          const img = await blobToUploadedImage(blob, i, work.imageIds?.[i])
           if (img) {
             restored.push(img)
             restoredUrlsRef.current.push(img.url)
@@ -387,6 +472,11 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         setSizeImage(restoredSize)
         // 사진 자동 보정 토글 복원 — 구버전 저장본엔 없음(undefined → 기본 ON, 하위호환).
         setEnhanceImages(work.enhanceImages ?? true)
+        // v4.4: 사진 분석 토글·결과 복원 — 구버전 저장본엔 없음(undefined → 기본 ON, 하위호환).
+        setPhotoAnalysisEnabled(work.photoAnalysisEnabled ?? true)
+        setPhotoAnalysis(work.photoAnalysis ?? null)
+        // v4.6: 레이아웃 변주 복원 — 구버전 저장본엔 없음(undefined → "standard", 하위호환).
+        setLayoutVariant(work.layoutVariant ?? "standard")
         setCategory(input.category)
         setProductName(input.productType)
         setVariety(input.variety ?? "")
@@ -634,10 +724,44 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       researchEnabled,
     }
 
+    // v4.4: 사진 분석 — generateCopy와 병렬 실행. 실패해도(내부 catch → null) 카피 생성은 진행한다.
+    // 재사용: 기존 분석의 imageId 집합이 현재 images와 정확히 일치하면 재분석 스킵(비용 절약).
+    const reusableAnalysis =
+      photoAnalysisEnabled && photoAnalysisMatchesImages(photoAnalysis, images)
+        ? photoAnalysis
+        : null
+    const analysisPromise: Promise<PhotoAnalysisResult | null> = (async () => {
+      if (!photoAnalysisEnabled || images.length === 0) return null
+      if (reusableAnalysis) return { items: reusableAnalysis } // 재사용 — 추가 비용 없음
+      try {
+        // 대상: 일반 사진(images)만. packaging/size 슬롯은 전용이라 분석 제외.
+        const photos: { id: string; dataUrl: string }[] = []
+        for (const img of images) {
+          const dataUrl = await toAnalysisDataUrl(img.url, 512)
+          if (dataUrl) photos.push({ id: img.id, dataUrl })
+        }
+        if (photos.length === 0) return null
+        return await getAIProvider().analyzePhotos(photos, {
+          productType: productName.trim(),
+          category,
+        })
+      } catch (e) {
+        console.error("[analyzePhotos]", e)
+        return null
+      }
+    })()
+
     try {
-      const res = await getAIProvider().generateCopy(input)
+      // generateCopy는 실패 시 throw(→ 아래 catch로 에러 화면). analysisPromise는 절대 reject 안 함.
+      const [res, analysisRes] = await Promise.all([
+        getAIProvider().generateCopy(input),
+        analysisPromise,
+      ])
+      const analysisItems = analysisRes?.items ?? null
       setResult(res.output)
-      setLastUsage(res.usage)
+      // 분석 usage(신규 분석일 때만 존재 — 재사용/OFF/실패면 없음)를 생성 비용에 합산 표시.
+      setLastUsage(mergeUsage(res.usage, analysisRes?.usage))
+      setPhotoAnalysis(analysisItems)
       setCurrentInput(input)
       setResultMeta({
         priceNum: 0,
@@ -661,11 +785,18 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
           input,
           copy: res.output,
           imageBlobs: images.map((i) => i.file),
+          // v4.4: 이미지 id 도 저장 — 복원 후 photoAnalysis imageId 정합(재분석 캐시·배치·캡션).
+          imageIds: images.map((i) => i.id),
           // v3.7: 전용 슬롯 사진 — 일반 imageBlobs와 별도 저장(없으면 null).
           packagingBlob: packagingImage?.file ?? null,
           sizeBlob: sizeImage?.file ?? null,
           // 사진 자동 보정 토글 — 표시 옵션. 저장 blob은 항상 원본.
           enhanceImages,
+          // v4.4: 사진 분석 토글·결과 저장(같은 사진 재생성 시 재분석 스킵 캐시).
+          photoAnalysisEnabled,
+          photoAnalysis: analysisItems ?? undefined,
+          // v4.6: 레이아웃 변주 저장(현재 선택값 — 기본 standard).
+          layoutVariant,
         }
         void saveWork(work)
       } catch (saveErr) {
@@ -695,15 +826,57 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
             input: currentInput,
             copy: next,
             imageBlobs: images.map((i) => i.file),
+            // v4.4: 이미지 id 유지(인라인 편집 저장 시에도 photoAnalysis 정합 유지).
+            imageIds: images.map((i) => i.id),
             // v3.7: 전용 슬롯 사진 유지(인라인 편집 저장 시에도 유실 방지).
             packagingBlob: packagingImage?.file ?? null,
             sizeBlob: sizeImage?.file ?? null,
             // 사진 자동 보정 토글 유지.
             enhanceImages,
+            // v4.4: 사진 분석 토글·결과 유지(인라인 편집 저장 시에도 유실 방지).
+            photoAnalysisEnabled,
+            photoAnalysis: photoAnalysis ?? undefined,
+            // v4.6: 레이아웃 변주 유지(인라인 편집 저장 시에도 현재 선택값 보존).
+            layoutVariant,
           }
           await saveWork(work)
         } catch (e) {
           console.error("[saveWork-update]", e)
+        }
+      })()
+    }
+  }
+
+  /**
+   * v4.6: 레이아웃 변주 전환 — 즉시 state 반영(미리보기 갱신) + 저장된 작업이 있으면 persist.
+   * handleCopyChange 와 동일한 Work 구성으로, 현재 copy(result)를 유지한 채 layoutVariant만 갱신 저장.
+   * 아직 생성 전(workId 없음)이면 state만 바꾸고, 이후 handleSubmit 저장 시 함께 기록된다.
+   */
+  const handleLayoutVariantChange = (next: LayoutVariant) => {
+    setLayoutVariant(next)
+    if (workId && currentInput && resultMeta && result) {
+      void (async () => {
+        try {
+          const work: Work = {
+            id: workId,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            productName: resultMeta.productName,
+            thumbDataUrl: images[0] ? await makeThumbDataUrl(images[0].file) : null,
+            input: currentInput,
+            copy: result,
+            imageBlobs: images.map((i) => i.file),
+            imageIds: images.map((i) => i.id),
+            packagingBlob: packagingImage?.file ?? null,
+            sizeBlob: sizeImage?.file ?? null,
+            enhanceImages,
+            photoAnalysisEnabled,
+            photoAnalysis: photoAnalysis ?? undefined,
+            layoutVariant: next,
+          }
+          await saveWork(work)
+        } catch (e) {
+          console.error("[saveWork-layout]", e)
         }
       })()
     }
@@ -1253,6 +1426,88 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         </label>
       </div>
 
+      {/* v4.4: 사진 분석 토글 — 기본 ON. 생성 시 리서치와 병렬로 AI가 사진 역할·대표컷·품질을 분석. */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          padding: "12px 14px",
+          marginBottom: 12,
+          background: "var(--color-bg-subtle)",
+          border: "1px solid var(--color-neutral-200)",
+          borderRadius: "var(--radius-xs)",
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: 14,
+              fontWeight: 700,
+              color: "var(--color-neutral-900)",
+            }}
+          >
+            🔍 사진 분석
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--color-neutral-600)",
+              lineHeight: 1.5,
+              marginTop: 2,
+            }}
+          >
+            AI가 사진을 보고 대표컷·배치를 정해요 (회당 약 십몇~수십 원 추가).
+          </div>
+        </div>
+        <label
+          style={{
+            position: "relative",
+            display: "inline-block",
+            width: 44,
+            height: 24,
+            flexShrink: 0,
+            cursor: isGenerating ? "not-allowed" : "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            role="switch"
+            aria-label="사진 분석"
+            checked={photoAnalysisEnabled}
+            disabled={isGenerating}
+            onChange={(e) => setPhotoAnalysisEnabled(e.target.checked)}
+            style={{ opacity: 0, width: 0, height: 0 }}
+          />
+          <span
+            aria-hidden
+            style={{
+              position: "absolute",
+              inset: 0,
+              borderRadius: 999,
+              transition: "background 0.15s",
+              background: photoAnalysisEnabled
+                ? "var(--color-primary-600)"
+                : "var(--color-neutral-300)",
+            }}
+          />
+          <span
+            aria-hidden
+            style={{
+              position: "absolute",
+              top: 3,
+              left: photoAnalysisEnabled ? 23 : 3,
+              width: 18,
+              height: 18,
+              borderRadius: "50%",
+              background: "#fff",
+              transition: "left 0.15s",
+              boxShadow: "0 1px 2px rgba(0,0,0,0.2)",
+            }}
+          />
+        </label>
+      </div>
+
       {/* 사진 자동 보정 토글 — 기본 ON. 업로드/복원된 사진을 과일 특화 자동 보정으로 표시(내보내기 반영). */}
       <div
         style={{
@@ -1334,6 +1589,9 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
           />
         </label>
       </div>
+
+      {/* v4.6: 레이아웃 무드 변주 스위처 — 오른쪽 결과 미리보기에 즉시 반영(디자인 토큰만 변경). */}
+      <LayoutVariantSwitcher value={layoutVariant} onChange={handleLayoutVariantChange} />
 
       <button
         type="button"
@@ -1424,6 +1682,7 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         images={images}
         packagingImage={packagingImage}
         sizeImage={sizeImage}
+        photoAnalysis={photoAnalysis ?? undefined}
         productName={liveResultMeta.productName}
         price={liveResultMeta.priceNum}
         origin={liveResultMeta.origin}
@@ -1434,6 +1693,7 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         onCopyChange={handleCopyChange}
         onSectionRegenerate={result ? handleSectionRegenerate : undefined}
         busySection={busySection}
+        layoutVariant={layoutVariant}
         onRetry={handleRetry}
       />
 
@@ -1880,6 +2140,100 @@ function ReviewsInput({
           {c.add}
         </button>
       )}
+    </div>
+  )
+}
+
+/**
+ * v4.6: 레이아웃 무드 변주 스위처 — 라디오 3버튼(기본/소프트/매거진).
+ * 디자인 토큰만 바꾸며(섹션 순서·게이팅·카피 불변) 오른쪽 결과 미리보기에 즉시 반영된다.
+ */
+const LAYOUT_VARIANT_OPTIONS: { value: LayoutVariant; label: string; desc: string }[] = [
+  { value: "standard", label: "기본", desc: "깔끔한 기본 레이아웃" },
+  { value: "soft", label: "소프트", desc: "둥근 카드 · 포근한 톤" },
+  { value: "editorial", label: "매거진", desc: "명조 헤딩 · 넓은 여백" },
+]
+
+function LayoutVariantSwitcher({
+  value,
+  onChange,
+}: {
+  value: LayoutVariant
+  onChange: (next: LayoutVariant) => void
+}) {
+  return (
+    <div
+      style={{
+        padding: "12px 14px",
+        marginBottom: 12,
+        background: "var(--color-bg-subtle)",
+        border: "1px solid var(--color-neutral-200)",
+        borderRadius: "var(--radius-xs)",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 14,
+          fontWeight: 700,
+          color: "var(--color-neutral-900)",
+          marginBottom: 2,
+        }}
+      >
+        🎨 레이아웃 무드
+      </div>
+      <div
+        style={{
+          fontSize: 12,
+          color: "var(--color-neutral-600)",
+          lineHeight: 1.5,
+          marginBottom: 10,
+        }}
+      >
+        같은 내용을 다른 분위기로 — 순서·문구는 그대로, 디자인만 달라져요.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {LAYOUT_VARIANT_OPTIONS.map((opt) => {
+          const active = value === opt.value
+          return (
+            <label
+              key={opt.value}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "8px 12px",
+                border: active
+                  ? "2px solid var(--color-primary-600)"
+                  : "1px solid var(--color-neutral-300)",
+                borderRadius: "var(--radius-xs)",
+                background: active ? "var(--color-primary-50)" : "var(--color-bg-surface)",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="radio"
+                name="fdp-layout-variant"
+                value={opt.value}
+                checked={active}
+                onChange={() => onChange(opt.value)}
+                style={{ accentColor: "#E03131", flexShrink: 0 }}
+              />
+              <span style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
+                <span
+                  style={{
+                    fontSize: "var(--font-size-md)",
+                    fontWeight: 700,
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
+                  {opt.label}
+                </span>
+                <span style={{ fontSize: 11, color: "var(--color-neutral-500)" }}>{opt.desc}</span>
+              </span>
+            </label>
+          )
+        })}
+      </div>
     </div>
   )
 }

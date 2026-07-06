@@ -17,6 +17,7 @@ import {
   type DiagnosticResult,
   type DiagnosticStatus,
   type ModelId,
+  type PhotoAnalysisResult,
   type ResearchResult,
   type SuggestPointsInput,
   type SuggestPointsResult,
@@ -43,11 +44,21 @@ import {
   SUGGEST_KEYWORDS_SYSTEM_PROMPT,
 } from "./prompts/suggest-keywords"
 import {
+  buildPhotoAnalysisMessages,
+  PHOTO_ANALYSIS_SYSTEM_PROMPT,
+  PHOTO_ANALYSIS_MAX_TOKENS,
+} from "./prompts/photo-analysis"
+import {
   estimateInputCostKRW,
   estimateOutputCostKRW,
   estimateWebSearchCostKRW,
 } from "./pricing"
-import { extractJson, validateCopyOutput, validateResearchResult } from "./validate"
+import {
+  extractJson,
+  validateCopyOutput,
+  validatePhotoAnalysis,
+  validateResearchResult,
+} from "./validate"
 import { t } from "@/lib/i18n"
 
 const DIAGNOSTIC_MAX_TOKENS = 8
@@ -417,6 +428,56 @@ export class AnthropicAdapter implements AIProvider {
       inputTokens,
       outputTokens,
       estimatedCostKRW: Number.isFinite(estimatedCostKRW) ? estimatedCostKRW : 0,
+    }
+  }
+
+  /**
+   * v4.4: 업로드 사진 vision 분석 (1콜) — 사진별 역할·품질·"보이는 것" 메모.
+   * 히어로 선정·섹션 매칭·갤러리 순서·사실 기반 캡션의 재료로만 쓰인다.
+   *
+   * **어떤 실패든(빈 입력·API 에러·빈 응답·JSON 파싱 실패·검증 탈락) null 반환.**
+   * 절대 throw 로 생성 흐름을 막지 않는다 — 사진 분석은 선택적 부가 신호일 뿐.
+   */
+  async analyzePhotos(
+    photos: { id: string; dataUrl: string }[],
+    context: { productType: string; category: string },
+  ): Promise<PhotoAnalysisResult | null> {
+    if (!Array.isArray(photos) || photos.length === 0) return null
+    try {
+      const client = await this.createClient()
+      const res = await client.messages.create({
+        model: this.modelId,
+        system: PHOTO_ANALYSIS_SYSTEM_PROMPT,
+        max_tokens: PHOTO_ANALYSIS_MAX_TOKENS,
+        messages: buildPhotoAnalysisMessages(photos, context),
+      })
+
+      const textBlock = res.content.find((c) => c.type === "text")
+      if (!textBlock || textBlock.type !== "text") return null
+
+      const knownIds = photos.map((p) => p.id)
+      const items = validatePhotoAnalysis(extractJson(textBlock.text), knownIds)
+      if (!items) return null
+
+      const inputTokens = res.usage?.input_tokens ?? 0
+      const outputTokens = res.usage?.output_tokens ?? 0
+      const estimatedCostKRW =
+        estimateInputCostKRW(this.modelId, inputTokens) +
+        estimateOutputCostKRW(this.modelId, outputTokens)
+
+      return {
+        items,
+        usage: {
+          inputTokens,
+          outputTokens,
+          estimatedCostKRW: Number.isFinite(estimatedCostKRW) ? estimatedCostKRW : 0,
+          truncated: res.stop_reason === "max_tokens",
+        },
+      }
+    } catch (err) {
+      // 사진 분석 실패는 절대 치명적이지 않다 — 조용히 null 폴백.
+      console.warn("[analyzePhotos] failed, returning null:", err)
+      return null
     }
   }
 }

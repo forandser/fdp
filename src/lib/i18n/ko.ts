@@ -217,6 +217,41 @@ export const ko = {
         ceiling: "품종 최대",
         ours: "우리 {brix}",
         caption: "※ 당도는 한 알마다 조금씩 다를 수 있어요",
+        // v4.5: 당도 범위 비교 바 — 품종 일반 brixMin~brixMax 밴드 범례.
+        varietyRange: "품종 일반 범위",
+      },
+      /** v4.5: 제철 캘린더 — fruit-facts 품종 harvestMonths 기반 12개월 바. */
+      seasonCalendar: {
+        title: "제철 캘린더",
+        harvestLabel: "수확하는 달",
+        // AI 티 나는 문어체 금지 — 구어체.
+        footnote: "※ 품종 기준이에요. 밭·날씨 따라 조금씩 달라요",
+      },
+      /** v4.5: 수령 후 타임라인 — fruit-facts storage mode/days/tempC 기반. */
+      receiveTimeline: {
+        title: "받으신 뒤 이렇게 드세요",
+        footnote: "※ 품종·보관 환경 따라 조금씩 달라요",
+        receiveLabel: "수령",
+        receiveDesc: "택배로 받으면",
+        fridgeLabel: "바로 냉장",
+        fridgeDesc: "받자마자 냉장 보관해요",
+        fridgeTempDesc: "약 {temp}℃로 냉장 보관해요",
+        ripenLabel: "실온 후숙",
+        ripenDesc: "실온에 {days}일쯤 두고 후숙해요",
+        ripenNoDaysDesc: "말랑해질 때까지 실온 후숙해요",
+        thenFridgeLabel: "냉장 보관",
+        thenFridgeDesc: "후숙되면 냉장고에 넣어요",
+        enjoyRipeLabel: "완숙",
+        enjoyRipeDesc: "말랑해지면 시원하게 드세요",
+        roomLabel: "실온 보관",
+        roomDesc: "직사광선 피해 실온에 둬요",
+        enjoyLabel: "맛있게",
+        enjoyDaysDesc: "약 {days}일 안에 드시면 좋아요",
+        enjoyNoDaysDesc: "신선할 때 드세요",
+        enjoySoonLabel: "빨리",
+        enjoySoonDesc: "오래 두지 말고 신선할 때 드세요",
+        useSoonLabel: "빨리",
+        useSoonDesc: "오래 두지 말고 신선할 때 바로 가공하세요",
       },
       /** 중량 → 개수 환산 행 (개당 무게 데이터 있을 때만). */
       countEstimate: {

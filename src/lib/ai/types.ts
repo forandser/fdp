@@ -283,6 +283,50 @@ export interface CopyResult {
   modelId: ModelId
 }
 
+/* ───────────────── v4.4: 사진 분석 (vision) ───────────────── */
+
+/**
+ * v4.4: 업로드 사진 1장의 분석 결과.
+ * 생성 시 Claude vision 1콜로 사진을 훑어 히어로 선정·섹션 매칭·갤러리 순서·
+ * 사실 기반 캡션의 재료를 만든다. **관찰 메모지, 사실값이 아니다** —
+ * visibleNote 는 카피의 산지·당도·품종 같은 "사실값"으로 승격되지 않는다.
+ *
+ * 하위호환: 구버전 저장본엔 없음(Work.photoAnalysis undefined) — 소비 측이 폴백.
+ */
+export interface PhotoAnalysisItem {
+  /** 분석 대상 사진 id — 업로드 사진과 1:1 매칭용(호출부가 부여한 값 그대로). */
+  imageId: string
+  /**
+   * 사진 역할 분류:
+   * - hero: 대표컷 후보 (원물이 꽉 차고 선명·밝은 상단용 사진)
+   * - cut: 자른 단면·과육 클로즈업 (속살)
+   * - whole: 원물 통째 (자르지 않은 전체)
+   * - box: 포장·박스·구성 (배송/선물 포장, 담긴 구성)
+   * - size: 크기 비교 (손·동전·자 등과 함께)
+   * - farm: 농장·밭·나무·수확 현장
+   * - table: 상차림·연출 (그릇·식탁·요리 스타일링)
+   */
+  role: "hero" | "cut" | "whole" | "box" | "size" | "farm" | "table"
+  /** 대표컷 적합도 0~10 (선명·구도·원물중심·밝기 종합). 높을수록 히어로 후보. */
+  heroScore: number
+  /** 초점 안 맞음/흔들림 등으로 뭉개진 사진. */
+  blurry?: boolean
+  /** 전반적으로 어둡거나 노출 부족. */
+  dark?: boolean
+  /**
+   * "사진에 실제로 보이는 것" 한 줄 (≤60자). 색·개수·배경·잘림·포장 형태 등
+   * 눈에 보이는 관찰만. 품종·산지·당도·수확일·맛·신선도 추정 절대 금지
+   * (사진만으로 알 수 없는 것은 관찰이 아님 — 카피 사실값으로 승격 금지).
+   */
+  visibleNote: string
+}
+
+/** v4.4: 사진 분석 전체 결과 — 사진별 항목 + 토큰/비용(선택). */
+export interface PhotoAnalysisResult {
+  items: PhotoAnalysisItem[]
+  usage?: UsageInfo
+}
+
 export type DiagnosticStatus =
   | "ok"
   | "invalid_key"
@@ -385,4 +429,15 @@ export interface AIProvider {
 
   /** 입력 폼 기본 정보로 핵심 키워드(2~6자) 5~8개 추천 — SEO·해시태그·검색노출용 */
   suggestKeywords(input: SuggestPointsInput): Promise<SuggestKeywordsResult>
+
+  /**
+   * v4.4: 업로드 사진(512px 다운스케일 JPEG dataURL)들을 vision 1콜로 분석해
+   * 사진별 역할·품질·"보이는 것" 메모를 만든다 — 히어로 선정·섹션 매칭·갤러리
+   * 순서·사실 기반 캡션의 재료. 어떤 실패든(파싱·API·빈응답) null 을 반환하고,
+   * 절대 throw 로 생성 흐름을 막지 않는다. 사진이 없으면 null.
+   */
+  analyzePhotos(
+    photos: { id: string; dataUrl: string }[],
+    context: { productType: string; category: string },
+  ): Promise<PhotoAnalysisResult | null>
 }

@@ -11,6 +11,7 @@ import type {
   CopyFAQ,
   CopyKeyPoint,
   CopyProblemArc,
+  PhotoAnalysisItem,
   ResearchResult,
   ResearchSource,
 } from "./types"
@@ -408,6 +409,101 @@ export function validateResearchResult(raw: unknown): ResearchResult | null {
     namingNotes.length > 0 ||
     hookPhrases.length > 0
   return hasContent ? result : null
+}
+
+/* ───────────────── v4.4: 사진 분석 검증 ───────────────── */
+
+/** 사진 역할 화이트리스트 — 이 외의 role 은 드롭(신뢰 불가 분류). */
+const PHOTO_ROLES = ["hero", "cut", "whole", "box", "size", "farm", "table"] as const
+const PHOTO_ROLE_SET: ReadonlySet<string> = new Set(PHOTO_ROLES)
+
+/** visibleNote 글자 상한(≤60자). */
+const PHOTO_VISIBLE_NOTE_MAX = 60
+
+/** heroScore 를 0~10 정수로 클램프. 숫자가 아니면 0. */
+function clampHeroScore(v: unknown): number {
+  const n = typeof v === "number" ? v : Number(v)
+  if (!Number.isFinite(n)) return 0
+  return Math.max(0, Math.min(10, Math.round(n)))
+}
+
+/**
+ * v4.4: 사진 분석 결과 화이트리스트 검증.
+ * - raw 는 { items: [...] } 또는 배열 자체 모두 허용.
+ * - role 은 화이트리스트 밖이면 항목 드롭.
+ * - heroScore 는 0~10 정수 클램프.
+ * - visibleNote 는 60자 절삭.
+ * - imageId 가 knownIds 에 없으면 드롭(모델 환각 방지). 중복 imageId 는 첫 항목만.
+ * - blurry/dark 는 boolean 일 때만 반영(true/false 모두 보존).
+ * 유효 항목이 0개면 null 반환(소비 측이 폴백).
+ */
+export function validatePhotoAnalysis(
+  raw: unknown,
+  knownIds: string[],
+): PhotoAnalysisItem[] | null {
+  const idSet = new Set(knownIds)
+  let arr: unknown
+  if (Array.isArray(raw)) {
+    arr = raw
+  } else if (isObject(raw)) {
+    if (Object.keys(raw).some((k) => FORBIDDEN_KEYS.has(k))) return null
+    arr = raw.items
+  } else {
+    return null
+  }
+  if (!Array.isArray(arr)) return null
+
+  const out: PhotoAnalysisItem[] = []
+  const seen = new Set<string>()
+  for (const item of arr) {
+    if (!isObject(item)) continue
+    if (Object.keys(item).some((k) => FORBIDDEN_KEYS.has(k))) continue
+
+    const imageId = safeString(item.imageId)
+    if (!imageId || !idSet.has(imageId) || seen.has(imageId)) continue
+
+    const role = safeString(item.role)
+    if (!PHOTO_ROLE_SET.has(role)) continue
+
+    const result: PhotoAnalysisItem = {
+      imageId,
+      role: role as PhotoAnalysisItem["role"],
+      heroScore: clampHeroScore(item.heroScore),
+      visibleNote: trimTo(safeString(item.visibleNote), PHOTO_VISIBLE_NOTE_MAX),
+    }
+    if (typeof item.blurry === "boolean") result.blurry = item.blurry
+    if (typeof item.dark === "boolean") result.dark = item.dark
+
+    seen.add(imageId)
+    out.push(result)
+  }
+
+  return out.length > 0 ? out : null
+}
+
+/**
+ * v4.4: visibleNote(사진 관찰 메모)를 판매 이미지(아트보드/JPG) 갤러리 캡션으로 승격해도
+ * 안전한지 판정한다(규칙3 허위광고 방지).
+ *
+ * visibleNote 는 "사진에 실제로 보이는 것"만 담아야 하지만, 검증은 형태만 보장할 뿐
+ * 내용을 강제하지 못한다. 모델이 프롬프트 규칙을 어기고 산지·품종·당도·맛·신선도·수확·
+ * 인증 같은 "사진만으로 알 수 없는 사실 주장"을 넣으면 그대로 JPG 캡션에 노출될 수 있고,
+ * 이 캡션은 textOverrides/CopyOutput 이 아니라 compliance 스캔도 우회한다.
+ *
+ * 따라서 이 토큰들이 한 개라도 섞이면 false → 소비 측(ResultView)이 승격을 포기하고
+ * 기존 중립 안전 문구로 폴백한다. 오탐(순수 관찰이 걸러지는 경우)은 무해하다(중립 캡션이 될 뿐).
+ * 순수 관찰(색·개수·배경·잘림 여부·과육·포장 형태·구도 등)만 통과한다.
+ */
+const UNSAFE_CAPTION_CLAIM =
+  /(유기|친환경|무농약|저농약|오가닉|organic|gap|우수농산물|인증|원산지|국내산|수입산|산지직송|직송|산지|품종|당도|brix|고당도|달콤|달달|단맛|꿀맛|새콤|상큼|아삭|시원|과즙|풍미|신선|싱싱|싱그|생생|햇|수확|당일|새벽|제철|숙성|명품)/i
+
+export function isCaptionSafeNote(note: unknown): boolean {
+  const s = typeof note === "string" ? note.trim() : ""
+  if (!s) return false
+  if (UNSAFE_CAPTION_CLAIM.test(s)) return false
+  // 산지 지역명(청송·제주 등)도 사실 주장 — 승격 금지.
+  if (REGION_PATTERNS.test(s)) return false
+  return true
 }
 
 /** 응답 텍스트에서 코드펜스 제거 후 JSON 파싱 시도. */

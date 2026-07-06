@@ -80,3 +80,24 @@ export function resolveAccent(productName: string): AccentPalette {
   if (key && ACCENT_BY_FRUIT[key]) return ACCENT_BY_FRUIT[key]
   return DEFAULT_ACCENT
 }
+
+/**
+ * 두 hex(#RRGGBB)를 ratio(0~1)로 선형 혼합해 새 구체 hex를 만든다.
+ * ratio=0 이면 hexA, 1 이면 hexB. 잘못된 형식이면 hexA 그대로.
+ * v4.6 레이아웃 변주(soft)에서 히어로 배경을 accent.soft → accent 쪽으로 "한 단계 진하게"
+ * 만드는 데 쓴다. 결과가 구체 hex라 export(toCanvas) 시 CSS 변수 문제 없음.
+ */
+export function mixHex(hexA: string, hexB: string, ratio: number): string {
+  const a = hexA.replace("#", "")
+  const b = hexB.replace("#", "")
+  if (a.length !== 6 || b.length !== 6) return hexA
+  const r = Math.max(0, Math.min(1, ratio))
+  const ch = (i: number) => {
+    const ca = parseInt(a.slice(i, i + 2), 16)
+    const cb = parseInt(b.slice(i, i + 2), 16)
+    if (!Number.isFinite(ca) || !Number.isFinite(cb)) return "00"
+    const m = Math.round(ca * (1 - r) + cb * r)
+    return m.toString(16).padStart(2, "0")
+  }
+  return `#${ch(0)}${ch(2)}${ch(4)}`
+}

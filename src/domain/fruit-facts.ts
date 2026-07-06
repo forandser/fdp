@@ -64,6 +64,13 @@ export interface FruitFact {
   sensoryWords: string[]
   /** 즉시 사용 가능한 후킹 헤드라인 (시간단축/기능강화/변화 3유형 섞임). */
   hookHeadlines: string[]
+  /**
+   * 생식(날것 그대로 섭취) 가능 여부. 생략(undefined) → 생식 가능(true)으로 취급(하위호환).
+   * false면 가공 전용 품목(예: 매실 — 청·장아찌·주류용). 수령 타임라인 등에서
+   * "신선할 때 드세요"(생식 권유) 대신 "가공하세요"류 문구로 게이트한다.
+   * fruit-facts가 단일 진실원이므로 cautions의 '생식 X'와 정합을 맞춘다.
+   */
+  rawEdible?: boolean
 }
 
 export const FRUIT_FACTS: Record<string, FruitFact> = {
@@ -536,6 +543,7 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
     cautions: ["생식 X — 가공용", "매실청은 망종(6월 6일~20일) 최적기"],
     sensoryWords: ["진한 향", "산도"],
     hookHeadlines: ["당일 수확 발송", "올해 첫 햇매실", "올해 첫 청매실"],
+    rawEdible: false,
   },
   "토마토": {
     name: "토마토",
@@ -787,4 +795,63 @@ export function isHeadlineOriginCompatible(
     if (!originLower.includes(core)) return false
   }
   return true
+}
+
+/**
+ * 상품명에 매칭되는 품종들의 수확월(harvestMonths) 합집합.
+ * - 상품명에 품종이 특정되면 그 품종(들)만, 아니면 과일 전체 품종의 union.
+ * - 1~12 정수만, 오름차순·중복 제거. 매칭 실패 시 빈 배열.
+ * 제철 캘린더(SeasonCalendarBlock) 전용 — 품종 일반 데이터라 "품종 기준" 각주와 함께 쓴다.
+ */
+export function getHarvestMonths(productName: string): number[] {
+  const fact = getFact(productName)
+  if (!fact) return []
+  const nameLower = productName.toLowerCase()
+  const named = fact.varieties.filter((v) => nameLower.includes(v.name.toLowerCase()))
+  const scope = named.length > 0 ? named : fact.varieties
+  const set = new Set<number>()
+  for (const v of scope) {
+    for (const m of v.harvestMonths) {
+      if (Number.isInteger(m) && m >= 1 && m <= 12) set.add(m)
+    }
+  }
+  return [...set].sort((a, b) => a - b)
+}
+
+/**
+ * 상품명에 매칭되는 품종들의 당도(Brix) 일반 범위(min~max).
+ * - 상품명에 품종이 특정되면 그 품종(들) 범위, 아니면 과일 전체 품종의 최소~최대.
+ * - 매칭 실패 시 null. 출하 기준 범위라 "품종 기준" 맥락으로만 쓴다(입력 수치 아님).
+ */
+export function getBrixRange(productName: string): { min: number; max: number } | null {
+  const fact = getFact(productName)
+  if (!fact) return null
+  const nameLower = productName.toLowerCase()
+  const named = fact.varieties.filter((v) => nameLower.includes(v.name.toLowerCase()))
+  const scope = named.length > 0 ? named : fact.varieties
+  let min = Infinity
+  let max = -Infinity
+  for (const v of scope) {
+    if (v.brixMin < min) min = v.brixMin
+    if (v.brixMax > max) max = v.brixMax
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max < min) return null
+  return { min, max }
+}
+
+/**
+ * 상품명에 매칭되는 과일의 보관 정보(FruitStorage). 매칭 실패 시 null.
+ * 수령 후 타임라인(ReceiveTimelineBlock)이 mode/days/tempC로 단계를 구성한다.
+ */
+export function getStorageInfo(productName: string): FruitStorage | null {
+  return getFact(productName)?.storage ?? null
+}
+
+/**
+ * 생식(날것 그대로 섭취) 가능 여부. 사전에 없거나 rawEdible 미지정이면 true(하위호환).
+ * false는 가공 전용 품목(매실 등). 수령 타임라인의 마지막 스텝 소비 문구를
+ * 생식 권유("드세요")에서 가공 안내("가공하세요")로 바꾸는 게이트로 쓴다.
+ */
+export function isRawEdible(productName: string): boolean {
+  return getFact(productName)?.rawEdible !== false
 }

@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { t } from "@/lib/i18n"
-import type { CopyOutput, CopyKeyPoint, TrustInfo, SellerReview, ProductCategory } from "@/lib/ai/types"
+import type { CopyOutput, CopyKeyPoint, TrustInfo, SellerReview, ProductCategory, PhotoAnalysisItem } from "@/lib/ai/types"
 import type { SectionId } from "@/lib/ai/section-regenerate"
 import type { UploadedImage } from "./ImageUploader"
 import { ExportPanel } from "./ExportPanel"
@@ -23,6 +23,7 @@ import { scoreCopyQuality } from "@/lib/ai/copy-quality-score"
 import {
   MAX_HEADLINE_CANDIDATES,
   normalizeHeadlineCandidate,
+  isCaptionSafeNote,
 } from "@/lib/ai/validate"
 import {
   detectFruitFactKey,
@@ -31,8 +32,12 @@ import {
   isHeadlineOriginCompatible,
   getAvgWeightG,
   estimateCountLabel,
+  getHarvestMonths,
+  getBrixRange,
+  getStorageInfo,
+  isRawEdible,
 } from "@/domain/fruit-facts"
-import { resolveAccent, DEFAULT_ACCENT, type AccentPalette } from "./fruit-accent"
+import { resolveAccent, DEFAULT_ACCENT, mixHex, type AccentPalette } from "./fruit-accent"
 import {
   PackIcon,
   FLOW_STEP_ICONS,
@@ -210,6 +215,13 @@ interface ResultViewProps {
    * 없으면 크기 섹션은 기존 동작(무게 데이터 있으면 카드만, 없으면 미노출).
    */
   sizeImage?: UploadedImage | null
+  /**
+   * v4.4: 사진 인텔리전스 결과(선택). images 각 장의 역할·대표컷 점수·품질 플래그.
+   * imageId 는 UploadedImage.id 와 매칭된다. planImages 배치·갤러리 캡션 폴백에 쓰인다.
+   * 없거나(null/undefined) 빈 배열이면 배치는 기존(v3.8)과 100% 동일하게 동작한다.
+   * 하위호환: 구버전 저장본/미분석 시 미전달 — 안전.
+   */
+  photoAnalysis?: PhotoAnalysisItem[] | null
   productName: string
   price: number
   origin?: string
@@ -226,6 +238,11 @@ interface ResultViewProps {
   onCopyChange: (next: CopyOutput) => void
   onSectionRegenerate?: (sectionId: SectionId) => Promise<void>
   busySection?: SectionId | null
+  /**
+   * v4.6: 레이아웃 무드 변주(디자인 토큰만 다름 — 섹션 순서·게이팅·카피 불변).
+   * 미지정(구버전 저장본/미전달)이면 "standard" — 기존 렌더와 픽셀 동일(하위호환).
+   */
+  layoutVariant?: LayoutVariant
 }
 
 const RED = "#E03131" // 사이드바 편집 컨트롤용 브랜드 색 (내보내는 페이지엔 accent 사용)
@@ -252,6 +269,101 @@ const PLACEHOLDER = "#ADB5BD"
  */
 const DISPLAY_FONT = '"Pretendard", "NotoSansKR", sans-serif'
 const BODY_FONT = '"Pretendard", "NotoSansKR", sans-serif'
+
+/**
+ * v4.6 editorial 헤딩 폰트 — @font-face로 이미 등록된 GowunBatang(부드러운 명조).
+ * 등록된 굵기는 700(Bold) 하나뿐이므로 editorial 토큰의 headingWeight도 700을 쓴다.
+ * (Pretendard 900 자리를 700 명조로 바꿔 "매거진" 톤을 낸다. toCanvas 호환 — 로컬 임베드 폰트.)
+ */
+const EDITORIAL_HEADING_FONT = '"GowunBatang", "Pretendard", serif'
+
+/* ============================================================ */
+/* v4.6 레이아웃 무드 변주 3종 — 디자인 토큰만 다르다.            */
+/* ------------------------------------------------------------ */
+/* 섹션 순서·게이팅·카피는 전 변주 불변. 아래 토큰을 컨텍스트로   */
+/* 내려(useAccent 패턴과 동일) 히어로·섹션 배경·카드·헤딩 등      */
+/* 주요 스타일 사이트에서만 소비한다.                            */
+/*                                                              */
+/* ★ 불변식: variant === "standard" 는 기존 렌더와 픽셀 동일.    */
+/*   → standard 토큰 기본값이 현행 리터럴(DISPLAY_FONT/900/22/  */
+/*     "#FFFFFF"/accent.soft/center/×1)과 정확히 일치한다.       */
+/*   토큰 값은 전부 구체 값(hex/px/함수 반환 hex) — CSS 변수 없음.*/
+/* ============================================================ */
+export type LayoutVariant = "standard" | "soft" | "editorial"
+
+interface LayoutTokens {
+  variant: LayoutVariant
+  /** 헤딩 폰트 패밀리 — standard/soft: Pretendard(DISPLAY), editorial: GowunBatang. */
+  headingFontFamily: string
+  /** 헤딩 굵기 — standard/soft: 900, editorial: 700(GowunBatang은 700만 등록). */
+  headingWeight: number
+  /** 큰 라운드 카드 반경(px) — standard/editorial: 22, soft: 28. 배지·필(999)은 미적용. */
+  cardRadius: number
+  /** 세로 여백 배율 — editorial: 1.15, 그 외 1(정수 padding에만 곱해 반올림 → ×1은 항등). */
+  spacingScale: number
+  /** 히어로 텍스트 정렬 — editorial: left(텍스트 블록만), 그 외 center. */
+  heroAlign: "center" | "left"
+  /** editorial 얇은 상단 구분선(섹션 배경 교차 대신) 노출 여부. */
+  showRule: boolean
+  /** 히어로 배경(accent 파생) — soft는 한 단계 진하게, 그 외 accent.soft. */
+  heroBg: (a: AccentPalette) => string
+  /** soft 교차 배경(accent 파생) — 일부 흰 섹션을 옅은 틴트로. standard/editorial은 흰색(항등). */
+  altSectionBg: (a: AccentPalette) => string
+  /** editorial 구분선 색(accent 파생). */
+  ruleColor: (a: AccentPalette) => string
+}
+
+const LAYOUT_TOKENS: Record<LayoutVariant, LayoutTokens> = {
+  // 기존 렌더와 픽셀 동일해야 하는 기준선(불변식).
+  standard: {
+    variant: "standard",
+    headingFontFamily: DISPLAY_FONT,
+    headingWeight: 900,
+    cardRadius: 22,
+    spacingScale: 1,
+    heroAlign: "center",
+    showRule: false,
+    heroBg: (a) => a.soft,
+    altSectionBg: () => "#FFFFFF",
+    ruleColor: (a) => a.soft,
+  },
+  // 소프트 — 둥글고 포근한 톤: 카드 라운드 확대, 히어로 배경 심화, 교차 틴트 리듬.
+  soft: {
+    variant: "soft",
+    headingFontFamily: DISPLAY_FONT,
+    headingWeight: 900,
+    cardRadius: 28,
+    spacingScale: 1,
+    heroAlign: "center",
+    showRule: false,
+    heroBg: (a) => mixHex(a.soft, a.accent, 0.12),
+    altSectionBg: (a) => veilTint(a.soft),
+    ruleColor: (a) => a.soft,
+  },
+  // 매거진 — 명조 헤딩, 넓은 여백, 히어로 좌정렬, 교차 배경 대신 얇은 구분선.
+  editorial: {
+    variant: "editorial",
+    headingFontFamily: EDITORIAL_HEADING_FONT,
+    headingWeight: 700,
+    cardRadius: 22,
+    spacingScale: 1.15,
+    heroAlign: "left",
+    showRule: true,
+    heroBg: (a) => a.soft,
+    altSectionBg: () => "#FFFFFF",
+    ruleColor: (a) => a.accent,
+  },
+}
+
+/**
+ * v4.6 레이아웃 토큰 Context — AccentContext와 동일 패턴.
+ * ResultView가 layoutVariant prop에서 토큰을 골라 Provider로 내리고,
+ * 각 블록이 useLayout()으로 소비한다. Provider 밖 렌더 폴백은 standard(불변식).
+ */
+const LayoutContext = createContext<LayoutTokens>(LAYOUT_TOKENS.standard)
+function useLayout(): LayoutTokens {
+  return useContext(LayoutContext)
+}
 
 /**
  * textWrap(balance/pretty)은 Edge/Chrome이 지원하지만 React CSSProperties 타입에는
@@ -370,12 +482,82 @@ export interface ImagePlan {
 
 const GALLERY_MAX = 8
 
+/**
+ * v4.4 갤러리 재배열(analysis 있을 때만 호출) — 집합·장수를 바꾸지 않고 순서만 바꾼다.
+ *  1. blurry/dark(저품질) 사진을 뒤로 민다 → slice(0,MAX) 시 우선 탈락하고, 앞쪽 좋은
+ *     사진이 캡션 달린 풀폭 자리에 온다.
+ *  2. 깨끗한 사진은 역할별로 묶어 라운드로빈으로 뽑아 인접 사진의 역할이 다양해지게 한다
+ *     (whole/cut/farm 등이 번갈아). 역할 순서는 첫 등장 순서 → 결정적.
+ * 사진 중복을 만들지 않으므로(순열) 인접 중복 금지·재사용 상한 불변식과 무관하게 안전.
+ */
+function diversifyGallery(
+  pool: UploadedImage[],
+  roleOf: (img: UploadedImage) => PhotoAnalysisItem["role"] | undefined,
+  isLowQ: (img: UploadedImage) => boolean,
+): UploadedImage[] {
+  const clean = pool.filter((img) => !isLowQ(img))
+  const lowq = pool.filter((img) => isLowQ(img))
+  const groups = new Map<string, UploadedImage[]>()
+  for (const img of clean) {
+    const key = roleOf(img) ?? "_"
+    const g = groups.get(key)
+    if (g) g.push(img)
+    else groups.set(key, [img])
+  }
+  const order = [...groups.keys()] // 첫 등장 순서 → 결정적
+  const interleaved: UploadedImage[] = []
+  let added = true
+  while (added) {
+    added = false
+    for (const k of order) {
+      const g = groups.get(k)
+      if (g && g.length > 0) {
+        interleaved.push(g.shift() as UploadedImage)
+        added = true
+      }
+    }
+  }
+  return [...interleaved, ...lowq]
+}
+
 export function planImages(
   images: UploadedImage[],
-  opts: { keyPointCount: number; recipeCount: number },
+  opts: {
+    keyPointCount: number
+    recipeCount: number
+    /**
+     * v4.4 사진 인텔리전스(선택). 각 사진의 역할·대표컷 점수·품질 플래그.
+     * 불변식: 없거나 빈 배열이면 아래 로직은 기존(v3.8)과 100% 동일하게 동작한다 —
+     * 모든 분기가 byId(비어있지 않은 analysis 로만 생성) 존재 여부로 게이팅된다.
+     */
+    analysis?: PhotoAnalysisItem[]
+  },
 ): ImagePlan {
   const keyPointCount = Math.max(0, opts.keyPointCount)
   const recipeCount = Math.max(0, opts.recipeCount)
+
+  // analysis 가 없거나 빈 배열이면 byId = undefined → 이하 모든 신규 분기가 꺼진다(불변식).
+  const analysis =
+    opts.analysis && opts.analysis.length > 0 ? opts.analysis : undefined
+  const byId = analysis
+    ? new Map(analysis.map((a) => [a.imageId, a] as const))
+    : undefined
+  const itemOf = (img: UploadedImage): PhotoAnalysisItem | undefined =>
+    byId?.get(img.id)
+  const roleOf = (img: UploadedImage): PhotoAnalysisItem["role"] | undefined =>
+    itemOf(img)?.role
+  // 품질 저하(흐림/어두움) — analysis 없으면 항상 false(기존과 동일).
+  const isLowQ = (img: UploadedImage): boolean => {
+    const it = itemOf(img)
+    return !!it && (!!it.blurry || !!it.dark)
+  }
+  // 고정 길이 우선순위 키의 사전식 비교(작을수록 우선).
+  const lexLess = (a: number[], b: number[]): boolean => {
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return a[i] < b[i]
+    }
+    return false
+  }
 
   // 사진이 없으면 전부 빈 슬롯 (기존 폴백과 동일: 각 블록이 이미지 없이 렌더).
   if (images.length === 0) {
@@ -391,9 +573,25 @@ export function planImages(
     }
   }
 
-  const hero = images[0]
-  // hero를 뺀 전체 후보 풀.
-  const restAll = images.slice(1)
+  // 대표컷(hero) — analysis 있으면 blurry/dark 아닌 사진 중 heroScore 최고(동점 시 원래
+  // 순서 앞). 전부 blurry/dark 이거나 analysis 미커버면 기존 로직(images[0]) 그대로.
+  let hero = images[0]
+  if (byId) {
+    let best: UploadedImage | undefined
+    let bestScore = -Infinity
+    for (const img of images) {
+      const it = byId.get(img.id)
+      if (!it || it.blurry || it.dark) continue
+      // 엄격한 > 로 동점 시 먼저 만난(원래 순서 앞) 사진을 유지.
+      if (it.heroScore > bestScore) {
+        bestScore = it.heroScore
+        best = img
+      }
+    }
+    if (best) hero = best
+  }
+  // hero를 뺀 전체 후보 풀. analysis 없으면 images.slice(1)과 동일(hero===images[0]).
+  const restAll = byId ? images.filter((img) => img.id !== hero.id) : images.slice(1)
 
   /**
    * v3.8 fix(진단 #1): 갤러리 모자이크가 아예 안 뜨던 사고 교정.
@@ -443,28 +641,36 @@ export function planImages(
    *    (호출부가 히어로 폴백 대신 이미지 없이 렌더할지 결정 — 규칙 ④).
    *  - 동점 시 원본 순서 앞 사진 우선 → 결정적.
    */
-  const pickFeature = (): UploadedImage | undefined => {
+  const pickFeature = (
+    preferRole?: PhotoAnalysisItem["role"],
+  ): UploadedImage | undefined => {
     if (rest.length === 0) return undefined
     let best: UploadedImage | undefined
-    let bestCount = Infinity
+    let bestKey: number[] | undefined
     let bestSameAsPrev: UploadedImage | undefined
-    let bestSameCount = Infinity
-    for (const img of rest) {
+    let bestSameKey: number[] | undefined
+    rest.forEach((img, idx) => {
       const c = useCount.get(img.id) ?? 0
-      if (c >= MAX_REUSE) continue // 규칙 ②: 2회 초과 사용 금지
+      if (c >= MAX_REUSE) return // 규칙 ②: 2회 초과 사용 금지
+      // 우선순위 키(작을수록 우선): [사용횟수, 역할 불일치, 품질저하, 원본 순서].
+      // analysis 없으면 역할·품질 항이 모두 0 → 키가 [c,0,0,idx]가 되어
+      // "사용횟수 최소 → 동점 시 원본 앞" 기존 동작과 완전히 동일하다(불변식).
+      const roleMiss = byId && preferRole ? (roleOf(img) === preferRole ? 0 : 1) : 0
+      const lowq = byId && isLowQ(img) ? 1 : 0
+      const key = [c, roleMiss, lowq, idx]
       if (img.id === prevId) {
         // 규칙 ③: 직전과 같은 사진은 마지막 후보로만.
-        if (c < bestSameCount) {
-          bestSameCount = c
+        if (!bestSameKey || lexLess(key, bestSameKey)) {
+          bestSameKey = key
           bestSameAsPrev = img
         }
-        continue
+        return
       }
-      if (c < bestCount) {
-        bestCount = c
+      if (!bestKey || lexLess(key, bestKey)) {
+        bestKey = key
         best = img
       }
-    }
+    })
     const chosen = best ?? bestSameAsPrev
     if (chosen) {
       useCount.set(chosen.id, (useCount.get(chosen.id) ?? 0) + 1)
@@ -474,20 +680,23 @@ export function planImages(
   }
 
   // whyBrand — Hero 직후. hero 사진 금지. rest 없으면 undefined(텍스트 카드).
-  const whyBrand = pickFeature()
+  // v4.4: analysis 있으면 farm 역할 사진을 우선 배정(없으면 preferRole undefined = 기존).
+  const whyBrand = pickFeature(byId ? "farm" : undefined)
 
   // 고순위 슬롯(POINT 카드) — rest가 부족하면 undefined 그대로 두어 이미지 없이 렌더(규칙 ④).
   // 단, rest가 아예 0장(사진 1장뿐)일 때만 hero 폴백 허용(규칙 ⑤: 히어로+1곳).
   const onlyHero = rest.length === 0
+  // v4.4: POINT 카드는 cut 역할(클로즈업/컷) 사진을 우선 배정.
   const keyPoints: (UploadedImage | undefined)[] = []
   for (let i = 0; i < keyPointCount; i++) {
-    const img = pickFeature()
+    const img = pickFeature(byId ? "cut" : undefined)
     keyPoints.push(img ?? (onlyHero && i === 0 ? hero : undefined))
   }
 
+  // v4.4: 레시피/즐기는 법 슬롯은 table 역할(상차림) 사진 우선.
   const recipe: (UploadedImage | undefined)[] = []
   for (let i = 0; i < recipeCount; i++) {
-    const img = pickFeature()
+    const img = pickFeature(byId ? "table" : undefined)
     recipe.push(img)
   }
 
@@ -504,14 +713,33 @@ export function planImages(
   // 히어로 재사용 폴백 제거 — 사진이 부족하면 punch는 undefined(카피만, 틴트 배경).
   // v3.8 fix: 갤러리 예약분(reserved)에는 손대지 않는다 — punch 는 예약 안 된 잉여(unused)만 사용.
   //           그래야 갤러리가 모자이크 최소 장수를 온전히 확보한다(진단 #1).
-  const punch = unused.length > 0 ? unused[0] : undefined
-  const leftover = punch ? unused.slice(1) : unused
+  // v4.4: analysis 있으면 분위기 컷에 어울리는 cut 역할·비저품질 사진을 우선.
+  let punch: UploadedImage | undefined
+  let leftover: UploadedImage[]
+  if (byId && unused.length > 0) {
+    punch =
+      unused.find((img) => roleOf(img) === "cut" && !isLowQ(img)) ??
+      unused.find((img) => !isLowQ(img)) ??
+      unused[0]
+    leftover = unused.filter((img) => img.id !== punch!.id)
+  } else {
+    // 불변식: analysis 없으면 기존과 동일(잉여 첫 장을 punch, 나머지가 leftover).
+    punch = unused.length > 0 ? unused[0] : undefined
+    leftover = punch ? unused.slice(1) : unused
+  }
 
   // v3.1-b: sizeRef 예약 삭제 — 크기와 무관한 사진(비닐하우스 등)에 "실제 크기 참고"
   // 캡션이 붙는 사고가 나서, 남는 사진은 전부 갤러리가 흡수한다.
   // v3.8 fix: 갤러리 = 특징 슬롯이 안 쓴 잉여(leftover) + 갤러리 전용 예약분(reserved).
   //           원본 업로드 순서를 유지하도록 leftover 뒤에 reserved 를 붙인다(결정적).
-  const gallery = [...leftover, ...reserved].slice(0, GALLERY_MAX)
+  // v4.4: analysis 있으면 (a) blurry/dark 를 뒤로 밀고 (b) 역할을 라운드로빈으로 섞어
+  //       인접 사진의 역할이 다양해지게 재배열한다(집합·장수는 그대로 → 모자이크 최소
+  //       장수·재사용 상한·인접 중복 불변식 유지). analysis 없으면 기존 순서 그대로.
+  const galleryPool = [...leftover, ...reserved]
+  const gallery = (byId ? diversifyGallery(galleryPool, roleOf, isLowQ) : galleryPool).slice(
+    0,
+    GALLERY_MAX,
+  )
 
   return { hero, whyBrand, keyPoints, recipe, packaging, sizeRef: undefined, punch, gallery }
 }
@@ -1048,6 +1276,7 @@ export function splitStoryHighlight(
  */
 function ValuePropStrip({ isMobile, trust }: { isMobile: boolean; trust?: TrustInfo }) {
   const accent = useAccent()
+  const layout = useLayout()
   const vp = t.detail.result.valueProp
 
   // v3.4(지시4): 다크 밴드 → 연한 틴트 위 흰 라운드 카드 1장에 라인 아이콘 3개 +
@@ -1096,7 +1325,7 @@ function ValuePropStrip({ isMobile, trust }: { isMobile: boolean; trust?: TrustI
       <div
         style={{
           background: "#FFFFFF",
-          borderRadius: 22,
+          borderRadius: layout.cardRadius,
           border: `1px solid ${accent.soft}`,
           boxShadow: `0 6px 24px ${accent.accent}14`,
           padding: isMobile ? "28px 12px" : "52px 28px",
@@ -1283,6 +1512,7 @@ export function ResultView({
   images,
   packagingImage,
   sizeImage,
+  photoAnalysis,
   productName,
   price: _price,
   origin,
@@ -1294,8 +1524,14 @@ export function ResultView({
   onCopyChange,
   onSectionRegenerate,
   busySection,
+  layoutVariant,
 }: ResultViewProps) {
   const [enhance, setEnhance] = useState(true)
+  /** v4.6: 레이아웃 토큰 — undefined면 standard(불변식). Provider로 각 블록에 주입. */
+  const layout = useMemo(
+    () => LAYOUT_TOKENS[layoutVariant ?? "standard"] ?? LAYOUT_TOKENS.standard,
+    [layoutVariant],
+  )
   const captureRef = useRef<HTMLDivElement>(null)
   /** v1.9: 폭 프리셋 토글 — 셀러 플랫폼 폭에 맞게 캡처. */
   const [widthPreset, setWidthPreset] = useState<WidthPresetKey>("smartstore-860")
@@ -1346,11 +1582,38 @@ export function ResultView({
    * 그만큼의 사진이 갤러리로 흘러간다.
    */
   const imagePlan = useMemo(
-    () => planImages(images, { keyPointCount: keyPoints.length, recipeCount: 0 }),
-    [images, keyPoints.length],
+    () =>
+      planImages(images, {
+        keyPointCount: keyPoints.length,
+        recipeCount: 0,
+        analysis: photoAnalysis ?? undefined,
+      }),
+    [images, keyPoints.length, photoAnalysis],
   )
   const heroImage = imagePlan.hero
   const galleryImages = imagePlan.gallery
+
+  /**
+   * v4.4 사진 캡션 폴백 — imageId → visibleNote(관찰 메모). 갤러리 캡션 슬롯의
+   * 기본 문구(fallback)로 끼워 넣는다(슬롯 id 불변). 캡션 알약 크기에 맞게 24자로 클램프.
+   * 없으면 빈 Map → GalleryBlock 은 기존 중립 안전 문구로 폴백(하위호환).
+   *
+   * 안전 게이팅(규칙3 허위광고 방지): visibleNote 는 아트보드(JPG)에 직접 렌더되므로
+   * 산지·품종·당도·맛·신선도·수확·인증 같은 "사진만으로 알 수 없는 사실 주장"이 섞이면
+   * (모델이 프롬프트 규칙 위반 시) 승격하지 않고 중립 안전 문구로 폴백한다.
+   * 또한 손상/조작 저장본에서 visibleNote 가 문자열이 아닐 수 있어 typeof 로 방어한다
+   * (isCaptionSafeNote 가 문자열이 아니면 false 반환 — 크래시 방지).
+   */
+  const photoNoteById = useMemo(() => {
+    const m = new Map<string, string>()
+    if (!photoAnalysis) return m
+    for (const it of photoAnalysis) {
+      if (!it || typeof it.imageId !== "string") continue
+      if (!isCaptionSafeNote(it.visibleNote)) continue
+      m.set(it.imageId, clampCaptionNote(it.visibleNote.trim()))
+    }
+    return m
+  }, [photoAnalysis])
 
   /**
    * 노출할 고객 후기 — 본문이 있는 것만(최대 3개). 0건이면 ReviewsBlock 미노출.
@@ -1500,6 +1763,7 @@ export function ResultView({
 
   return (
     <AccentContext.Provider value={accent}>
+    <LayoutContext.Provider value={layout}>
     <EditContext.Provider value={{ copy, onCopyChange }}>
     <div
       style={{
@@ -1719,7 +1983,12 @@ export function ResultView({
             {galleryImages.length > 0 && (
               <>
                 <DotDivider />
-                <GalleryBlock images={galleryImages} productName={productName} isMobile={isMobile} />
+                <GalleryBlock
+                  images={galleryImages}
+                  productName={productName}
+                  isMobile={isMobile}
+                  noteFor={(id) => photoNoteById.get(id)}
+                />
               </>
             )}
 
@@ -1734,6 +2003,9 @@ export function ResultView({
               onRegen={renderRegen("spec")}
               isMobile={isMobile}
             />
+
+            {/* v4.5: 5-1. 제철 캘린더 — 스펙 부근. fruit-facts 품종 매칭 실패/연중 수확이면 미노출. */}
+            <SeasonCalendarBlock productName={productName} isMobile={isMobile} />
 
             {/* 5a. 크기·중량 안내 — 크기 전용 슬롯 사진 또는 무게 데이터가 있을 때만.
                 v3.7: sizeImage가 있으면 사진 + 무게카드, 없으면 기존 동작(무게 데이터만). */}
@@ -1771,6 +2043,10 @@ export function ResultView({
                 />
               </>
             )}
+
+            {/* v4.5: 6-1. 수령 후 타임라인 — 보관 섹션 위. fruit-facts storage 없으면 미노출.
+                copy.storage(셀러 원문) 유무와 무관하게 fruit-facts storage 매칭 시 노출한다. */}
+            <ReceiveTimelineBlock productName={productName} isMobile={isMobile} />
 
             {/* 7. STORAGE */}
             {copy.storage && (
@@ -1985,6 +2261,7 @@ export function ResultView({
       {/* v2.7: StickyMobileCta 삭제 (사이드바에 이미 있으므로 중복 제거) */}
     </div>
     </EditContext.Provider>
+    </LayoutContext.Provider>
     </AccentContext.Provider>
   )
 }
@@ -2010,6 +2287,7 @@ function WhyBrandCard({
   isMobile: boolean
 }) {
   const accent = useAccent()
+  const layout = useLayout()
   const name = productName.trim()
   return (
     // 상단 여백 확대: 돔 정점 원(overhang)이 이 섹션 위로 걸치므로 그만큼 비워둔다.
@@ -2017,7 +2295,7 @@ function WhyBrandCard({
       <div
         style={{
           background: accent.soft,
-          borderRadius: 22,
+          borderRadius: layout.cardRadius,
           border: `1px solid ${accent.soft}`,
           padding: isMobile ? "40px 26px" : "72px 56px",
           textAlign: "center",
@@ -2026,12 +2304,12 @@ function WhyBrandCard({
         <h2
           style={{
             fontSize: isMobile ? 30 : 52,
-            fontWeight: 900,
+            fontWeight: layout.headingWeight,
             margin: 0,
             marginBottom: isMobile ? 28 : 40,
             lineHeight: 1.2,
             color: INK,
-            fontFamily: DISPLAY_FONT,
+            fontFamily: layout.headingFontFamily,
             letterSpacing: -1.2,
           }}
         >
@@ -2097,6 +2375,7 @@ function RecipeBlock({
   isMobile: boolean
 }) {
   const accent = useAccent()
+  const layout = useLayout()
   const key = detectFruitFactKey(productName)
   const pairings = key ? FRUIT_FACTS[key]?.pairings ?? [] : []
   const items = pairings.slice(0, 3)
@@ -2110,10 +2389,10 @@ function RecipeBlock({
         <h2
           style={{
             fontSize: isMobile ? 30 : 50,
-            fontWeight: 900,
+            fontWeight: layout.headingWeight,
             margin: 0,
             color: INK,
-            fontFamily: DISPLAY_FONT,
+            fontFamily: layout.headingFontFamily,
             letterSpacing: -1.2,
             lineHeight: 1.15,
           }}
@@ -2312,8 +2591,11 @@ function HeroBlock({
   brix: number | null
 }) {
   const accent = useAccent()
+  const layout = useLayout()
   const name = productName.trim()
   const originText = origin?.trim()
+  // v4.6: editorial 은 히어로 텍스트 블록만 좌정렬(킥커·배지 정렬도 함께). 그 외 중앙.
+  const heroJustify = layout.heroAlign === "left" ? "flex-start" : "center"
   // C12: origin이 "국내산/수입산/해외산"류(특정 지역 아님)면 "From. {origin}" 배지 숨김.
   const showOriginBadge = !!originText && !isGenericOrigin(originText)
   // v5.0 킥커(후킹 캡션): heroKicker(B 에이전트 생성) 우선, 없으면 기존 "오늘도 신선한 {name}".
@@ -2326,8 +2608,8 @@ function HeroBlock({
       <div
         style={{
           padding: isMobile ? "44px 24px 30px" : "72px 44px 40px",
-          textAlign: "center",
-          background: accent.soft,
+          textAlign: layout.heroAlign,
+          background: layout.heroBg(accent),
         }}
       >
         {/* v5.0 위계: From 배지(상단) → 넉넉한 여백 → 킥커(rule 선 동반) → 좁은 간격 → 헤드라인.
@@ -2336,7 +2618,7 @@ function HeroBlock({
           <div
             style={{
               display: "flex",
-              justifyContent: "center",
+              justifyContent: heroJustify,
               marginBottom: showKicker ? (isMobile ? 22 : 34) : isMobile ? 18 : 24,
             }}
           >
@@ -2362,7 +2644,7 @@ function HeroBlock({
           <div
             style={{
               display: "flex",
-              justifyContent: "center",
+              justifyContent: heroJustify,
               marginBottom: isMobile ? 12 : 18,
             }}
           >
@@ -2408,12 +2690,12 @@ function HeroBlock({
         <h1
           style={{
             fontSize: isMobile ? 48 : 80,
-            fontWeight: 900,
+            fontWeight: layout.headingWeight,
             margin: 0,
             color: INK,
             lineHeight: 1.14,
             letterSpacing: isMobile ? -1.2 : -2,
-            fontFamily: DISPLAY_FONT,
+            fontFamily: layout.headingFontFamily,
             ...WRAP_BALANCE,
           }}
         >
@@ -2437,7 +2719,7 @@ function HeroBlock({
       </div>
 
       {/* 대표 이미지 */}
-      <div style={{ position: "relative", background: accent.soft }}>
+      <div style={{ position: "relative", background: layout.heroBg(accent) }}>
         {/* 기울어진 당도 스티커(지시3) — brix 입력이 있을 때만. 사실 데이터만. */}
         {brix != null && (
           <div
@@ -2488,7 +2770,7 @@ function HeroBlock({
       <div
         style={{
           padding: isMobile ? "32px 24px 44px" : "52px 44px 64px",
-          textAlign: "center",
+          textAlign: layout.heroAlign,
         }}
       >
         {/* v2.9: 서브카피 — 대문자 액센트 → 설명형 회색 (수플린 톤). 리서치 본문 34px+ */}
@@ -2547,7 +2829,7 @@ function HeroBlock({
               display: "flex",
               flexWrap: "wrap",
               gap: isMobile ? 8 : 12,
-              justifyContent: "center",
+              justifyContent: heroJustify,
               marginTop: isMobile ? 24 : 32,
             }}
           >
@@ -2623,6 +2905,7 @@ function ProblemArcBlock({
   isMobile: boolean
 }) {
   const accent = useAccent()
+  const layout = useLayout()
   const { copy, onCopyChange } = useEdit()
   const problems = arc.problems.slice(0, 3)
   if (problems.length === 0) return null
@@ -2695,12 +2978,12 @@ function ProblemArcBlock({
         <h2
           style={{
             fontSize: isMobile ? 30 : 54,
-            fontWeight: 900,
+            fontWeight: layout.headingWeight,
             margin: 0,
             color: accent.dark,
             lineHeight: 1.24,
             letterSpacing: -1.4,
-            fontFamily: DISPLAY_FONT,
+            fontFamily: layout.headingFontFamily,
             wordBreak: "keep-all",
           }}
         >
@@ -3073,6 +3356,7 @@ function SensoryPunchBlock({
   overrideText?: string
 }) {
   const accent = useAccent()
+  const layout = useLayout()
   // 틴트 버전: 밝은 배경(veilTint) + INK 헤드 + accent 하이라이트. 검정 버전: 검정 배경 + 밝은 카피.
   const bg = tinted ? veilTint(accent.soft) : PUNCH_BG
   const copyColor = tinted ? accent.dark : accent.soft
@@ -3088,11 +3372,11 @@ function SensoryPunchBlock({
         <p
           style={{
             fontSize: isMobile ? 40 : 70,
-            fontWeight: 900,
+            fontWeight: layout.headingWeight,
             color: tinted ? INK : "#FFFFFF",
             margin: 0,
             lineHeight: 1.18,
-            fontFamily: DISPLAY_FONT,
+            fontFamily: layout.headingFontFamily,
             letterSpacing: -2,
             wordBreak: "keep-all",
             ...WRAP_BALANCE,
@@ -3132,6 +3416,20 @@ function SensoryPunchBlock({
       )}
     </div>
   )
+}
+
+/**
+ * v4.4 사진 캡션(visibleNote) 알약 클램프 — 최대 24자(캡션 슬롯 편집 상한과 일치).
+ * 24자 초과면 마지막 공백에서 끊어 단어를 자르지 않게 하고, 적당한 공백이 없으면 그대로 절단.
+ * 관찰 메모(≤60자)를 알약 캡션에 넣어도 overflow:hidden 에 잘리지 않도록 표시용으로만 축약.
+ */
+function clampCaptionNote(note: string, max = 24): string {
+  const t = note.trim()
+  if (t.length <= max) return t
+  const cut = t.slice(0, max)
+  const sp = cut.lastIndexOf(" ")
+  // 공백이 너무 앞이면(절반 미만) 그냥 max 에서 절단.
+  return (sp >= Math.floor(max / 2) ? cut.slice(0, sp) : cut).trim()
 }
 
 /**
@@ -3217,10 +3515,16 @@ function GalleryBlock({
   images,
   productName,
   isMobile,
+  noteFor,
 }: {
   images: UploadedImage[]
   productName: string
   isMobile: boolean
+  /**
+   * v4.4: imageId → 캡션 폴백(visibleNote, 이미 24자 클램프됨). 있으면 그 사진의 캡션
+   * 기본 문구로 쓰고, 없으면 기존 중립 안전 문구로 폴백. 슬롯 id 는 바뀌지 않는다.
+   */
+  noteFor?: (id: string) => string | undefined
 }) {
   // v3.8(지시1): 풀폭↔2그리드 모자이크. buildGalleryRows가 배치·캡션 배정을 결정.
   const rows = useMemo(() => buildGalleryRows(images), [images])
@@ -3288,7 +3592,9 @@ function GalleryBlock({
                 >
                   <OverrideText
                     id={`gallery.caption.${row.captionIdx}`}
-                    fallback={caption}
+                    // v4.4: 이 사진의 visibleNote(관찰 메모)가 있으면 기본 캡션으로 사용,
+                    // 없으면 기존 중립 안전 문구. 슬롯 id 는 그대로 — 하위호환/편집 유지.
+                    fallback={noteFor?.(row.img.id) ?? caption}
                     maxLength={24}
                   />
                 </div>
@@ -3339,54 +3645,64 @@ function GalleryBlock({
 }
 
 /**
- * 당도 기준선 바 (리서치: 당도 숫자는 기준선 맥락이 있어야 팔림).
- * fruit-facts 매칭 + 사용자 brix가 goodBrix 이상일 때만 렌더한다.
- * (brix < goodBrix면 불리한 시각화라 호출부에서 아예 렌더하지 않는다.)
+ * v4.5 당도 범위 비교 바 — 기존 BrixScaleBar를 품종 일반 범위 비교로 확장·통합.
  *
- * 눈금: goodBrix("맛있다 기준")·brixCeiling("품종 최대") 두 포인트 + 사용자 brix 위치에 accent 마커.
- * "비파괴 측정" 등 근거 없는 문구는 넣지 않는다.
+ * 품종 일반 brixMin~brixMax(getBrixRange, 출하 기준)를 accent.soft 밴드로 깔고, 그 위에
+ * "이 상품" 입력 brix 마커 + "일반적인 맛 기준(참고)" goodBrix 눈금을 얹는다.
+ * - 입력 brix 없으면(brix=null) 마커 없이 범위 밴드만.
+ * - 품종 범위 없으면(getBrixRange=null) 블록 미노출.
+ * brixScale 캡션 문구·OverrideText 슬롯(brix.goodLabel/brix.caption)·"우리 {brix}" 문구를
+ * 그대로 유지해 하위호환(구버전 저장본의 오버라이드가 계속 적용). "비파괴 측정" 등 근거 없는
+ * 문구는 넣지 않는다. 품종 일반 데이터라 캡션에 개체차 안내 유지.
  */
-function BrixScaleBar({
+function BrixRangeBlock({
+  productName,
   brix,
   goodBrix,
-  brixCeiling,
   isMobile,
 }: {
-  brix: number
+  productName: string
+  /** 입력에서 추출한 당도(사실 데이터). 없으면 null → 범위 밴드만. */
+  brix: number | null
   goodBrix: number
-  brixCeiling: number
   isMobile: boolean
 }) {
   const accent = useAccent()
   const bs = t.detail.result.brixScale
+  const range = getBrixRange(productName)
+  if (!range) return null // 품종 범위 없으면 미노출
 
-  // 도메인 — goodBrix 아래로 약간 여유(2), 위로는 ceiling과 사용자 brix 중 큰 값.
-  const lo = Math.max(0, goodBrix - 2)
-  const hi = Math.max(brixCeiling, brix)
+  // 도메인 — 밴드(min~max)·goodBrix·입력 brix를 모두 담고 양끝에 약간 여유(1).
+  const lo = Math.max(0, Math.min(range.min, goodBrix, brix ?? Infinity) - 1)
+  const hi = Math.max(range.max, goodBrix, brix ?? -Infinity) + 1
   const span = hi - lo
   const pct = (v: number) => (span > 0 ? Math.min(100, Math.max(0, ((v - lo) / span) * 100)) : 0)
 
+  const minPct = pct(range.min)
+  const maxPct = pct(range.max)
   const goodPct = pct(goodBrix)
-  const brixPct = pct(brix)
+  const brixPct = brix != null ? pct(brix) : null
 
   return (
     <div style={{ marginTop: isMobile ? 16 : 22 }}>
-      {/* 사용자 brix 마커 라벨 */}
+      {/* "우리 {brix}" 마커 라벨 — 입력 brix 있을 때만 */}
       <div style={{ position: "relative", height: isMobile ? 28 : 40, marginBottom: isMobile ? 6 : 8 }}>
-        <div
-          style={{
-            position: "absolute",
-            left: `${brixPct}%`,
-            transform: "translateX(-50%)",
-            whiteSpace: "nowrap",
-            fontSize: isMobile ? 15 : 26,
-            fontWeight: 800,
-            color: accent.accent,
-            fontFamily: BODY_FONT,
-          }}
-        >
-          {bs.ours.replace("{brix}", `${brix}`)}
-        </div>
+        {brixPct != null && (
+          <div
+            style={{
+              position: "absolute",
+              left: `${brixPct}%`,
+              transform: "translateX(-50%)",
+              whiteSpace: "nowrap",
+              fontSize: isMobile ? 15 : 26,
+              fontWeight: 800,
+              color: accent.accent,
+              fontFamily: BODY_FONT,
+            }}
+          >
+            {bs.ours.replace("{brix}", `${brix}`)}
+          </div>
+        )}
       </div>
 
       {/* 트랙 */}
@@ -3398,20 +3714,20 @@ function BrixScaleBar({
           borderRadius: 999,
         }}
       >
-        {/* goodBrix~사용자 구간을 accent.soft로 채워 "기준 이상" 시각화 */}
+        {/* 품종 일반 범위(min~max) 밴드 */}
         <div
           aria-hidden
           style={{
             position: "absolute",
-            left: `${goodPct}%`,
-            width: `${Math.max(0, brixPct - goodPct)}%`,
+            left: `${minPct}%`,
+            width: `${Math.max(0, maxPct - minPct)}%`,
             top: 0,
             bottom: 0,
             background: accent.soft,
             borderRadius: 999,
           }}
         />
-        {/* goodBrix 눈금 */}
+        {/* goodBrix 참고 눈금 */}
         <div
           aria-hidden
           style={{
@@ -3425,51 +3741,119 @@ function BrixScaleBar({
             borderRadius: 2,
           }}
         />
-        {/* C8: "품종 최대" ceiling 눈금 삭제 — 검증 불가 단정. */}
-        {/* 사용자 brix 마커 (accent 원) */}
-        <div
-          aria-hidden
-          style={{
-            position: "absolute",
-            left: `${brixPct}%`,
-            transform: "translate(-50%, -50%)",
-            top: "50%",
-            width: isMobile ? 18 : 26,
-            height: isMobile ? 18 : 26,
-            borderRadius: "50%",
-            background: accent.accent,
-            border: "3px solid #FFFFFF",
-            boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
-          }}
-        />
+        {/* 이 상품 brix 마커 (accent 원) — 입력 brix 있을 때만 */}
+        {brixPct != null && (
+          <div
+            aria-hidden
+            style={{
+              position: "absolute",
+              left: `${brixPct}%`,
+              transform: "translate(-50%, -50%)",
+              top: "50%",
+              width: isMobile ? 18 : 26,
+              height: isMobile ? 18 : 26,
+              borderRadius: "50%",
+              background: accent.accent,
+              border: "3px solid #FFFFFF",
+              boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
+            }}
+          />
+        )}
       </div>
 
-      {/* 눈금 라벨 */}
-      <div style={{ position: "relative", height: isMobile ? 34 : 44, marginTop: isMobile ? 8 : 10 }}>
-        <div
+      {/* 밴드 양끝 숫자 (품종 범위 min~max) */}
+      <div style={{ position: "relative", height: isMobile ? 20 : 28, marginTop: isMobile ? 6 : 8 }}>
+        <span
           style={{
             position: "absolute",
-            left: `${goodPct}%`,
+            left: `${minPct}%`,
             transform: "translateX(-50%)",
-            textAlign: "center",
-            whiteSpace: "nowrap",
-            fontSize: isMobile ? 14 : 24,
+            fontSize: isMobile ? 12 : 20,
+            fontWeight: 800,
+            color: accent.dark,
+            fontFamily: BODY_FONT,
+          }}
+        >
+          {range.min}
+        </span>
+        <span
+          style={{
+            position: "absolute",
+            left: `${maxPct}%`,
+            transform: "translateX(-50%)",
+            fontSize: isMobile ? 12 : 20,
+            fontWeight: 800,
+            color: accent.dark,
+            fontFamily: BODY_FONT,
+          }}
+        >
+          {range.max}
+        </span>
+      </div>
+
+      {/* 범례 — 품종 일반 범위 밴드 + goodBrix 참고 눈금(brix.goodLabel 슬롯 유지) */}
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: isMobile ? "6px 16px" : "8px 28px",
+          marginTop: isMobile ? 6 : 10,
+        }}
+      >
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: isMobile ? 5 : 8,
+            fontSize: isMobile ? 11 : 18,
             color: SUB,
             fontWeight: 600,
             fontFamily: BODY_FONT,
           }}
         >
-          <OverrideText id="brix.goodLabel" fallback={bs.good} maxLength={30} />
-          <br />
-          {goodBrix}
-        </div>
-        {/* C8: "품종 최대" ceiling 라벨 삭제 — 검증 불가 단정. */}
+          <span
+            aria-hidden
+            style={{
+              width: isMobile ? 16 : 24,
+              height: isMobile ? 10 : 14,
+              borderRadius: 4,
+              background: accent.soft,
+              flexShrink: 0,
+            }}
+          />
+          {bs.varietyRange}
+        </span>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: isMobile ? 5 : 8,
+            fontSize: isMobile ? 11 : 18,
+            color: SUB,
+            fontWeight: 600,
+            fontFamily: BODY_FONT,
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              width: isMobile ? 3 : 4,
+              height: isMobile ? 14 : 20,
+              borderRadius: 2,
+              background: MUTE,
+              flexShrink: 0,
+            }}
+          />
+          <span>
+            <OverrideText id="brix.goodLabel" fallback={bs.good} maxLength={30} /> {goodBrix}
+          </span>
+        </span>
       </div>
 
-      {/* C8: 게이지 하단 캡션 — 품종 일반 정보 참고, 개체차 있음. */}
+      {/* 하단 캡션 — 품종 일반 정보 참고, 개체차 있음(brix.caption 슬롯 유지). */}
       <div
         style={{
-          marginTop: isMobile ? 4 : 6,
+          marginTop: isMobile ? 6 : 10,
           fontSize: isMobile ? 8 : 12,
           color: MUTE,
           fontFamily: BODY_FONT,
@@ -3626,10 +4010,10 @@ function SpecBlock({
                   </span>
                 </div>
                 {showScale && brixFact && (
-                  <BrixScaleBar
+                  <BrixRangeBlock
+                    productName={productName}
                     brix={brixValue}
                     goodBrix={brixFact.goodBrix}
-                    brixCeiling={brixFact.brixCeiling}
                     isMobile={isMobile}
                   />
                 )}
@@ -3737,6 +4121,116 @@ function SpecBlock({
   )
 }
 
+/**
+ * v4.5 제철 캘린더 — fruit-facts 품종 harvestMonths 기반 12개월 가로 바.
+ *
+ * 수확월을 accent로 채우고, 절대 정보인 계절 라벨(1~12월)만 표기한다(현재 달과 무관 →
+ * Date 의존 없음 = 결정적, JPG 안전). 전부 인라인 div — 외부 이미지·CSS filter 없음.
+ * 게이팅: getHarvestMonths 가 빈 배열(품종 매칭 실패)이거나 12개월 전부(연중 수확 = 제철
+ * 대비 없음)면 미노출. 품종 일반 데이터라 "품종 기준" 각주 필수. 스펙 부근 배치.
+ */
+function SeasonCalendarBlock({
+  productName,
+  isMobile,
+}: {
+  productName: string
+  isMobile: boolean
+}) {
+  const accent = useAccent()
+  const layout = useLayout()
+  const sc = t.detail.result.seasonCalendar
+  const months = useMemo(() => getHarvestMonths(productName), [productName])
+  // 수확월이 하나도 없거나(매칭 실패) 12개월 전부면(연중, 제철 대비 없음) 미노출.
+  if (months.length === 0 || months.length >= 12) return null
+  const harvestSet = new Set(months)
+
+  return (
+    <>
+      <DotDivider />
+      <div style={{ padding: isMobile ? "44px 24px" : "76px 44px", background: "#FFFFFF" }}>
+        <SectionTitle title={sc.title} isMobile={isMobile} editId="sect.season.title" />
+        <div
+          style={{
+            border: `1px solid ${accent.soft}`,
+            borderRadius: layout.cardRadius,
+            padding: isMobile ? "24px 16px" : "44px 40px",
+            background: "#FFFFFF",
+          }}
+        >
+          {/* 12개월 가로 바 — 각 셀은 수확월이면 accent 채움 */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: isMobile ? 3 : 6 }}>
+            {Array.from({ length: 12 }, (_, i) => {
+              const month = i + 1
+              const on = harvestSet.has(month)
+              return (
+                <div
+                  key={`season-${month}`}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: isMobile ? 6 : 10,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: "100%",
+                      height: isMobile ? 36 : 60,
+                      borderRadius: isMobile ? 6 : 10,
+                      background: on ? accent.accent : "#EEF1F4",
+                    }}
+                  />
+                  <span
+                    style={{
+                      fontSize: isMobile ? 9 : 17,
+                      fontWeight: on ? 900 : 600,
+                      color: on ? accent.dark : MUTE,
+                      fontFamily: on ? DISPLAY_FONT : BODY_FONT,
+                      lineHeight: 1,
+                      whiteSpace: "nowrap",
+                      letterSpacing: -0.5,
+                    }}
+                  >
+                    {month}월
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+          {/* 범례 */}
+          <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 6 : 10, marginTop: isMobile ? 16 : 24 }}>
+            <span
+              aria-hidden
+              style={{
+                width: isMobile ? 14 : 20,
+                height: isMobile ? 14 : 20,
+                borderRadius: 5,
+                background: accent.accent,
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ fontSize: isMobile ? 12 : 20, fontWeight: 800, color: INK, fontFamily: BODY_FONT }}>
+              <OverrideText id="season.harvestLabel" fallback={sc.harvestLabel} maxLength={20} />
+            </span>
+          </div>
+          {/* 각주 — 품종 기준 필수 (구어체) */}
+          <p
+            style={{
+              margin: isMobile ? "10px 0 0" : "14px 0 0",
+              fontSize: isMobile ? 11 : 15,
+              color: MUTE,
+              lineHeight: 1.5,
+              fontFamily: BODY_FONT,
+            }}
+          >
+            <OverrideText id="season.footnote" fallback={sc.footnote} maxLength={60} />
+          </p>
+        </div>
+      </div>
+    </>
+  )
+}
+
 function KeyPointsBig({
   points,
   copy,
@@ -3754,6 +4248,7 @@ function KeyPointsBig({
   noun: string
 }) {
   const accent = useAccent()
+  const layout = useLayout()
   return (
     <div style={{ background: "#FFFFFF" }}>
       <div
@@ -3800,11 +4295,11 @@ function KeyPointsBig({
         <h2
           style={{
             fontSize: isMobile ? 40 : 72,
-            fontWeight: 900,
+            fontWeight: layout.headingWeight,
             margin: 0,
             color: INK,
             lineHeight: 1.12,
-            fontFamily: DISPLAY_FONT,
+            fontFamily: layout.headingFontFamily,
             letterSpacing: -2,
             ...WRAP_BALANCE,
           }}
@@ -3879,12 +4374,12 @@ function KeyPointsBig({
             <h3
               style={{
                 fontSize: isMobile ? 32 : 54,
-                fontWeight: 900,
+                fontWeight: layout.headingWeight,
                 margin: 0,
                 marginBottom: isMobile ? 22 : 28,
                 color: INK,
                 lineHeight: 1.2,
-                fontFamily: DISPLAY_FONT,
+                fontFamily: layout.headingFontFamily,
                 letterSpacing: -1.5,
                 position: "relative",
                 zIndex: 1,
@@ -4059,6 +4554,7 @@ function StorageBlock({
   isMobile: boolean
 }) {
   const accent = useAccent()
+  const layout = useLayout()
   // v3.4(지시7): storage 원문을 STEP 01/02/03 세로 타임라인으로 재구성.
   // 편집은 아래 EditableResultText(편집 전용 chrome)에서 그대로 하고,
   // JPG에는 원문에서 파생한 STEP 타임라인 카드만 찍힌다 (StoryBlock과 동일한 방식).
@@ -4077,7 +4573,7 @@ function StorageBlock({
         <div
           style={{
             border: `1px solid ${accent.soft}`,
-            borderRadius: 22,
+            borderRadius: layout.cardRadius,
             padding: isMobile ? "28px 22px" : "52px 48px",
             background: "#FFFFFF",
           }}
@@ -4214,6 +4710,224 @@ function StorageBlock({
   )
 }
 
+/**
+ * v4.5 수령 후 타임라인 — fruit-facts storage(mode/days/tempC) 기반 가로 3~4스텝.
+ *
+ * D+0 수령 → (모드별) 보관 방법 → 권장 소비 시점을 가로 타임라인으로 보여준다.
+ * 전부 인라인 div/SVG(LineIcons) — 외부 이미지·CSS filter 없음. 뮤트 accent + Pretendard 900.
+ * 게이팅: getStorageInfo 가 null(품종 매칭 실패)이면 미노출. 보관 섹션(StorageBlock) 위 배치.
+ * 사실성: 문구는 mode/days/tempC(검증된 fruit-facts)에서만 파생 — 없는 수치는 넣지 않는다.
+ *  - fridge: days=냉장 보관 기간 → "약 {days}일 안에". room: days 의미가 mode마다 달라 주입 안 함.
+ *  - ripen-then-fridge: days=실온 후숙 기간 → "실온에 {days}일쯤". 품종·환경 편차 각주 필수.
+ */
+function ReceiveTimelineBlock({
+  productName,
+  isMobile,
+}: {
+  productName: string
+  isMobile: boolean
+}) {
+  const accent = useAccent()
+  const layout = useLayout()
+  const rt = t.detail.result.receiveTimeline
+  const storage = getStorageInfo(productName)
+  if (!storage) return null
+
+  const days = storage.days && storage.days > 0 ? storage.days : null
+  const temp = storage.tempC != null ? storage.tempC : null
+
+  type TLStep = {
+    label: string
+    desc: string
+    Icon: (p: LineIconProps) => React.JSX.Element
+    badge?: string
+  }
+
+  const receive: TLStep = { label: rt.receiveLabel, desc: rt.receiveDesc, Icon: DeliverIcon, badge: "D+0" }
+  let steps: TLStep[]
+  if (storage.mode === "ripen-then-fridge") {
+    // 받으면 → 실온 후숙(days) → 냉장 보관 → 완숙 후 소비.
+    steps = [
+      receive,
+      {
+        label: rt.ripenLabel,
+        desc: days ? rt.ripenDesc.replace("{days}", `${days}`) : rt.ripenNoDaysDesc,
+        Icon: HarvestIcon,
+      },
+      { label: rt.thenFridgeLabel, desc: rt.thenFridgeDesc, Icon: ColdIcon },
+      { label: rt.enjoyRipeLabel, desc: rt.enjoyRipeDesc, Icon: BrixIcon },
+    ]
+  } else if (storage.mode === "room") {
+    // 받으면 → 실온 보관 → 신선할 때 소비/가공. (room 모드 days 의미가 균일화·가공 등이라 미주입)
+    // 생식 부적합(가공 전용, 예: 매실)이면 "드세요"(생식 권유) 대신 가공 안내로 게이트.
+    // fruit-facts.rawEdible === false 를 단일 진실원으로 삼아 cautions '생식 X'와 정합.
+    const lastStep: TLStep = isRawEdible(productName)
+      ? { label: rt.enjoySoonLabel, desc: rt.enjoySoonDesc, Icon: BrixIcon }
+      : { label: rt.useSoonLabel, desc: rt.useSoonDesc, Icon: LeafIcon }
+    steps = [
+      receive,
+      { label: rt.roomLabel, desc: rt.roomDesc, Icon: PackIcon },
+      lastStep,
+    ]
+  } else {
+    // fridge: 받으면 → 바로 냉장(tempC) → 약 days일 안에.
+    steps = [
+      receive,
+      {
+        label: rt.fridgeLabel,
+        desc: temp != null ? rt.fridgeTempDesc.replace("{temp}", `${temp}`) : rt.fridgeDesc,
+        Icon: ColdIcon,
+      },
+      {
+        label: rt.enjoyLabel,
+        desc: days ? rt.enjoyDaysDesc.replace("{days}", `${days}`) : rt.enjoyNoDaysDesc,
+        Icon: BrixIcon,
+      },
+    ]
+  }
+
+  const n = steps.length
+  const circle = isMobile ? 44 : 68
+  const lineH = isMobile ? 2 : 3
+  const badgeRowH = isMobile ? 16 : 24
+
+  return (
+    <>
+      <DotDivider />
+      <div style={{ padding: isMobile ? "44px 24px" : "76px 44px", background: veilTint(accent.soft) }}>
+        <SectionTitle title={rt.title} isMobile={isMobile} editId="sect.receive.title" />
+        <div
+          style={{
+            background: "#FFFFFF",
+            border: `1px solid ${accent.soft}`,
+            borderRadius: layout.cardRadius,
+            padding: isMobile ? "28px 14px" : "52px 40px",
+          }}
+        >
+          <div style={{ position: "relative" }}>
+            {/* 노드 뒤 연결선 — 첫/마지막 원 중심 사이(열 등폭이라 좌우 반칸 inset). 흰 원이 가려 사이만 보인다. */}
+            <div
+              aria-hidden
+              style={{
+                position: "absolute",
+                left: `${50 / n}%`,
+                right: `${50 / n}%`,
+                top: circle / 2 - lineH / 2,
+                height: lineH,
+                background: accent.soft,
+              }}
+            />
+            <div style={{ display: "flex" }}>
+              {steps.map((st, i) => {
+                const Icon = st.Icon
+                return (
+                  <div
+                    key={`rt-${i}`}
+                    style={{
+                      flex: 1,
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      minWidth: 0,
+                    }}
+                  >
+                    {/* 노드 원 (흰 배경 + accent 링) */}
+                    <div
+                      style={{
+                        width: circle,
+                        height: circle,
+                        borderRadius: "50%",
+                        background: "#FFFFFF",
+                        border: `${isMobile ? 2 : 3}px solid ${accent.accent}`,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        position: "relative",
+                        zIndex: 1,
+                        flexShrink: 0,
+                      }}
+                    >
+                      <Icon color={accent.accent} size={isMobile ? 22 : 34} />
+                    </div>
+                    {/* 배지 슬롯 — 고정 높이로 노드별 라벨 수평 정렬 유지(D+0은 수령 노드만). */}
+                    <div
+                      style={{
+                        height: badgeRowH,
+                        marginTop: isMobile ? 6 : 10,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      {st.badge && (
+                        <span
+                          style={{
+                            fontSize: isMobile ? 11 : 18,
+                            fontWeight: 900,
+                            color: accent.accent,
+                            fontFamily: DISPLAY_FONT,
+                            letterSpacing: -0.5,
+                            lineHeight: 1,
+                          }}
+                        >
+                          {st.badge}
+                        </span>
+                      )}
+                    </div>
+                    {/* 라벨 */}
+                    <span
+                      style={{
+                        fontSize: isMobile ? 13 : 22,
+                        fontWeight: 900,
+                        color: accent.dark,
+                        fontFamily: DISPLAY_FONT,
+                        letterSpacing: -0.5,
+                        lineHeight: 1.2,
+                        textAlign: "center",
+                        wordBreak: "keep-all",
+                      }}
+                    >
+                      {st.label}
+                    </span>
+                    {/* 설명 */}
+                    <span
+                      style={{
+                        marginTop: isMobile ? 4 : 8,
+                        fontSize: isMobile ? 11 : 18,
+                        fontWeight: 500,
+                        color: SUB,
+                        fontFamily: BODY_FONT,
+                        lineHeight: 1.4,
+                        textAlign: "center",
+                        wordBreak: "keep-all",
+                        padding: isMobile ? "0 2px" : "0 6px",
+                      }}
+                    >
+                      {st.desc}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+          {/* 각주 — 품종·보관 환경 편차 (구어체) */}
+          <p
+            style={{
+              margin: isMobile ? "20px 0 0" : "32px 0 0",
+              fontSize: isMobile ? 11 : 15,
+              color: MUTE,
+              lineHeight: 1.5,
+              fontFamily: BODY_FONT,
+            }}
+          >
+            <OverrideText id="receive.footnote" fallback={rt.footnote} maxLength={60} />
+          </p>
+        </div>
+      </div>
+    </>
+  )
+}
+
 function FaqBlock({
   copy,
   onCopyChange,
@@ -4225,11 +4939,13 @@ function FaqBlock({
   onRegen: React.ReactNode
   isMobile: boolean
 }) {
+  const accent = useAccent()
+  const layout = useLayout()
   return (
     <div
       style={{
         padding: isMobile ? "44px 24px" : "76px 44px",
-        background: "#FFFFFF",
+        background: layout.altSectionBg(accent),
       }}
     >
       <SectionTitle title={t.detail.result.faq} regen={onRegen} isMobile={isMobile} editId="sect.faq.title" />
@@ -4326,6 +5042,7 @@ function SizeDiagramBlock({
   hasSizeMention?: boolean
 }) {
   const accent = useAccent()
+  const layout = useLayout()
   const sr = t.detail.result.sizeRef
   const name = productName?.trim() || "이 상품"
 
@@ -4369,10 +5086,10 @@ function SizeDiagramBlock({
           <h2
             style={{
               fontSize: isMobile ? 30 : 52,
-              fontWeight: 900,
+              fontWeight: layout.headingWeight,
               margin: 0,
               color: INK,
-              fontFamily: DISPLAY_FONT,
+              fontFamily: layout.headingFontFamily,
               letterSpacing: -1.2,
               lineHeight: 1.1,
             }}
@@ -4498,6 +5215,7 @@ function SizeDiagramBlock({
  */
 function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: boolean }) {
   const accent = useAccent()
+  const layout = useLayout()
   const sameDay = !!trust?.sameDayHarvest
   const cold = !!trust?.coldChain
   // C9: "산지 수확"은 directFromFarm/sameDayHarvest 없으면 "수확 후 준비"로 (미검증 산지 단정 방지).
@@ -4539,10 +5257,10 @@ function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: b
         <h2
           style={{
             fontSize: isMobile ? 34 : 60,
-            fontWeight: 900,
+            fontWeight: layout.headingWeight,
             margin: 0,
             color: INK,
-            fontFamily: DISPLAY_FONT,
+            fontFamily: layout.headingFontFamily,
             letterSpacing: -1.5,
             lineHeight: 1.1,
           }}
@@ -4699,6 +5417,7 @@ function PackagingBlock({
   isMobile: boolean
 }) {
   const accent = useAccent()
+  const layout = useLayout()
   return (
     <div style={{ padding: isMobile ? "52px 24px" : "80px 44px", background: "#FFFFFF" }}>
       <div style={{ textAlign: "center", marginBottom: isMobile ? 32 : 48 }}>
@@ -4721,10 +5440,10 @@ function PackagingBlock({
         <h2
           style={{
             fontSize: isMobile ? 30 : 52,
-            fontWeight: 900,
+            fontWeight: layout.headingWeight,
             margin: 0,
             color: INK,
-            fontFamily: DISPLAY_FONT,
+            fontFamily: layout.headingFontFamily,
             letterSpacing: -1.5,
             lineHeight: 1.15,
           }}
@@ -4881,12 +5600,13 @@ function RecommendForBlock({
   isMobile: boolean
 }) {
   const accent = useAccent()
+  const layout = useLayout()
   const { copy, onCopyChange } = useEdit()
   return (
     <div
       style={{
         padding: isMobile ? "48px 24px" : "80px 44px",
-        background: "#FFFFFF",
+        background: layout.altSectionBg(accent),
       }}
     >
       <SectionTitle title={t.detail.result.recommendForTitle} isMobile={isMobile} editId="sect.recommend.title" />
@@ -5069,6 +5789,7 @@ function FarmStoryBlock({
   trust?: TrustInfo
 }) {
   const accent = useAccent()
+  const layout = useLayout()
   const { copy, onCopyChange } = useEdit()
   // trust에 농부 정보 있으면 ProducerCard + 서명, 없으면 서명 줄 자체를 생략.
   // 지어낸 지역·연차·이름을 기본값으로 넣는 것은 허위광고 — 절대 금지.
@@ -5086,7 +5807,7 @@ function FarmStoryBlock({
     <div
       style={{
         padding: isMobile ? "48px 24px" : "80px 44px",
-        background: "#FFFFFF",
+        background: layout.altSectionBg(accent),
       }}
     >
       <SectionTitle title={t.detail.result.farmStoryTitle} isMobile={isMobile} editId="sect.farm.title" />
@@ -5442,18 +6163,33 @@ function SectionTitle({
   editOverlineId?: string
 }) {
   const accent = useAccent()
+  const layout = useLayout()
   // 크기·색 — 데스크톱 기준 hero 60 / main 46 / quiet 34. 모바일은 각 톤에 맞춰 축소.
   const fontSize =
     variant === "hero" ? (isMobile ? 34 : 60) : variant === "quiet" ? (isMobile ? 21 : 34) : (isMobile ? 27 : 46)
   const color = variant === "quiet" ? SUB : INK
   const showOverline = variant === "hero" && !!overline?.trim()
+  // v4.6: editorial 은 여백 1.15배(정수라 ×1은 항등) + 제목 위 얇은 구분선(배경 교차 대신).
+  const marginBottom = Math.round((isMobile ? 24 : 36) * layout.spacingScale)
   return (
+    <>
+      {layout.showRule && (
+        <div
+          aria-hidden
+          style={{
+            height: 2,
+            background: layout.ruleColor(accent),
+            borderRadius: 1,
+            marginBottom: isMobile ? 16 : 24,
+          }}
+        />
+      )}
     <div
       style={{
         display: "flex",
         alignItems: showOverline ? "flex-end" : "center",
         justifyContent: "space-between",
-        marginBottom: isMobile ? 24 : 36,
+        marginBottom,
       }}
     >
       <div>
@@ -5479,11 +6215,11 @@ function SectionTitle({
         <h2
           style={{
             fontSize,
-            fontWeight: 900,
+            fontWeight: layout.headingWeight,
             color,
             margin: 0,
             lineHeight: 1.08,
-            fontFamily: DISPLAY_FONT,
+            fontFamily: layout.headingFontFamily,
             letterSpacing: -1,
             ...WRAP_BALANCE,
           }}
@@ -5493,6 +6229,7 @@ function SectionTitle({
       </div>
       {regen}
     </div>
+    </>
   )
 }
 
