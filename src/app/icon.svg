@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- fdp 파비콘 — 셸 브랜드 코랄(#F0654A, shell-theme.ts SHELL_COLOR.primary) 위 백색 복숭아.
+       16px에서도 읽히도록 실루엣 단순화(몸통 2원 + 골 라인 + 꼭지 + 잎). -->
+  <rect width="512" height="512" rx="112" fill="#F0654A"/>
+  <circle cx="216" cy="300" r="118" fill="#FFFFFF"/>
+  <circle cx="296" cy="300" r="118" fill="#FFFFFF"/>
+  <path d="M256 208 C 249 268 249 336 256 402" stroke="#F0654A" stroke-width="14" fill="none" stroke-linecap="round" opacity="0.5"/>
+  <path d="M256 202 C 254 172 258 152 268 132" stroke="#FFFFFF" stroke-width="22" fill="none" stroke-linecap="round"/>
+  <path d="M268 154 C 298 120 348 112 378 128 C 362 166 316 186 274 174 Z" fill="#FFFFFF"/>
+</svg>
