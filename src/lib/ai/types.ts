@@ -319,11 +319,50 @@ export interface PhotoAnalysisItem {
    * (사진만으로 알 수 없는 것은 관찰이 아님 — 카피 사실값으로 승격 금지).
    */
   visibleNote: string
+  /**
+   * v5.1: 과일/상품 주체의 사진 내 위치(바운딩 박스). 좌상단 기준 0~1 정규화
+   * (x=왼쪽에서, y=위에서, w=너비, h=높이). ResultView 가 CSS 크롭(중심 맞춤·
+   * 확대)에 쓴다 — 관찰 메모지, 사실값이 아니다.
+   * 하위호환: 주체가 프레임 대부분(≥85%)이거나 불확실하거나 사람 얼굴·글자 위주
+   * 사진이면 생략(undefined) — 소비 측이 원본 그대로 폴백.
+   */
+  subjectBox?: { x: number; y: number; w: number; h: number }
 }
 
 /** v4.4: 사진 분석 전체 결과 — 사진별 항목 + 토큰/비용(선택). */
 export interface PhotoAnalysisResult {
   items: PhotoAnalysisItem[]
+  usage?: UsageInfo
+}
+
+/* ───────────────── v5.1: 자가 검수 (self-review, vision) ───────────────── */
+
+/**
+ * v5.1: 완성된 아트보드(JPG 세그먼트)를 AI가 셀러 눈높이로 훑어 남긴 시각 위생 지적 1건.
+ * 오직 "눈에 보이는 완성도"만 평가한다 — 오타·문구 내용·사실 여부는 판단하지 않는다
+ * (사실/식약처 검수는 compliance-report 담당).
+ * - severity: 심각도 (high/medium/low).
+ * - area: 문제가 있는 구간 설명 (비개발자 셀러가 알아볼 표현 — 예: "맨 위 대표 이미지",
+ *   "포인트 03 카드", "하단 배송 안내").
+ * - message: 셀러가 바로 이해할 한국어 지적 한 줄 (개발 용어 금지).
+ * - suggestion: 앱에서 바로 실행 가능한 조치 (선택 — 예: "사진 순서 변경", "무드 변주 전환",
+ *   "해당 사진 교체", "문구 축약").
+ */
+export interface SelfReviewIssue {
+  severity: "high" | "medium" | "low"
+  area: string
+  message: string
+  suggestion?: string
+}
+
+/**
+ * v5.1: 자가 검수 전체 결과 — 지적 목록(0~6건) + 잘한 점 한 줄(overall) + 토큰/비용(선택).
+ * 반환 규칙(v5.1.1): 검수 미사용/실패/형식 위반이면 어댑터가 null 반환(패널 미노출).
+ * AI가 '지적 없음'을 명시한 정상 응답은 issues:[] 로 반환 — 패널이 '깨끗함'을 렌더한다.
+ */
+export interface SelfReviewResult {
+  issues: SelfReviewIssue[]
+  overall: string
   usage?: UsageInfo
 }
 
@@ -440,4 +479,18 @@ export interface AIProvider {
     photos: { id: string; dataUrl: string }[],
     context: { productType: string; category: string },
   ): Promise<PhotoAnalysisResult | null>
+
+  /**
+   * v5.1: 완성된 아트보드 세그먼트(JPG dataURL)들을 vision 1콜로 훑어
+   * 셀러 눈높이의 시각 위생 지적 2~6건 + 잘한 점 한 줄(overall)을 만든다.
+   * 관점 5개: 여백·정렬 / 사진 품질·배치(어둡거나 흐린 사진) / 텍스트 겹침·잘림 /
+   * 색 부조화 / 섹션 리듬·반복감. 오타·문구 내용·사실 판정은 하지 않는다(시각만).
+   *
+   * **어떤 실패든(빈 입력·API 에러·빈 응답·JSON 파싱 실패·유효 지적 0개) null 반환.**
+   * 절대 throw 로 흐름을 막지 않는다 — 자가 검수는 선택적 부가 신호일 뿐.
+   */
+  reviewArtboard(
+    segments: { label: string; dataUrl: string }[],
+    context: { productType: string },
+  ): Promise<SelfReviewResult | null>
 }

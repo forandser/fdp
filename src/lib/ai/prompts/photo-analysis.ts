@@ -54,15 +54,26 @@ visibleNote — "사진에 실제로 보이는 것"만 한 줄(60자 이내):
 - 절대 금지(사진만으로 알 수 없는 추정): 품종명·산지·당도(Brix)·수확일·맛("달다"·"아삭")·
   신선도 단정·인증 여부. 보이지 않는 것은 쓰지 않습니다. 이 메모는 관찰일 뿐 사실값이 아닙니다.
 
+subjectBox(선택) — 과일/상품 주체가 사진 안에서 차지하는 사각형 위치:
+- 좌상단을 원점으로 한 0~1 정규화 값 { "x", "y", "w", "h" } 로 보고합니다.
+  (x=왼쪽 끝에서의 가로 위치, y=위쪽 끝에서의 세로 위치, w=가로 너비, h=세로 높이. 모두 0~1.)
+- 예: 사진 왼쪽 위 1/4 영역에 과일이 모여 있으면 { "x": 0.05, "y": 0.08, "w": 0.45, "h": 0.5 }.
+- 이후 대표컷을 상품 중심으로 크롭·확대하는 데 쓰입니다. 눈에 보이는 주체의 위치만, 추정 금지.
+- 생략해야 하는 경우(이럴 땐 subjectBox 키 자체를 넣지 마세요):
+  · 주체(과일/상품)가 프레임 대부분(가로·세로 각각 대략 85% 이상)을 채워 크롭할 여지가 없을 때.
+  · 주체가 여기저기 흩어져 하나의 사각형으로 감싸기 어렵거나 위치가 불확실할 때.
+  · 사람 얼굴·손·글자(문구·라벨)가 주인공인 사진일 때.
+
 철칙:
 - 주어진 imageId 만 그대로 사용하세요. 없는 사진을 지어내지 말고, 각 사진마다 항목 1개씩만 만드세요.
 - 확신이 없어도 7개 역할 중 가장 가까운 것을 고르세요(역할을 비우지 마세요).
 - 이모지·마크다운·설명 문장 없이 JSON 하나만 출력하세요.
 
-출력 형식(JSON 한 개만. 코드펜스·설명·인사 금지):
+출력 형식(JSON 한 개만. 코드펜스·설명·인사 금지. subjectBox 는 확실할 때만, 아니면 그 키 생략):
 {
   "items": [
-    { "imageId": "주어진값", "role": "hero", "heroScore": 8, "blurry": false, "dark": false, "visibleNote": "사진에 보이는 것 한 줄" }
+    { "imageId": "주어진값", "role": "hero", "heroScore": 8, "blurry": false, "dark": false, "visibleNote": "사진에 보이는 것 한 줄", "subjectBox": { "x": 0.12, "y": 0.1, "w": 0.7, "h": 0.72 } },
+    { "imageId": "주어진값2", "role": "whole", "heroScore": 6, "blurry": false, "dark": false, "visibleNote": "사진에 보이는 것 한 줄" }
   ]
 }`
 
@@ -137,9 +148,11 @@ imageId 는 그 값을 그대로 사용하고, 없는 사진을 지어내지 마
 
   const footer: ContentBlockParam = {
     type: "text",
-    text: `위 ${sentIds.length}장 각각에 대해 role / heroScore(0~10) / blurry / dark / visibleNote 를 판정해,
+    text: `위 ${sentIds.length}장 각각에 대해 role / heroScore(0~10) / blurry / dark / visibleNote 를 판정하고,
+과일/상품 주체 위치가 뚜렷하면 subjectBox(0~1 정규화)도 덧붙여,
 시스템 프롬프트의 JSON 스키마({ "items": [...] }) 하나로만 응답하세요.
-visibleNote 는 사진에 실제로 보이는 것만(품종·산지·당도·맛 추정 금지, 60자 이내). imageId 는 위 값 그대로.`,
+visibleNote 는 사진에 실제로 보이는 것만(품종·산지·당도·맛 추정 금지, 60자 이내). imageId 는 위 값 그대로.
+subjectBox 는 확실할 때만(주체가 프레임 대부분이거나 불확실하거나 사람·글자 위주면 생략).`,
   }
 
   return [{ role: "user", content: [header, ...imageBlocks, footer] }]

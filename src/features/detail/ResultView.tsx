@@ -391,6 +391,186 @@ function useMotifKind(): string | null {
   return useContext(MotifContext)
 }
 
+/* ============================================================ */
+/* v5.1-A2 스마트 크롭 — subjectBox 기반 CSS 크롭 (클로즈업 리듬)   */
+/* ------------------------------------------------------------ */
+/* 래퍼(overflow hidden + 슬롯 비율) 안에서 img 를 계산된 scale·  */
+/* offset(% 위치·크기)로 배치해 주체를 중앙에 클로즈업한다.        */
+/* html-to-image 안전: overflow+absolute position 만 사용(기존    */
+/* 코드에도 있는 패턴). CSS filter/변수/외부URL/transform-scale    */
+/* 없음. 줌 상한 CROP_MAX_ZOOM(2.2)로 과확대 화질 저하 방지.       */
+/*                                                              */
+/* ★ 불변식: subjectBox 가 없거나(=분석 없음/주체 불확실) 계산     */
+/*   불가면 소비 측이 기존 objectFit cover 로 폴백 → 기존 렌더 동일. */
+/* ============================================================ */
+
+/** 주체 위치 박스 — 사진 내 좌상단 기준 0~1 정규화 (교차 계약). */
+export interface SubjectBox {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+/**
+ * 교차 계약: subjectBox 는 타 에이전트가 PhotoAnalysisItem(lib/ai/types.ts)에 추가 중인
+ * 옵셔널 필드다. 아직 타입에 없을 수 있어(작업 타이밍), 런타임 필드를 계약 shape 그대로
+ * 옵셔널 접근한다 — 있으면 소비, 없으면 undefined. 이렇게 하면 본인 파일은 지금도 tsc 0에러이고,
+ * 타 에이전트가 동일 shape 로 필드를 추가해도 충돌 없이 그대로 바인딩된다.
+ */
+type WithSubjectBox = { subjectBox?: SubjectBox }
+
+/**
+ * PhotoAnalysisItem 에서 subjectBox 를 안전하게 읽어 정규화한다.
+ * - 값이 없거나 숫자가 아니면 undefined(손상/구버전 저장본 방어 → cover 폴백).
+ * - w/h 하한 0.02(과확대 방어)·상한 1 클램프, x/y 는 박스가 프레임을 벗어나지 않게 클램프.
+ */
+function readSubjectBox(item: PhotoAnalysisItem | undefined): SubjectBox | undefined {
+  const raw = (item as (PhotoAnalysisItem & WithSubjectBox) | undefined)?.subjectBox
+  if (!raw) return undefined
+  const { x, y, w, h } = raw
+  if (![x, y, w, h].every((n) => typeof n === "number" && Number.isFinite(n))) {
+    return undefined
+  }
+  const cw = Math.min(1, Math.max(0.02, w))
+  const ch = Math.min(1, Math.max(0.02, h))
+  const cx = Math.min(Math.max(x, 0), 1 - cw)
+  const cy = Math.min(Math.max(y, 0), 1 - ch)
+  return { x: cx, y: cy, w: cw, h: ch }
+}
+
+/** 줌 상한 — cover 대비 최대 2.2배(과확대 화질 저하 방지). */
+const CROP_MAX_ZOOM = 2.2
+/** 주체가 프레임에서 차지할 목표 비율(0.8 = 80%, 나머지는 여백). */
+const CROP_FILL = 0.8
+
+/**
+ * subjectBox 를 slotRatio(=슬롯 W/H) 프레임 안에 주체 중심 클로즈업으로 배치하는 값 계산.
+ * 반환: img 에 적용할 % 값(래퍼 대비). null 이면 계산 불가 → 호출부가 cover 폴백.
+ *
+ * 원리: 이미지에서 주체 중심을 담는 slotRatio 비율의 "크롭 창"(cw×ch, px)을 정하고,
+ *   그 창이 래퍼를 꽉 채우도록 img 를 확대·이동한다. 크롭 창은 cover 기준창(cw0)보다
+ *   작을수록 확대(줌). 확대는 CROP_MAX_ZOOM 까지만. 크롭 창은 항상 이미지 안에 있어
+ *   래퍼가 빈틈 없이 덮인다(레터박스 없음). 모두 비율 계산이라 실제 px 와 무관하게 동작.
+ */
+function computeCropPlacement(
+  image: UploadedImage,
+  box: SubjectBox,
+  slotRatio: number,
+): { widthPct: number; leftPct: number; topPct: number } | null {
+  const W = image.width
+  const H = image.height
+  if (!(W > 0) || !(H > 0) || !(slotRatio > 0)) return null // 손상 저장본 방어
+  const sw = box.w * W
+  const sh = box.h * H
+  const scx = (box.x + box.w / 2) * W
+  const scy = (box.y + box.h / 2) * H
+  // cover 기준 크롭창(줌 1) — slotRatio 비율의 최대 사각형이 이미지 안에 들어간 크기.
+  const P = W / H
+  let cw0: number
+  if (P >= slotRatio) cw0 = H * slotRatio
+  else cw0 = W // P < slotRatio → 폭이 제한, cw0 = W (ch0 = W/slotRatio ≤ H)
+  // 주체를 CROP_FILL 만큼 담는 데 필요한 크롭 폭(가로·세로 제약 중 큰 쪽).
+  const cwNeed = Math.max(sw / CROP_FILL, (sh / CROP_FILL) * slotRatio)
+  const cwMin = cw0 / CROP_MAX_ZOOM // 줌 상한 = 최소 크롭창
+  const cw = Math.min(cw0, Math.max(cwMin, cwNeed))
+  const ch = cw / slotRatio
+  // 주체 중심에 크롭창을 두되 이미지 밖으로 나가지 않게 클램프(빈틈 방지).
+  const cropX = Math.min(Math.max(scx - cw / 2, 0), W - cw)
+  const cropY = Math.min(Math.max(scy - ch / 2, 0), H - ch)
+  return {
+    widthPct: (W / cw) * 100,
+    leftPct: -(cropX / cw) * 100,
+    topPct: -(cropY / ch) * 100,
+  }
+}
+
+/**
+ * v5.1-A2 크롭 소비 컨텍스트 — AccentContext 패턴과 동일.
+ * ResultView 가 photoAnalysis 로부터 계산한 소비 헬퍼를 Provider 로 내리고,
+ * POINT·감각·갤러리 블록이 useCrop() 으로 소비한다.
+ * ★ 불변식: 분석이 없으면 boxOf 가 항상 undefined → 전 블록이 cover 폴백(기존 렌더 100% 동일).
+ */
+interface CropCtx {
+  /** 크롭 후보 박스 — subjectBox 유효 & 비흐림일 때만. 아니면 undefined(cover 폴백). */
+  boxOf: (img: UploadedImage | undefined) => SubjectBox | undefined
+  /** 사진 역할(분석 있을 때) — POINT 컷 우선 판정용. */
+  roleOf: (img: UploadedImage | undefined) => PhotoAnalysisItem["role"] | undefined
+  /** DNA 과즙·단면 가중치 — POINT 크롭 게이트(cut 아닌 사진도 클로즈업 허용). */
+  dnaFavorsCut: boolean
+}
+const CropContext = createContext<CropCtx>({
+  boxOf: () => undefined,
+  roleOf: () => undefined,
+  dnaFavorsCut: false,
+})
+function useCrop(): CropCtx {
+  return useContext(CropContext)
+}
+
+/**
+ * subjectBox 기반 CSS 크롭 이미지 — 래퍼(비율 고정 + overflow hidden) 안에서
+ * img 를 계산된 %로 확대·이동해 주체를 중앙 클로즈업한다.
+ * 계산 불가(손상 저장본 등)면 기존 cover 렌더로 폴백(불변식).
+ * maxWidth:"none" — Tailwind preflight 의 img{max-width:100%} 를 무력화(줌 시 폭>100%).
+ */
+function CroppedImage({
+  image,
+  box,
+  slotRatio,
+  radius = 0,
+  alt = "",
+}: {
+  image: UploadedImage
+  box: SubjectBox
+  slotRatio: number
+  radius?: number
+  alt?: string
+}) {
+  const accent = useAccent()
+  const place = computeCropPlacement(image, box, slotRatio)
+  const wrap: React.CSSProperties = {
+    position: "relative",
+    width: "100%",
+    aspectRatio: String(slotRatio),
+    overflow: "hidden",
+    borderRadius: radius,
+    background: accent.soft, // 로드 전/계산 틈 방어
+  }
+  if (!place) {
+    return (
+      <div style={wrap}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={image.url}
+          alt={alt}
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+        />
+      </div>
+    )
+  }
+  return (
+    <div style={wrap}>
+      {/* height:auto — 확정 폭(width%)에서 원본 비율로 높이가 유도되어(래퍼 높이 확정성에
+          의존하지 않음) foreignObject 래스터화에서도 크기가 안전. 위치(top/left%)만 래퍼 기준. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={image.url}
+        alt={alt}
+        style={{
+          position: "absolute",
+          top: `${place.topPct}%`,
+          left: `${place.leftPct}%`,
+          width: `${place.widthPct}%`,
+          height: "auto",
+          maxWidth: "none",
+          display: "block",
+        }}
+      />
+    </div>
+  )
+}
+
 /**
  * textWrap(balance/pretty)은 Edge/Chrome이 지원하지만 React CSSProperties 타입에는
  * 아직 없어 얇게 확장한다. html-to-image는 같은 엔진으로 렌더하므로 JPG에도 동일 적용된다.
@@ -1756,6 +1936,39 @@ export function ResultView({
   }, [photoAnalysis])
 
   /**
+   * v5.1-A2 사진 분석 인덱스 — imageId → 항목. 스마트 크롭(subjectBox·role·blurry) 소비용.
+   * 없으면 빈 Map → boxOf 항상 undefined → 크롭·오버레이 전부 미작동(분석 없는 경로 불변식).
+   */
+  const analysisById = useMemo(() => {
+    const m = new Map<string, PhotoAnalysisItem>()
+    if (photoAnalysis) {
+      for (const it of photoAnalysis) {
+        if (it && typeof it.imageId === "string") m.set(it.imageId, it)
+      }
+    }
+    return m
+  }, [photoAnalysis])
+
+  /**
+   * v5.1-A2 크롭 컨텍스트 값 — 각 블록(POINT·감각·갤러리)에 Provider 로 주입.
+   * boxOf: subjectBox 유효 & 비흐림일 때만 박스 반환(흐린 사진 크롭 금지 — 더 흐려 보임).
+   * 분석 없으면 boxOf 가 항상 undefined → 전 블록 cover 폴백(기존 렌더 100% 동일).
+   */
+  const cropCtxValue = useMemo<CropCtx>(
+    () => ({
+      boxOf: (img) => {
+        if (!img) return undefined
+        const it = analysisById.get(img.id)
+        if (!it || it.blurry) return undefined
+        return readSubjectBox(it)
+      },
+      roleOf: (img) => (img ? analysisById.get(img.id)?.role : undefined),
+      dnaFavorsCut,
+    }),
+    [analysisById, dnaFavorsCut],
+  )
+
+  /**
    * 노출할 고객 후기 — 본문이 있는 것만(최대 3개). 0건이면 ReviewsBlock 미노출.
    * 셀러 직접 입력이라 AI가 만들지 않는다. highlight는 text에 실제로 포함될 때만 강조.
    */
@@ -1901,11 +2114,52 @@ export function ResultView({
     return alt ? { text: alt, editable: false } : null
   }, [copy.highlightBox, copy.story])
 
+  /**
+   * v5.1-A2 오버레이 발췌문 — 스토리 발췌(splitStoryHighlight 재사용) 흰 글씨 오버레이용.
+   * 스토리 콜아웃(StoryBlock 형광펜 강조 = hi)이 이미 노출하는 문장은 제외하고, 겹치지 않는
+   * 다른 긍정·감각 문장만 채택한다. 콜아웃(hi)으로 폴백하지 않는다 — 오버레이는 StoryBlock
+   * "직후"라 같은 문장을 흰 글씨로 재노출하면 형광펜 문장과 back-to-back 중복이 도드라진다
+   * (punch 다크밴드는 위치가 분리돼 폴백 허용, 오버레이는 인접해 폴백 없이 생략이 안전).
+   * 지어내지 않음 — 스토리 원문 문장 그대로. 콜아웃과 다른 문장이 없으면 null → 오버레이 미노출.
+   */
+  const overlayQuote = useMemo<string | null>(() => {
+    const hi = splitStoryHighlight(copy.story)?.highlight?.trim() ?? null
+    // 콜아웃(hi)과 겹치지 않는 문장만 — 폴백으로 hi 를 재사용하지 않는다(인접 중복 방지).
+    const distinct = extractPositiveSentence(copy.story, hi)?.trim() ?? null
+    return distinct && distinct.length > 0 ? distinct : null
+  }, [copy.story])
+
+  /**
+   * v5.1-A2 오버레이 와이드 사진 — whole/farm/table 역할·비저품질(blurry/dark 제외)·히어로 제외.
+   * 재사용 규칙 준수: 특징 슬롯(whyBrand·POINT)이 이미 쓴 사진은 뒤로, 미사용(주로 갤러리행)
+   * 사진을 우선해 과도한 재사용을 피한다. 결정적(원본 순서). 후보 없으면 undefined.
+   * ★ 불변식(구버전 저장본 보존): 크롭 3슬롯과 동일하게 subjectBox 유효 사진만 후보로 삼는다.
+   *   photoAnalysis 는 v4.4부터 Work 에 저장·복원되지만 subjectBox 는 v5.1 신규 필드라
+   *   v4.4~v5.0 저장본엔 없다 → 그 저장본은 eligible 이 비어 undefined → 오버레이 미노출(기존
+   *   렌더 100% 동일). 오버레이는 subjectBox 신호가 있는 신규 분석에서만 뜬다.
+   */
+  const overlayImage = useMemo<UploadedImage | undefined>(() => {
+    if (!photoAnalysis || photoAnalysis.length === 0) return undefined
+    const WIDE_ROLES = new Set<PhotoAnalysisItem["role"]>(["whole", "farm", "table"])
+    const usedIds = new Set<string>()
+    if (imagePlan.whyBrand) usedIds.add(imagePlan.whyBrand.id)
+    for (const kp of imagePlan.keyPoints) if (kp) usedIds.add(kp.id)
+    const eligible = images.filter((img) => {
+      if (heroImage && img.id === heroImage.id) return false // 히어로 에코 금지(규칙 ①)
+      const it = analysisById.get(img.id)
+      if (!it || it.blurry || it.dark) return false // 비저품질 제외
+      if (!readSubjectBox(it)) return false // 크롭과 동일 규율 — subjectBox 없는 구버전 저장본 보존
+      return WIDE_ROLES.has(it.role)
+    })
+    return eligible.find((img) => !usedIds.has(img.id)) ?? eligible[0]
+  }, [photoAnalysis, images, heroImage, imagePlan, analysisById])
+
   return (
     <AccentContext.Provider value={accent}>
     <LayoutContext.Provider value={layout}>
     <MotifContext.Provider value={motifKind}>
     <EditContext.Provider value={{ copy, onCopyChange }}>
+    <CropContext.Provider value={cropCtxValue}>
     <div
       style={{
         display: "grid",
@@ -2093,19 +2347,45 @@ export function ResultView({
               isMobile={isMobile}
             />
 
-            {/* 3b. SENSORY PUNCH — 검정 배경 임팩트 카피 + 바로 아래 실사진 밀착 (참외 레퍼런스).
-                   highlightBox(기존 StoryBlock 슬로건)를 승격. 비어 있으면 미노출.
-                   v3.8(지시5): 이 블록이 페이지 유일의 강조 다크 밴드 — 그 1회 허용분을 쓰므로
-                   검정 유지(tinted=false). 앞으로 다른 다크 풀블리드가 추가되면 그쪽을 tinted로. */}
-            {punchDisplay && (
-              <SensoryPunchBlock
-                copy={copy}
-                onCopyChange={onCopyChange}
-                image={imagePlan.punch}
+            {/* 3a-2 / 3b. 임팩트 블록 — 페이지당 하나 (v5.1.1 우선순위: 오버레이 > 다크밴드).
+                오버레이(와이드 사진 위 카피)가 가능하면 다크밴드 슬로건(highlightBox)을 사진 위로
+                승격해 렌더한다 — 벤치마크상 더 디자이너다운 구도이고 내용 손실도 없다(편집 유지).
+                슬로건이 없으면(punchDisplay null) 스토리 발췌(overlayQuote)로 폴백.
+                오버레이 불가(적합 사진 없음)면 기존 다크밴드(SensoryPunch) 그대로.
+                ★ overlayImage 는 subjectBox(v5.1 신규 분석 신호) 유효 사진만 선정 →
+                  구버전 저장본·분석 없는 경로엔 오버레이가 절대 안 뜨고 다크밴드가 기존과 동일(회귀 0). */}
+            {overlayImage && (punchDisplay || overlayQuote) ? (
+              <OverlayQuoteBlock
+                image={overlayImage}
                 isMobile={isMobile}
-                tinted={false}
-                overrideText={punchDisplay.editable ? undefined : punchDisplay.text}
+                quote={
+                  punchDisplay ? (
+                    punchDisplay.editable ? (
+                      <EditableResultText
+                        copy={copy}
+                        onChange={onCopyChange}
+                        path={["highlightBox"]}
+                        maxLength={30}
+                      />
+                    ) : (
+                      punchDisplay.text
+                    )
+                  ) : (
+                    overlayQuote
+                  )
+                }
               />
+            ) : (
+              punchDisplay && (
+                <SensoryPunchBlock
+                  copy={copy}
+                  onCopyChange={onCopyChange}
+                  image={imagePlan.punch}
+                  isMobile={isMobile}
+                  tinted={false}
+                  overrideText={punchDisplay.editable ? undefined : punchDisplay.text}
+                />
+              )
             )}
 
             {/* 3a. RECOMMEND FOR */}
@@ -2443,6 +2723,7 @@ export function ResultView({
 
       {/* v2.7: StickyMobileCta 삭제 (사이드바에 이미 있으므로 중복 제거) */}
     </div>
+    </CropContext.Provider>
     </EditContext.Provider>
     </MotifContext.Provider>
     </LayoutContext.Provider>
@@ -3672,8 +3953,12 @@ function SensoryPunchBlock({
 }) {
   const accent = useAccent()
   const layout = useLayout()
+  const crop = useCrop() // v5.1-A2: 감각 사진 주체 클로즈업(분석 있을 때만).
   // 틴트 버전: 밝은 배경(veilTint) + INK 헤드 + accent 하이라이트. 검정 버전: 검정 배경 + 밝은 카피.
   const bg = tinted ? veilTint(accent.soft) : PUNCH_BG
+  // v5.1-A2: subjectBox 가 있고 비흐림이면 주체 클로즈업, 아니면 기존 cover(불변식).
+  const punchBox = crop.boxOf(image)
+  const punchRatio = isMobile ? 4 / 3 : 16 / 9
   const copyColor = tinted ? accent.dark : accent.soft
   return (
     <div style={{ background: bg }}>
@@ -3715,20 +4000,109 @@ function SensoryPunchBlock({
         </p>
       </div>
 
-      {/* 바로 아래 실사진 1장 — 카피와 한 몸으로 밀착(꽉 찬 폭). 분위기 컷이라 중복 허용. */}
-      {image && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={image.url}
-          alt=""
+      {/* 바로 아래 실사진 1장 — 카피와 한 몸으로 밀착(꽉 찬 폭). 분위기 컷이라 중복 허용.
+          v5.1-A2: 주체 박스가 있으면 클로즈업(감각 강조), 없으면 기존 cover. */}
+      {image &&
+        (punchBox ? (
+          <CroppedImage image={image} box={punchBox} slotRatio={punchRatio} />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={image.url}
+            alt=""
+            style={{
+              width: "100%",
+              aspectRatio: isMobile ? "4/3" : "16/9",
+              objectFit: "cover",
+              display: "block",
+            }}
+          />
+        ))}
+    </div>
+  )
+}
+
+/**
+ * v5.1-A2 OverlayQuoteBlock — 와이드 사진 위 스토리 발췌 오버레이 (사진 위 카피 구도).
+ *
+ * 와이드 사진(whole/farm/table 역할·비저품질·재사용 규칙 준수) 위에 하단 linear-gradient
+ * 스크림(rgba 검정 0→0.55)을 깔고, 스토리 발췌(splitStoryHighlight 재사용)를 흰 글씨
+ * (Pretendard 800, WRAP_BALANCE)로 얹는다. 사진은 와이드 구도라 크롭하지 않는다(cover).
+ *
+ * 게이팅(호출부, v5.1.1): 임팩트 블록은 페이지당 하나 — 오버레이가 가능하면(적합 와이드 사진)
+ *   다크밴드 슬로건(highlightBox)을 이 블록의 quote 로 승격해 렌더하고 다크밴드는 생략.
+ *   슬로건이 없으면 스토리 발췌 폴백. 적합 사진이 없으면 기존 다크밴드 그대로.
+ * ★ 불변식: overlayImage 는 subjectBox(신규 분석) 유효 사진만 선정되므로, 분석 없는 경로·
+ *   구버전 저장본엔 이 블록이 전혀 나타나지 않는다(기존 렌더 100% 동일).
+ *
+ * JPG: 최상위 원자 블록 1개(PhotoBreak 와 동일) — 슬라이서가 내부를 자르지 않음. 스크림은
+ *   rgba·linear-gradient 만, 카피는 흰 hex — CSS filter/변수/외부URL 없이 toCanvas 안전.
+ * quote 는 ReactNode — 슬로건 승격 시 EditableResultText(highlightBox 인라인 편집)가 그대로 들어온다.
+ */
+function OverlayQuoteBlock({
+  image,
+  quote,
+  isMobile,
+}: {
+  image: UploadedImage
+  quote: React.ReactNode
+  isMobile: boolean
+}) {
+  const layout = useLayout()
+  // soft 변주만 살짝 둥근 모서리(PhotoBreak 와 동일 톤), standard/editorial 은 각진 풀블리드.
+  const radius = layout.variant === "soft" ? layout.cardRadius : 0
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: "100%",
+        aspectRatio: isMobile ? "4/3" : "16/9",
+        overflow: "hidden",
+        background: PUNCH_BG, // 로드 전/틈 방어
+        borderRadius: radius,
+      }}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={image.url}
+        alt=""
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+      />
+      {/* 하단 스크림 — 위 투명 → 아래 rgba 검정 0.55 (JPG 위생: rgba·gradient 안전). */}
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: "linear-gradient(to bottom, rgba(0,0,0,0) 42%, rgba(0,0,0,0.55) 100%)",
+        }}
+      />
+      {/* 스토리 발췌 — 하단, 흰 글씨 Pretendard 800. 표시 전용(편집은 스토리 편집에서). */}
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          padding: isMobile ? "0 24px 26px" : "0 56px 48px",
+        }}
+      >
+        <p
           style={{
-            width: "100%",
-            aspectRatio: isMobile ? "4/3" : "16/9",
-            objectFit: "cover",
-            display: "block",
+            margin: 0,
+            color: "#FFFFFF",
+            fontFamily: BODY_FONT,
+            fontWeight: 800,
+            fontSize: isMobile ? 26 : 46,
+            lineHeight: 1.28,
+            letterSpacing: -1,
+            wordBreak: "keep-all",
+            ...WRAP_BALANCE,
           }}
-        />
-      )}
+        >
+          {quote}
+        </p>
+      </div>
     </div>
   )
 }
@@ -3843,6 +4217,8 @@ function GalleryBlock({
 }) {
   // v3.8(지시1): 풀폭↔2그리드 모자이크. buildGalleryRows가 배치·캡션 배정을 결정.
   const rows = useMemo(() => buildGalleryRows(images), [images])
+  // v5.1-A2: 2그리드 셀은 주체 크롭(클로즈업), 풀폭 행은 와이드(크롭 없음) → 거리감 교차 리듬.
+  const crop = useCrop()
 
   // 컬러 캡션 바 문구 — 풀폭 사진에만, captionIdx 순서대로 서로 다른 안전 문구.
   const captionFor = (idx: number) =>
@@ -3929,6 +4305,8 @@ function GalleryBlock({
           >
             {row.imgs.map((img) => {
               altSeq++
+              // v5.1-A2: 2그리드 셀은 주체 크롭. subjectBox 없거나 흐리면 기존 1:1 cover(불변식).
+              const box = crop.boxOf(img)
               return (
                 <div
                   key={img.id}
@@ -3938,17 +4316,21 @@ function GalleryBlock({
                     overflow: "hidden",
                   }}
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={img.url}
-                    alt={`${productName} ${altSeq}`}
-                    style={{
-                      width: "100%",
-                      aspectRatio: "1",
-                      objectFit: "cover",
-                      display: "block",
-                    }}
-                  />
+                  {box ? (
+                    <CroppedImage image={img} box={box} slotRatio={1} alt={`${productName} ${altSeq}`} />
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={img.url}
+                      alt={`${productName} ${altSeq}`}
+                      style={{
+                        width: "100%",
+                        aspectRatio: "1",
+                        objectFit: "cover",
+                        display: "block",
+                      }}
+                    />
+                  )}
                 </div>
               )
             })}
@@ -4660,6 +5042,7 @@ function KeyPointsBig({
   const accent = useAccent()
   const layout = useLayout()
   const motifKind = useMotifKind() // v4.9-A: 대표 섹션 오버라인 모티프(품종 매칭 시만).
+  const crop = useCrop() // v5.1-A2: POINT 컷 사진 주체 클로즈업(분석 있을 때만).
   return (
     <div style={{ background: "#FFFFFF" }}>
       <div
@@ -4844,6 +5227,11 @@ function KeyPointsBig({
         )
 
         // 이미지 열 — 지그재그면 4:5 세로비, 스택이면 기존 1:1 대형.
+        // v5.1-A2: cut 역할이거나 dnaFavorsCut 이고 주체 박스가 있으면(비흐림) 주체 클로즈업.
+        //   아니면 기존 objectFit cover(불변식). 슬롯 비율은 지그재그 4:5 / 스택 1:1 유지.
+        const kpBox = crop.boxOf(img)
+        const kpWantCrop =
+          !!kpBox && (crop.roleOf(img) === "cut" || crop.dnaFavorsCut)
         const imageCol = img ? (
           <div
             style={{
@@ -4862,18 +5250,22 @@ function KeyPointsBig({
                 boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
               }}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={img.url}
-                alt=""
-                style={{
-                  width: "100%",
-                  // 지그재그: 세로비 4:5(레퍼런스), 스택: 1:1 대형(기존).
-                  aspectRatio: zigzag ? "4/5" : "1",
-                  objectFit: "cover",
-                  display: "block",
-                }}
-              />
+              {kpWantCrop && kpBox ? (
+                <CroppedImage image={img} box={kpBox} slotRatio={zigzag ? 4 / 5 : 1} />
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={img.url}
+                  alt=""
+                  style={{
+                    width: "100%",
+                    // 지그재그: 세로비 4:5(레퍼런스), 스택: 1:1 대형(기존).
+                    aspectRatio: zigzag ? "4/5" : "1",
+                    objectFit: "cover",
+                    display: "block",
+                  }}
+                />
+              )}
             </div>
           </div>
         ) : null

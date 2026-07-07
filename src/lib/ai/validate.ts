@@ -14,6 +14,8 @@ import type {
   PhotoAnalysisItem,
   ResearchResult,
   ResearchSource,
+  SelfReviewIssue,
+  SelfReviewResult,
 } from "./types"
 
 const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"])
@@ -437,11 +439,45 @@ const PHOTO_ROLE_SET: ReadonlySet<string> = new Set(PHOTO_ROLES)
 /** visibleNote 글자 상한(≤60자). */
 const PHOTO_VISIBLE_NOTE_MAX = 60
 
+/** subjectBox 최소 변 길이 — 가로/세로 어느 한쪽이라도 이 값 이하면 크롭 의미가 없어 드롭. */
+const PHOTO_SUBJECT_BOX_MIN = 0.05
+
 /** heroScore 를 0~10 정수로 클램프. 숫자가 아니면 0. */
 function clampHeroScore(v: unknown): number {
   const n = typeof v === "number" ? v : Number(v)
   if (!Number.isFinite(n)) return 0
   return Math.max(0, Math.min(10, Math.round(n)))
+}
+
+/** 값을 0~1 로 클램프. 숫자(또는 숫자 문자열)가 아니거나 비유한이면 null. */
+function clamp01(v: unknown): number | null {
+  const n = typeof v === "number" ? v : Number(v)
+  if (!Number.isFinite(n)) return null
+  return Math.max(0, Math.min(1, n))
+}
+
+/**
+ * v5.1: subjectBox(과일/상품 주체 바운딩 박스) 검증 — 좌상단 기준 0~1 정규화.
+ * - x/y/w/h 가 모두 숫자여야 하고 각각 0~1 로 클램프. 하나라도 비수치/비유한이면 드롭.
+ * - 박스가 프레임을 넘치면(x+w>1, y+h>1) 남은 공간으로 w/h 를 좁힌다(좌상단 고정).
+ * - 좁힌 뒤 가로 또는 세로 변이 PHOTO_SUBJECT_BOX_MIN(0.05) 이하로 너무 작으면(크롭
+ *   의미 없음/비정상) 필드를 드롭(undefined) → 소비 측이 원본 그대로 폴백.
+ */
+function pickSubjectBox(
+  v: unknown,
+): { x: number; y: number; w: number; h: number } | undefined {
+  if (!isObject(v)) return undefined
+  if (Object.keys(v).some((k) => FORBIDDEN_KEYS.has(k))) return undefined
+  const x = clamp01(v.x)
+  const y = clamp01(v.y)
+  const w0 = clamp01(v.w)
+  const h0 = clamp01(v.h)
+  if (x === null || y === null || w0 === null || h0 === null) return undefined
+  // 프레임을 벗어나면 남은 공간으로 축소(좌상단 고정).
+  const w = Math.min(w0, 1 - x)
+  const h = Math.min(h0, 1 - y)
+  if (w <= PHOTO_SUBJECT_BOX_MIN || h <= PHOTO_SUBJECT_BOX_MIN) return undefined
+  return { x, y, w, h }
 }
 
 /**
@@ -452,6 +488,7 @@ function clampHeroScore(v: unknown): number {
  * - visibleNote 는 60자 절삭.
  * - imageId 가 knownIds 에 없으면 드롭(모델 환각 방지). 중복 imageId 는 첫 항목만.
  * - blurry/dark 는 boolean 일 때만 반영(true/false 모두 보존).
+ * - subjectBox 는 pickSubjectBox 로 0~1 클램프·최소변 검증, 유효할 때만 반영(아니면 필드 생략).
  * 유효 항목이 0개면 null 반환(소비 측이 폴백).
  */
 export function validatePhotoAnalysis(
@@ -490,6 +527,8 @@ export function validatePhotoAnalysis(
     }
     if (typeof item.blurry === "boolean") result.blurry = item.blurry
     if (typeof item.dark === "boolean") result.dark = item.dark
+    const subjectBox = pickSubjectBox(item.subjectBox)
+    if (subjectBox) result.subjectBox = subjectBox
 
     seen.add(imageId)
     out.push(result)
@@ -533,6 +572,77 @@ export function extractJson(text: string): unknown {
     return JSON.parse(cleaned)
   } catch {
     throw new Error("INVALID_JSON")
+  }
+}
+
+/* ───────────────── v5.1: 자가 검수 검증 ───────────────── */
+
+/** severity 화이트리스트 — 이 외의 값은 항목 드롭(신뢰 불가). */
+const SELF_REVIEW_SEVERITIES = ["high", "medium", "low"] as const
+const SELF_REVIEW_SEVERITY_SET: ReadonlySet<string> = new Set(SELF_REVIEW_SEVERITIES)
+
+/** 자가 검수 필드 길이/개수 상한 (v5.1: 코드에서도 강제 절삭). */
+const SELF_REVIEW_LIMITS = {
+  area: 40,
+  message: 120,
+  suggestion: 80,
+  overall: 120,
+  maxIssues: 6,
+} as const
+
+/**
+ * v5.1: 자가 검수 결과 화이트리스트 검증.
+ * - raw 는 { overall, issues: [...] } 형태만 허용(배열 아님).
+ * - severity 는 화이트리스트(high/medium/low) 밖이면 항목 드롭.
+ * - area 40자 / message 120자 / suggestion 80자 절삭(경계 되돌림 포함).
+ * - message 가 비면 항목 드롭(핵심 필드). area 는 비어도 통과(빈 문자열 허용).
+ * - suggestion 은 비면 키 생략(옵셔널 — 소비 측이 조치 버튼 미노출).
+ * - 유효 지적 최대 6건.
+ * - 반환 규칙(v5.1.1): null=검수 실패(형식 위반)와 issues:[]=AI가 '지적 없음'을 명시한
+ *   정상 응답(깨끗함)을 구분해 돌려준다 — 후자를 실패로 오표시하지 않기 위함.
+ *   · raw.issues 가 배열이 아니면(누락·형 오류) 형식 위반 → null.
+ *   · raw.issues 가 빈 배열([]) → issues:[] 성공(소비 측이 '특별히 지적할 점 없음' 렌더).
+ *   · raw.issues 에 항목이 있었으나 전부 형식 위반으로 드롭 → 신뢰 불가 → null.
+ */
+export function validateSelfReview(raw: unknown): SelfReviewResult | null {
+  if (!isObject(raw)) return null
+  if (Object.keys(raw).some((k) => FORBIDDEN_KEYS.has(k))) return null
+
+  // issues 필드가 배열이 아니면(누락·형 오류) 응답 형식 위반 — null(실패)로 폴백.
+  if (!Array.isArray(raw.issues)) return null
+  const rawIssues = raw.issues
+
+  const issues: SelfReviewIssue[] = []
+  for (const item of rawIssues) {
+    if (issues.length >= SELF_REVIEW_LIMITS.maxIssues) break
+    if (!isObject(item)) continue
+    if (Object.keys(item).some((k) => FORBIDDEN_KEYS.has(k))) continue
+
+    const severity = safeString(item.severity).toLowerCase()
+    if (!SELF_REVIEW_SEVERITY_SET.has(severity)) continue
+
+    const message = trimTo(safeString(item.message), SELF_REVIEW_LIMITS.message)
+    if (!message) continue
+
+    const issue: SelfReviewIssue = {
+      severity: severity as SelfReviewIssue["severity"],
+      area: trimTo(safeString(item.area), SELF_REVIEW_LIMITS.area),
+      message,
+    }
+    const suggestion = trimTo(safeString(item.suggestion), SELF_REVIEW_LIMITS.suggestion)
+    if (suggestion) issue.suggestion = suggestion
+
+    issues.push(issue)
+  }
+
+  // 지적을 냈는데 전부 형식 위반으로 드롭됐다면 신뢰 불가 응답 — null(실패)로 폴백.
+  if (issues.length === 0 && rawIssues.length > 0) return null
+
+  // 여기 도달 시 issues 가 0건일 수 있다: rawIssues 가 빈 배열([]) = AI가 '지적 없음'을
+  // 명시한 정상 응답. null(실패)과 구분해 빈 결과를 반환한다(소비 측이 '깨끗함' 렌더).
+  return {
+    issues,
+    overall: trimTo(safeString(raw.overall), SELF_REVIEW_LIMITS.overall),
   }
 }
 

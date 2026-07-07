@@ -6,7 +6,9 @@ import { KeywordPicker } from "./KeywordPicker"
 import { ResultView, emptyCopy, type LayoutVariant } from "./ResultView"
 import { SeasonHint } from "./SeasonHint"
 import { SellingPointsSuggester } from "./SellingPointsSuggester"
+import { SelfReviewPanel } from "./SelfReviewPanel"
 import { getAIProvider } from "@/lib/ai/provider"
+import { captureArtboardSegments } from "@/lib/exporters/artboard-segments"
 import type {
   CopyInput,
   CopyOutput,
@@ -15,6 +17,7 @@ import type {
   PhotoAnalysisItem,
   PhotoAnalysisResult,
   ProductCategory,
+  SelfReviewResult,
   SellerReview,
   TrustInfo,
   UsageInfo,
@@ -398,6 +401,18 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   const [lastUsage, setLastUsage] = useState<UsageInfo | null>(null)
   /** 섹션 재생성 진행 중인 섹션 (null이면 idle) */
   const [busySection, setBusySection] = useState<SectionId | null>(null)
+  /**
+   * v5.1: AI 자가 검수 — 세션 상태만(Work 저장 안 함, 카피 조치하면 낡음).
+   * - reviewing: 캡처+검수 진행 중(버튼 disabled).
+   * - reviewResult: 마지막 검수 리포트(패널 노출). 재생성/재시도/조치 시 초기화.
+   * - reviewFailed: 캡처/검수 실패 알림(다시 시도 유도).
+   * - reviewUsage: 검수 토큰/비용 누적(v5.1.1) — '이번 생성'(카피 생성) 비용과 분리해
+   *   별도 라인에 표시. 재검수 클릭이 '이번 생성' 라인을 부풀리는 의미 오염을 막는다.
+   */
+  const [reviewing, setReviewing] = useState(false)
+  const [reviewResult, setReviewResult] = useState<SelfReviewResult | null>(null)
+  const [reviewFailed, setReviewFailed] = useState(false)
+  const [reviewUsage, setReviewUsage] = useState<UsageInfo | null>(null)
   /** 현재 작업 ID — 저장/업데이트에 사용 */
   const [workId, setWorkId] = useState<string | null>(null)
   /** 복원 시 생성된 objectURL — 언마운트 시 일괄 해제 */
@@ -733,6 +748,10 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
     }
 
     setErrorMsg(null)
+    // v5.1: 새 생성 시작 — 이전 검수 리포트·비용은 낡으므로 폐기.
+    setReviewResult(null)
+    setReviewFailed(false)
+    setReviewUsage(null)
     setStage("generating")
     setGenerationStep(0)
     const stepTimer = setInterval(() => {
@@ -1049,10 +1068,60 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       const merged = mergeSection(result, patch)
       setResult(merged)
       handleCopyChange(merged)
+      // v5.1: 카피가 바뀌면 이전 검수 리포트·비용은 낡으므로 폐기.
+      setReviewResult(null)
+      setReviewFailed(false)
+      setReviewUsage(null)
     } catch (e) {
       console.error("[regenerateSection]", e)
     } finally {
       setBusySection(null)
+    }
+  }
+
+  /**
+   * v5.1: AI 자가 검수 — 아트보드(.fdp-print)를 저해상 세그먼트로 캡처해
+   * reviewArtboard 로 넘긴 뒤 리포트를 세션 상태에 담는다. usage 비용은 lastUsage 에 합산.
+   * 캡처 빈 배열·null 응답·예외는 모두 "검수 실패" 알림으로 폴백(흐름 차단 없음).
+   */
+  const handleSelfReview = async () => {
+    if (reviewing || !result) return
+    setReviewFailed(false)
+    const root =
+      typeof document !== "undefined"
+        ? document.querySelector<HTMLElement>(".fdp-print")
+        : null
+    if (!root) {
+      setReviewFailed(true)
+      return
+    }
+    setReviewing(true)
+    try {
+      // v5.1.1: 다운로드 기본 프리셋(스마트스토어 860px, ExportPanel 기본값)과 동일한
+      // 레이아웃 폭으로 캡처 — 검수가 보는 리플로우를 실제 다운로드 결과물과 정렬한다.
+      const segments = await captureArtboardSegments(root, { layoutWidth: 860 })
+      if (segments.length === 0) {
+        setReviewFailed(true)
+        return
+      }
+      const review = await getAIProvider().reviewArtboard(segments, {
+        productType: resultMeta?.productName ?? productName.trim(),
+      })
+      if (!review) {
+        setReviewFailed(true)
+        return
+      }
+      setReviewResult(review)
+      setReviewFailed(false)
+      // v5.1.1: 검수 usage 는 '이번 생성'(카피 생성) 비용과 분리해 별도 라인에 누적한다.
+      // (같은 아트보드 재검수 클릭이 '이번 생성' 비용을 부풀리는 의미 오염 방지 — 투명성 유지.)
+      const u = review.usage
+      if (u) setReviewUsage((prev) => (prev ? mergeUsage(prev, u) : u))
+    } catch (e) {
+      console.error("[selfReview]", e)
+      setReviewFailed(true)
+    } finally {
+      setReviewing(false)
     }
   }
 
@@ -1062,6 +1131,10 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
     setResultMeta(null)
     setCurrentInput(null)
     setWorkId(null)
+    // v5.1: 검수 리포트·비용도 초기화.
+    setReviewResult(null)
+    setReviewFailed(false)
+    setReviewUsage(null)
   }
 
   if (stage === "restoring") {
@@ -1844,6 +1917,90 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
           {" · 약 ₩"}
           {Math.max(1, Math.round(lastUsage.estimatedCostKRW)).toLocaleString()}
         </div>
+      )}
+
+      {/*
+        v5.1.1: AI 검수 비용은 '이번 생성'과 별도 라인. 같은 아트보드를 여러 번 검수하면
+        여기에 누적 표시되어 실제 지출을 반영하되, '이번 생성' 비용은 오염되지 않는다.
+      */}
+      {result && reviewUsage && (
+        <div
+          className="fdp-no-print"
+          style={{
+            padding: "8px 14px",
+            marginBottom: 12,
+            background: "var(--color-bg-surface)",
+            border: "1px solid var(--color-neutral-300)",
+            borderRadius: "var(--radius-xs)",
+            color: "var(--color-neutral-700)",
+            fontSize: 12,
+            textAlign: "right",
+          }}
+        >
+          AI 검수: 토큰 {(reviewUsage.inputTokens + reviewUsage.outputTokens).toLocaleString()}
+          {" · 약 ₩"}
+          {Math.max(1, Math.round(reviewUsage.estimatedCostKRW)).toLocaleString()}
+        </div>
+      )}
+
+      {/* v5.1: AI 자가 검수 — 결과가 있을 때만. 아트보드 밖 + fdp-no-print(JPG 미포함). */}
+      {result && (
+        <div
+          className="fdp-no-print"
+          style={{
+            marginBottom: 12,
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => void handleSelfReview()}
+            disabled={isGenerating || reviewing}
+            style={{
+              alignSelf: "flex-end",
+              padding: "9px 16px",
+              background: "var(--color-bg-surface)",
+              color:
+                isGenerating || reviewing
+                  ? "var(--color-neutral-400)"
+                  : "var(--color-primary-600)",
+              border: `1px solid ${
+                isGenerating || reviewing
+                  ? "var(--color-neutral-300)"
+                  : "var(--color-primary-600)"
+              }`,
+              borderRadius: "var(--radius-xs)",
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: isGenerating || reviewing ? "not-allowed" : "pointer",
+            }}
+          >
+            🔍 {reviewing ? "AI 검수 중…" : "AI 검수"}
+          </button>
+          {reviewFailed && (
+            <div
+              role="alert"
+              style={{
+                padding: "8px 12px",
+                background: "var(--color-danger-tint)",
+                border: "1px solid var(--color-danger)",
+                borderRadius: "var(--radius-xs)",
+                color: "var(--color-danger)",
+                fontSize: 12,
+                lineHeight: 1.5,
+                textAlign: "right",
+              }}
+            >
+              검수에 실패했어요, 다시 시도해 주세요
+            </div>
+          )}
+        </div>
+      )}
+
+      {result && reviewResult && (
+        <SelfReviewPanel result={reviewResult} onClose={() => setReviewResult(null)} />
       )}
 
       <ResultView

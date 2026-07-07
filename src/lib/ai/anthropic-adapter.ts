@@ -19,6 +19,7 @@ import {
   type ModelId,
   type PhotoAnalysisResult,
   type ResearchResult,
+  type SelfReviewResult,
   type SuggestPointsInput,
   type SuggestPointsResult,
   type SuggestKeywordsResult,
@@ -49,6 +50,11 @@ import {
   PHOTO_ANALYSIS_MAX_TOKENS,
 } from "./prompts/photo-analysis"
 import {
+  buildSelfReviewMessages,
+  SELF_REVIEW_SYSTEM_PROMPT,
+  SELF_REVIEW_MAX_TOKENS,
+} from "./prompts/self-review"
+import {
   estimateInputCostKRW,
   estimateOutputCostKRW,
   estimateWebSearchCostKRW,
@@ -58,6 +64,7 @@ import {
   validateCopyOutput,
   validatePhotoAnalysis,
   validateResearchResult,
+  validateSelfReview,
 } from "./validate"
 import { t } from "@/lib/i18n"
 
@@ -477,6 +484,61 @@ export class AnthropicAdapter implements AIProvider {
     } catch (err) {
       // 사진 분석 실패는 절대 치명적이지 않다 — 조용히 null 폴백.
       console.warn("[analyzePhotos] failed, returning null:", err)
+      return null
+    }
+  }
+
+  /**
+   * v5.1: 완성 아트보드 세그먼트(JPG dataURL) vision 검수 (1콜) — 시각 위생 지적 2~6건 + 잘한 점.
+   * 관점 5개(여백·정렬 / 사진 품질·배치 / 텍스트 겹침·잘림 / 색 부조화 / 섹션 리듬)로 시각만 평가.
+   *
+   * **어떤 실패든(빈 입력·이미지 0장·API 에러·빈 응답·JSON 파싱 실패·유효 지적 0개) null 반환.**
+   * 절대 throw 로 흐름을 막지 않는다 — 자가 검수는 선택적 부가 신호일 뿐.
+   */
+  async reviewArtboard(
+    segments: { label: string; dataUrl: string }[],
+    context: { productType: string },
+  ): Promise<SelfReviewResult | null> {
+    if (!Array.isArray(segments) || segments.length === 0) return null
+    // dataURL 이미지가 하나도 없으면 보낼 게 없다 — 조용히 null(무의미한 호출·환각 방지).
+    const withImages = segments.filter(
+      (s) => s && typeof s.dataUrl === "string" && s.dataUrl.startsWith("data:"),
+    )
+    if (withImages.length === 0) return null
+
+    try {
+      const client = await this.createClient()
+      const res = await client.messages.create({
+        model: this.modelId,
+        system: SELF_REVIEW_SYSTEM_PROMPT,
+        max_tokens: SELF_REVIEW_MAX_TOKENS,
+        messages: buildSelfReviewMessages(withImages, context),
+      })
+
+      const textBlock = res.content.find((c) => c.type === "text")
+      if (!textBlock || textBlock.type !== "text") return null
+
+      const review = validateSelfReview(extractJson(textBlock.text))
+      if (!review) return null
+
+      const inputTokens = res.usage?.input_tokens ?? 0
+      const outputTokens = res.usage?.output_tokens ?? 0
+      const estimatedCostKRW =
+        estimateInputCostKRW(this.modelId, inputTokens) +
+        estimateOutputCostKRW(this.modelId, outputTokens)
+
+      return {
+        ...review,
+        usage: {
+          inputTokens,
+          outputTokens,
+          estimatedCostKRW: Number.isFinite(estimatedCostKRW) ? estimatedCostKRW : 0,
+          truncated: res.stop_reason === "max_tokens",
+        },
+      }
+    } catch (err) {
+      // 자가 검수 실패는 절대 치명적이지 않다 — 조용히 null 폴백.
+      console.warn("[reviewArtboard] failed, returning null:", err)
       return null
     }
   }
