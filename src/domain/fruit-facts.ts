@@ -917,3 +917,34 @@ export function getStorageInfo(productName: string): FruitStorage | null {
 export function isRawEdible(productName: string): boolean {
   return getFact(productName)?.rawEdible !== false
 }
+
+/**
+ * 배송 문구 변주용 "보관 성격" 페르소나 (v5.3 작업6).
+ *
+ * 붙박이 배송 문구(4단계 스텝·배송 안내 문단)가 딸기/복숭아처럼 자구까지 동일해
+ * 복붙 티가 나는 문제를, 이미 있는 fruit-facts 데이터로 결정적으로 갈라주기 위한 키.
+ * AI 호출 없이(무료·결정적) storage 데이터만 본다. 사전에 없으면 null → 호출부는 현행 기본 문구.
+ *
+ * 판정(순서 중요):
+ *  - "ripen"(후숙형): 실온 후숙이 보관 mode이거나(멜론·키위·망고·바나나·파인애플 계열),
+ *    보관 note/주의에 '후숙'이 명시된 품목(복숭아·자두 — mode는 fridge지만 단단하게 발송).
+ *    → 딸기(즉시)와 복숭아(후숙)를 갈라내는 핵심 축.
+ *  - "room"(실온형): mode === "room"이고 후숙 힌트 없음(매실 등).
+ *  - "chill"(즉시냉장형): mode === "fridge"이고 후숙 힌트 없음(딸기·사과·포도·감귤 등).
+ *
+ * ⚠️ 이 페르소나는 "표현 변주 선택 키"일 뿐 — 산지·당도·수확일 같은 사실 창작 근거가 아니다.
+ */
+export type DeliveryPersona = "ripen" | "chill" | "room"
+export function getDeliveryPersona(productName: string): DeliveryPersona | null {
+  const fact = getFact(productName)
+  if (!fact) return null
+  const st = fact.storage
+  const ripenHinted =
+    st.mode === "ripen-then-fridge" ||
+    (st.note?.includes("후숙") ?? false) ||
+    fact.cautions.some((c) => c.includes("후숙"))
+  if (ripenHinted) return "ripen"
+  if (st.mode === "room") return "room"
+  if (st.mode === "fridge") return "chill"
+  return null
+}

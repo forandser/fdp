@@ -127,6 +127,18 @@ export interface ResearchResult {
 export interface SellerReview {
   text: string
   highlight?: string
+  /**
+   * 별점(1~5 정수). 셀러가 실제 받은 후기의 별점만 입력 — 자동 채움·기본값 금지.
+   * 미입력(undefined)이면 별점 자체를 렌더하지 않는다(지어내기 방지·구버전 회귀 0).
+   */
+  rating?: number
+  /**
+   * 작성자 표기 — 셀러가 마스킹해 직접 입력(예: 김**). 미입력이면 표기 생략.
+   * 개인정보 보호상 실명 금지 안내는 입력 UI 힌트가 담당한다.
+   */
+  author?: string
+  /** 구매 옵션 라벨(예: 3kg). 후기 신뢰용 메타 표기. 미입력이면 생략. */
+  optionLabel?: string
 }
 
 /** 신뢰 옵션 — 셀러가 직접 체크/입력한 사실. AI가 임의로 추가 못 함. */

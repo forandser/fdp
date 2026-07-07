@@ -782,11 +782,22 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       : undefined
 
     // 고객 후기 — 본문 있는 것만(최대 3개), 200자 컷. 셀러 직접 입력(AI 생성 아님).
+    // v5.3(작업3): 신뢰 메타 3종(별점·작성자·옵션)도 함께 정제. 전부 선택 —
+    // 미입력/무효 값은 undefined로 떨어져 렌더·저장·백업에서 표기 자체가 생략된다(지어내기 방지).
     const cleanReviews: SellerReview[] = reviews
-      .map((r) => ({
-        text: r.text.trim().slice(0, 200),
-        highlight: r.highlight?.trim().slice(0, 200) || undefined,
-      }))
+      .map((r) => {
+        const rating =
+          Number.isInteger(r.rating) && (r.rating as number) >= 1 && (r.rating as number) <= 5
+            ? (r.rating as number)
+            : undefined
+        return {
+          text: r.text.trim().slice(0, 200),
+          highlight: r.highlight?.trim().slice(0, 200) || undefined,
+          rating,
+          author: r.author?.trim().slice(0, 20) || undefined,
+          optionLabel: r.optionLabel?.trim().slice(0, 30) || undefined,
+        }
+      })
       .filter((r) => r.text.length > 0)
       .slice(0, 3)
 
@@ -2442,6 +2453,111 @@ function ReviewsInput({
               }}
             >
               {c.highlightHint}
+            </p>
+
+            {/* v5.3(작업3): 신뢰 메타 3종(별점·작성자·옵션) — 전부 선택. 지어내기 금지. */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span
+                style={{
+                  fontSize: "var(--font-size-xs)",
+                  fontWeight: 600,
+                  color: "var(--color-neutral-700)",
+                }}
+              >
+                {c.ratingLabel}
+              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {/* 탭하기 쉬운 별 5개 버튼 — 누른 별까지 채움. 같은 별 재탭이면 해제. */}
+                {[1, 2, 3, 4, 5].map((n) => {
+                  const active = (r.rating ?? 0) >= n
+                  return (
+                    <button
+                      key={`star-${i}-${n}`}
+                      type="button"
+                      aria-label={`${n}점`}
+                      onClick={() =>
+                        update(i, { rating: r.rating === n ? undefined : n })
+                      }
+                      style={{
+                        background: "none",
+                        border: "none",
+                        padding: "2px 3px",
+                        cursor: "pointer",
+                        fontSize: 22,
+                        lineHeight: 1,
+                        color: active ? "#F59F00" : "var(--color-neutral-300)",
+                      }}
+                    >
+                      {active ? "★" : "☆"}
+                    </button>
+                  )
+                })}
+                {r.rating != null && (
+                  <button
+                    type="button"
+                    onClick={() => update(i, { rating: undefined })}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "var(--color-neutral-500)",
+                      fontSize: "var(--font-size-xs)",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      padding: "2px 4px",
+                    }}
+                  >
+                    {c.ratingClear}
+                  </button>
+                )}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 0 }}>
+                <span
+                  style={{
+                    fontSize: "var(--font-size-xs)",
+                    fontWeight: 600,
+                    color: "var(--color-neutral-700)",
+                  }}
+                >
+                  {c.authorLabel}
+                </span>
+                <input
+                  type="text"
+                  value={r.author ?? ""}
+                  onChange={(e) => update(i, { author: e.target.value.slice(0, 20) })}
+                  placeholder={c.authorPh}
+                  style={inputStyle}
+                />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 0 }}>
+                <span
+                  style={{
+                    fontSize: "var(--font-size-xs)",
+                    fontWeight: 600,
+                    color: "var(--color-neutral-700)",
+                  }}
+                >
+                  {c.optionLabel}
+                </span>
+                <input
+                  type="text"
+                  value={r.optionLabel ?? ""}
+                  onChange={(e) => update(i, { optionLabel: e.target.value.slice(0, 30) })}
+                  placeholder={c.optionPh}
+                  style={inputStyle}
+                />
+              </label>
+            </div>
+            <p
+              style={{
+                fontSize: 10,
+                color: "var(--color-neutral-500)",
+                margin: 0,
+                lineHeight: 1.4,
+              }}
+            >
+              {c.metaHint}
             </p>
           </div>
         ))}

@@ -39,6 +39,8 @@ import {
   getBrixRange,
   getStorageInfo,
   isRawEdible,
+  // v5.3(작업6): 붙박이 배송 문구를 과일 보관 성격으로 결정적 변주하기 위한 페르소나.
+  getDeliveryPersona,
   // v4.9-A: 비주얼 DNA(팔리는 비주얼 각도 + 모티프 키). 타 에이전트가 fruit-facts.ts 에
   // 정의 중 — import 해서 소비만. 심볼 미존재 시 tsc 에서 잡히면 노트만(교차 계약).
   getVisualDNA,
@@ -369,6 +371,26 @@ const LAYOUT_TOKENS: Record<LayoutVariant, LayoutTokens> = {
     altSectionBg: () => "#FFFFFF",
     ruleColor: (a) => a.accent,
   },
+}
+
+/* ============================================================ */
+/* v5.3 세로 간격 2단 토큰 — 길이 단축 주력(제1원칙: 길이 예산).    */
+/* ------------------------------------------------------------ */
+/* 기존엔 대부분 섹션이 균일 대형 세로 패딩(80~112px)이라 챕터   */
+/* 내부·경계 구분 없이 페이지가 무한정 늘어났다. 이를 2단으로:    */
+/*  - band: 챕터 경계(새 주제 시작) — 시원한 여백                */
+/*  - flow: 챕터 내부(직전 블록과 한 묶음) — 촘촘한 여백          */
+/* 값은 세로 패딩 px(가로는 각 블록 기존값 유지). 어떤 블록도     */
+/* 기존 대비 순증하지 않고 대부분 축소된다.                       */
+/* ============================================================ */
+const SECTION_Y = {
+  band: { m: 44, d: 72 },
+  flow: { m: 30, d: 48 },
+} as const
+/** 섹션 세로 패딩 값(px) — tier·매체별. 가로 패딩은 호출부에서 기존값 그대로 조합한다. */
+function padY(tier: "band" | "flow", isMobile: boolean): number {
+  const v = SECTION_Y[tier]
+  return isMobile ? v.m : v.d
 }
 
 /**
@@ -1773,7 +1795,8 @@ function CtaPill({ text, isMobile, editId }: { text: string; isMobile: boolean; 
           style={{
             color: accent.dark,
             textDecoration: "underline wavy",
-            textDecorationColor: accent.accent,
+            // v5.3 듀오톤: 물결 밑줄만 보조 그린(잎 톤)으로 — 소면적 장식 한정.
+            textDecorationColor: accent.secondary,
             textDecorationThickness: isMobile ? 2 : 3,
             textUnderlineOffset: isMobile ? 5 : 8,
           }}
@@ -1801,7 +1824,8 @@ function CtaPill({ text, isMobile, editId }: { text: string; isMobile: boolean; 
         textAlign: "center",
       }}
     >
-      {/* 좌측 잎사귀형 accent 점 — 버튼이 아니라 캡션임을 시각적으로 알린다 */}
+      {/* 좌측 잎사귀형 점 — 버튼이 아니라 캡션임을 시각적으로 알린다.
+          v5.3 듀오톤: 잎사귀 은유에 맞춰 보조 그린으로(소면적 장식). */}
       <span
         aria-hidden
         style={{
@@ -1809,7 +1833,7 @@ function CtaPill({ text, isMobile, editId }: { text: string; isMobile: boolean; 
           width: isMobile ? 10 : 16,
           height: isMobile ? 10 : 16,
           borderRadius: "50%",
-          background: accent.accent,
+          background: accent.secondary,
         }}
       />
       <span>
@@ -1877,7 +1901,8 @@ function DeliveryPromiseBand({ isMobile, trust }: { isMobile: boolean; trust?: T
                     fontWeight: 900,
                     color: accent.dark,
                     textDecoration: "underline wavy",
-                    textDecorationColor: accent.accent,
+                    // v5.3 듀오톤: 물결 밑줄만 보조 그린(잎 톤).
+                    textDecorationColor: accent.secondary,
                     textDecorationThickness: 2,
                     textUnderlineOffset: isMobile ? 4 : 6,
                   }}
@@ -2081,7 +2106,18 @@ export function ResultView({
     return reviews
       .filter((r) => r && r.text.trim().length > 0)
       .slice(0, 3)
-      .map((r) => ({ text: r.text.trim(), highlight: r.highlight?.trim() || undefined }))
+      .map((r) => ({
+        text: r.text.trim(),
+        highlight: r.highlight?.trim() || undefined,
+        // v5.3(작업3): 신뢰 메타 3종을 렌더까지 통과. 무효 별점(범위 밖·비정수)은 드롭 —
+        // 표기 자체를 생략해 지어내기·구버전 회귀를 막는다.
+        rating:
+          Number.isInteger(r.rating) && (r.rating as number) >= 1 && (r.rating as number) <= 5
+            ? (r.rating as number)
+            : undefined,
+        author: r.author?.trim() || undefined,
+        optionLabel: r.optionLabel?.trim() || undefined,
+      }))
   }, [reviews])
 
   const missing = useMemo(() => {
@@ -2659,12 +2695,12 @@ export function ResultView({
             <DotDivider />
 
             {/* v2.8: 8b. 신선함을 잇는 4단계 (수플린 배송 흐름 레퍼런스) */}
-            <DeliveryFlowBlock trust={trust} isMobile={isMobile} />
+            <DeliveryFlowBlock trust={trust} isMobile={isMobile} productName={productName} />
 
             <DotDivider />
 
             {/* 9. DELIVERY (정형 텍스트 상세) — 당일 발송 문구는 trust 체크 시에만 */}
-            <DeliveryBlock isMobile={isMobile} trust={trust} />
+            <DeliveryBlock isMobile={isMobile} trust={trust} productName={productName} />
 
             <DotDivider />
 
@@ -2953,7 +2989,7 @@ function RecipeBlock({
 
   const name = productName.trim() || "이 상품"
   return (
-    <div style={{ padding: isMobile ? "44px 24px" : "80px 44px", background: "#FFFFFF" }}>
+    <div style={{ padding: `${padY("flow", isMobile)}px ${isMobile ? 24 : 44}px`, background: "#FFFFFF" }}>
       <div style={{ textAlign: "center", marginBottom: isMobile ? 24 : 40 }}>
         <h2
           style={{
@@ -3235,6 +3271,16 @@ function BrandTopLabel({ brand, isMobile }: { brand: BrandSnapshot; isMobile: bo
   )
 }
 
+/**
+ * v5.3 히어로 훅 승격용 상품명 정규화 — 공백·기호·구두점을 제거하고 소문자화해
+ * "헤드라인이 사실상 상품명인가"를 관대하게 비교한다(예: "달콤 사과!" ≈ "달콤사과").
+ * 조사까지 벗기면 오히려 진짜 훅을 상품명으로 오판할 수 있어 여기선 하지 않는다(엄격 비교).
+ * 결정적(순수 함수, 랜덤/시간 없음).
+ */
+function normalizeNameForCompare(s: string): string {
+  return s.replace(/[\s\p{P}\p{S}]/gu, "").toLowerCase()
+}
+
 function HeroBlock({
   heroImage,
   copy,
@@ -3277,10 +3323,18 @@ function HeroBlock({
   const heroJustify = layout.heroAlign === "left" ? "flex-start" : "center"
   // C12: origin이 "국내산/수입산/해외산"류(특정 지역 아님)면 "From. {origin}" 배지 숨김.
   const showOriginBadge = !!originText && !isGenericOrigin(originText)
-  // v5.0 킥커(후킹 캡션): heroKicker(B 에이전트 생성) 우선, 없으면 기존 "오늘도 신선한 {name}".
-  // 지어내지 않음 — 둘 다 없으면 킥커 미노출. 편집 슬롯 id는 "hero.caption" 그대로 유지.
-  const kickerText = (copy.heroKicker?.trim() || (name ? `오늘도 신선한 ${name}` : "")).trim()
+  // v5.3 킥커(후킹 캡션): heroKicker(B 에이전트 생성) 우선. 없으면 상품명 없는 완곡 기본 문구로
+  // — 첫 화면 상품명 3회 반복(From 배지·캡션·헤드라인) 중 캡션발 중복을 제거한다. 상품명이
+  // 없어도(빈 입력) 항상 노출 가능. 편집 슬롯 id는 "hero.caption" 그대로(기존 오버라이드 유지).
+  const kickerText = (copy.heroKicker?.trim() || "오늘도 신선하게").trim()
   const showKicker = kickerText.length > 0
+  // v5.3 히어로 훅 승격 판정 — 헤드라인이 상품명과 "사실상 동일"(공백·기호 제거 정규화 비교)이고
+  // 승격할 훅(subheadline)이 있으면, 훅을 메인 타이포로 올리고 상품명은 From 배지와 묶은 보조
+  // 라인으로 강등한다. 헤드라인이 이미 훅 문장이면(정규화 불일치) promoteHook=false → 현행 유지.
+  const headlineNorm = normalizeNameForCompare(copy.headline ?? "")
+  const nameNorm = normalizeNameForCompare(name)
+  const hookText = copy.subheadline?.trim() ?? ""
+  const promoteHook = nameNorm.length > 0 && headlineNorm === nameNorm && hookText.length > 0
   return (
     <div style={{ background: "#FFFFFF" }}>
       {/* v2.9: 상단 캡션 + 대형 헤드 (수플린 레퍼런스 — 헤드가 이미지 위) */}
@@ -3300,8 +3354,10 @@ function HeroBlock({
           <HeroMotifScatter kind={motifKind} accent={accent} isMobile={isMobile} />
         )}
         {/* v5.0 위계: From 배지(상단) → 넉넉한 여백 → 킥커(rule 선 동반) → 좁은 간격 → 헤드라인.
-            "킥커 위 여백 > 킥커–헤드라인 간격"으로 킥커+헤드라인을 한 쌍으로 묶는다. */}
-        {showOriginBadge && (
+            "킥커 위 여백 > 킥커–헤드라인 간격"으로 킥커+헤드라인을 한 쌍으로 묶는다.
+            v5.3: 훅 승격 모드에선 From 배지를 상단에 단독으로 두지 않고, 강등된 상품명과
+            한 보조 라인으로 묶어 헤드라인(=훅) 아래에 배치한다(중복 정리). */}
+        {showOriginBadge && !promoteHook && (
           <div
             style={{
               display: "flex",
@@ -3379,29 +3435,93 @@ function HeroBlock({
             </span>
           </div>
         )}
+        {/* 메인 타이포 — 비승격: 헤드라인(path=["headline"]). 승격: 훅(path=["subheadline"])을
+            메인 자리로 올린다. 어느 쪽이든 인라인 편집이 "실제로 올라온 필드"를 고쳐야 한다. */}
         <h1
           style={{
-            fontSize: isMobile ? 48 : 80,
+            // v5.3: 훅 승격 시 훅(문장형, maxLength 60)을 상품명 헤드라인 크기(80/48)로 올리면
+            // 한 줄을 넘는 훅에서 히어로 높이가 순증한다(제1원칙 위반). 승격 훅은 베이스라인
+            // 서브카피와 같은 크기(36/20)·같은 본문 폰트로 렌더해 줄 수를 동일하게 묶고 행간만
+            // 촘촘하게(1.35<1.6) 한다 → 상품명 h1(80/48) 제거분에서 강등 상품명 라인(28/17)을
+            // 빼도 남는 여유로, 어떤 입력에서도 히어로 높이가 순증하지 않는다. 비승격은 종전 그대로.
+            fontSize: promoteHook ? (isMobile ? 20 : 36) : isMobile ? 48 : 80,
             fontWeight: layout.headingWeight,
             margin: 0,
             color: INK,
-            lineHeight: 1.14,
-            letterSpacing: isMobile ? -1.2 : -2,
-            fontFamily: layout.headingFontFamily,
+            lineHeight: promoteHook ? 1.35 : 1.14,
+            letterSpacing: promoteHook ? (isMobile ? -0.2 : -0.5) : isMobile ? -1.2 : -2,
+            fontFamily: promoteHook ? BODY_FONT : layout.headingFontFamily,
             ...WRAP_BALANCE,
           }}
         >
           <EditableResultText
             copy={copy}
             onChange={onCopyChange}
-            path={["headline"]}
-            maxLength={40}
-            placeholder={factPlaceholder?.headline ?? "여기에 상품 헤드라인을 적어보세요"}
+            path={promoteHook ? ["subheadline"] : ["headline"]}
+            maxLength={promoteHook ? 60 : 40}
+            placeholder={
+              promoteHook
+                ? factPlaceholder?.sub ?? "여기에 서브 카피를 적어보세요"
+                : factPlaceholder?.headline ?? "여기에 상품 헤드라인을 적어보세요"
+            }
             renderDisplay={(v) => renderHeadlineAccent(v, accent.accent)}
           />
         </h1>
 
-        {/* 헤드라인 후보 칩 — 편집 전용(data-edit-chrome → JPG 캡처 제외). */}
+        {/* v5.3 승격 모드: 상품명(=headline 필드)을 From 배지와 묶은 보조 라인으로 강등.
+            상품명 인라인 편집·후보 칩이 계속 headline 필드를 편집하도록 path=["headline"] 유지. */}
+        {promoteHook && (
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: isMobile ? 8 : 12,
+              justifyContent: heroJustify,
+              marginTop: isMobile ? 14 : 20,
+            }}
+          >
+            {showOriginBadge && (
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  padding: isMobile ? "4px 12px" : "6px 16px",
+                  borderRadius: 999,
+                  background: accent.accent,
+                  color: "#FFFFFF",
+                  fontSize: isMobile ? 13 : 20,
+                  fontWeight: 800,
+                  letterSpacing: 0.5,
+                  fontFamily: BODY_FONT,
+                }}
+              >
+                From. {originText}
+              </span>
+            )}
+            <span
+              style={{
+                fontSize: isMobile ? 17 : 28,
+                color: SUB,
+                fontWeight: 700,
+                letterSpacing: -0.3,
+                fontFamily: BODY_FONT,
+                wordBreak: "keep-all",
+              }}
+            >
+              <EditableResultText
+                copy={copy}
+                onChange={onCopyChange}
+                path={["headline"]}
+                maxLength={40}
+                placeholder={factPlaceholder?.headline ?? "상품명"}
+              />
+            </span>
+          </div>
+        )}
+
+        {/* 헤드라인 후보 칩 — 편집 전용(data-edit-chrome → JPG 캡처 제외). 승격 여부와 무관하게
+            항상 headline 필드를 교체한다(승격 시 강등된 상품명 라인을 바꾼다). */}
         <HeadlineCandidateChips
           candidates={headlineCandidates}
           currentHeadline={copy.headline}
@@ -3410,8 +3530,18 @@ function HeroBlock({
         />
       </div>
 
-      {/* 대표 이미지 */}
-      <div style={{ position: "relative", background: layout.heroBg(accent) }}>
+      {/* 대표 이미지 — v5.3 네거티브 오버랩: 사진을 타이틀 밴드 하단 여백 위로 살짝 끌어올려
+          (marginTop 음수 + zIndex) 타이틀 블록↔사진 사이 밴드 분절감을 없앤다. 겹침이라 총높이는
+          오히려 줄어든다(길이 예산). 사진 상단 라운드로 "밴드 위로 솟은 사진 어깨" 연출. 스티커·
+          반짝(absolute)은 컨테이너에 overflow 를 걸지 않고 img 자체 라운드로 클립해 잘리지 않게 한다. */}
+      <div
+        style={{
+          position: "relative",
+          zIndex: 1,
+          marginTop: isMobile ? -20 : -28,
+          background: layout.heroBg(accent),
+        }}
+      >
         {/* 기울어진 당도 스티커(지시3) — brix 입력이 있을 때만. 사실 데이터만. */}
         {brix != null && (
           <div
@@ -3439,7 +3569,8 @@ function HeroBlock({
                 display: "inline-flex",
               }}
             >
-              <MotifDecor kind="sparkle" size={isMobile ? 16 : 22} color={accent.accent} opacity={0.95} />
+              {/* v5.3 듀오톤: 히어로 반짝 데코는 보조 그린(잎 톤) — 소면적 장식. */}
+              <MotifDecor kind="sparkle" size={isMobile ? 16 : 22} color={accent.secondary} opacity={0.95} />
             </span>
             <span
               aria-hidden
@@ -3451,7 +3582,7 @@ function HeroBlock({
                 display: "inline-flex",
               }}
             >
-              <MotifDecor kind="sparkle" size={isMobile ? 15 : 16} color={accent.accent} opacity={0.8} rotate={16} />
+              <MotifDecor kind="sparkle" size={isMobile ? 15 : 16} color={accent.secondary} opacity={0.8} rotate={16} />
             </span>
           </>
         )}
@@ -3465,6 +3596,9 @@ function HeroBlock({
               aspectRatio: "1",
               objectFit: "cover",
               display: "block",
+              // v5.3 오버랩 연출: 사진 상단 라운드(어깨) — img 자체 클립이라 스티커는 안 잘린다.
+              borderTopLeftRadius: isMobile ? 22 : 32,
+              borderTopRightRadius: isMobile ? 22 : 32,
             }}
           />
         ) : (
@@ -3481,6 +3615,8 @@ function HeroBlock({
               color: PLACEHOLDER,
               fontSize: isMobile ? 15 : 24,
               fontStyle: "italic",
+              borderTopLeftRadius: isMobile ? 22 : 32,
+              borderTopRightRadius: isMobile ? 22 : 32,
             }}
           >
             여기에 대표 이미지가 들어갑니다
@@ -3495,27 +3631,30 @@ function HeroBlock({
           textAlign: layout.heroAlign,
         }}
       >
-        {/* v2.9: 서브카피 — 대문자 액센트 → 설명형 회색 (수플린 톤). 리서치 본문 34px+ */}
-        <p
-          style={{
-            fontSize: isMobile ? 20 : 36,
-            color: SUB,
-            margin: 0,
-            marginBottom: isMobile ? 24 : 32,
-            lineHeight: 1.6,
-            fontFamily: BODY_FONT,
-            fontWeight: 500,
-            wordBreak: "keep-all",
-          }}
-        >
-          <EditableResultText
-            copy={copy}
-            onChange={onCopyChange}
-            path={["subheadline"]}
-            maxLength={60}
-            placeholder={factPlaceholder?.sub ?? "여기에 서브 카피를 적어보세요"}
-          />
-        </p>
+        {/* v2.9: 서브카피 — 대문자 액센트 → 설명형 회색 (수플린 톤). 리서치 본문 34px+.
+            v5.3: 훅 승격 모드에선 훅이 이미 메인 헤드라인으로 올라가 있어 여기 중복 표기를 생략. */}
+        {!promoteHook && (
+          <p
+            style={{
+              fontSize: isMobile ? 20 : 36,
+              color: SUB,
+              margin: 0,
+              marginBottom: isMobile ? 24 : 32,
+              lineHeight: 1.6,
+              fontFamily: BODY_FONT,
+              fontWeight: 500,
+              wordBreak: "keep-all",
+            }}
+          >
+            <EditableResultText
+              copy={copy}
+              onChange={onCopyChange}
+              path={["subheadline"]}
+              maxLength={60}
+              placeholder={factPlaceholder?.sub ?? "여기에 서브 카피를 적어보세요"}
+            />
+          </p>
+        )}
 
         {/* CTA pill (수플린 "○○를 선택하세요!" 레퍼런스) — 하단에서 재사용 */}
         <CtaPill text={ctaText} isMobile={isMobile} editId="cta.top" />
@@ -3640,9 +3779,9 @@ function ProblemArcBlock({
   if (problems.length === 0) return null
 
   // v5.2-A: 사진 구성 게이트 — 렌더되는 모든 카드가 사진을 가질 때만(혼재 금지).
+  // v5.3: 사진 슬롯은 더 이상 고정 비율(4/5)로 카드 높이를 정하지 않는다 — 카드 높이는 텍스트가
+  // 정하고 사진이 cover 로 채운다(아래 슬롯 참고). 그래서 CARD_PHOTO_RATIO 상수는 제거했다.
   const photoMode = !!photos && problems.every((_, i) => photos[i] != null)
-  // 좌측 사진 슬롯 비율(W/H, 세로로 살짝 긴 컷) — 카드 높이를 사진이 정의(텍스트는 세로 중앙).
-  const CARD_PHOTO_RATIO = 4 / 5
 
   // v3.4(지시3): Q&A 2줄 위계 (chamoe-03 "이게 참외야? 꿀이야? → 아니 꿀참외야!").
   // answer 필드가 없어 사실을 지어내지 않는다 — 원문 재배치만으로 위계를 만든다.
@@ -3679,7 +3818,8 @@ function ProblemArcBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "56px 24px" : "112px 56px",
+        // v5.3 간격 리듬: 챕터 경계(band) 토큰으로 — 기존 112px 균일 대형 패딩을 축소.
+        padding: `${padY("band", isMobile)}px ${isMobile ? 24 : 56}px`,
         background: veilTint(accent.soft),
       }}
     >
@@ -3827,39 +3967,36 @@ function ProblemArcBlock({
                 padding: photo ? 0 : isMobile ? "20px 22px" : "32px 40px",
               }}
             >
-              {/* 좌측 사진 슬롯 — 카드 좌측 1/3, 높이 채움 cover(키위 레퍼런스). */}
+              {/* 좌측 사진 슬롯 — 카드 좌측 1/3. v5.3: 사진이 고정 비율(4/5)로 카드 높이를 끌던
+                  문제(2줄 텍스트가 500px급 사진 높이에 딸려 늘어남)를 없앤다. 이제 카드 높이는
+                  우측 텍스트 분량이 정하고, 사진은 그 높이를 cover 로 채운다(alignSelf stretch +
+                  height:100%). subjectBox 가 있으면 objectPosition 으로 주체를 프레임 중심에 둔다
+                  (없으면 center — 분석 없는 저장본은 안전 폴백). aspectRatio 를 없앴으므로 데드스페이스 0. */}
               {photo && (
                 <div
                   style={{
                     flexShrink: 0,
                     width: isMobile ? "34%" : "32%",
                     alignSelf: "stretch",
+                    overflow: "hidden",
                     background: accent.soft, // 로드 전/틈 방어
+                    lineHeight: 0,
                   }}
                 >
-                  {box ? (
-                    <CroppedImage image={photo} box={box} slotRatio={CARD_PHOTO_RATIO} />
-                  ) : (
-                    <div
-                      style={{
-                        width: "100%",
-                        aspectRatio: String(CARD_PHOTO_RATIO),
-                        overflow: "hidden",
-                      }}
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={photo.url}
-                        alt=""
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                          display: "block",
-                        }}
-                      />
-                    </div>
-                  )}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={photo.url}
+                    alt=""
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                      objectPosition: box
+                        ? `${Math.round((box.x + box.w / 2) * 100)}% ${Math.round((box.y + box.h / 2) * 100)}%`
+                        : "center",
+                      display: "block",
+                    }}
+                  />
                 </div>
               )}
               {/* 번호 + 문제 텍스트 — 사진 있으면 우측 컬럼(세로 중앙), 없으면 기존 가로 구성. */}
@@ -3942,7 +4079,8 @@ function StoryBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "52px 24px" : "104px 56px",
+        // v5.3 간격 리듬: 챕터 경계(band) — 기존 104px 축소.
+        padding: `${padY("band", isMobile)}px ${isMobile ? 24 : 56}px`,
         background: "#FFFFFF",
         position: "relative",
       }}
@@ -4182,7 +4320,8 @@ function SensoryPunchBlock({
       {/* 임팩트 카피 — 다크(검정 위 밝은 카피) 또는 틴트(밝은 배경 위 accent.dark). 편집 가능(highlightBox 경로). */}
       <div
         style={{
-          padding: isMobile ? "56px 24px" : "104px 56px",
+          // v5.3 간격 리듬: 챕터 경계(band) — 기존 104px 축소.
+          padding: `${padY("band", isMobile)}px ${isMobile ? 24 : 56}px`,
           textAlign: "center",
         }}
       >
@@ -5182,11 +5321,11 @@ function SpecBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "44px 24px" : "76px 44px",
+        padding: `${padY("band", isMobile)}px ${isMobile ? 24 : 44}px`,
         background: veilTint(accent.soft),
       }}
     >
-      <SectionTitle title={t.detail.result.spec} regen={onRegen} isMobile={isMobile} editId="sect.spec.title" />
+      <SectionTitle title={t.detail.result.spec} regen={onRegen} isMobile={isMobile} editId="sect.spec.title" overline="SPEC" editOverlineId="sect.spec.overline" />
 
       {specCount > 0 ? (
         <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 10 : 16 }}>
@@ -5266,8 +5405,8 @@ function SeasonCalendarBlock({
   return (
     <>
       <DotDivider />
-      <div style={{ padding: isMobile ? "44px 24px" : "76px 44px", background: "#FFFFFF" }}>
-        <SectionTitle title={sc.title} isMobile={isMobile} editId="sect.season.title" />
+      <div style={{ padding: `${padY("flow", isMobile)}px ${isMobile ? 24 : 44}px`, background: "#FFFFFF" }}>
+        <SectionTitle title={sc.title} isMobile={isMobile} editId="sect.season.title" overline="SEASON" editOverlineId="sect.season.overline" />
         <div
           style={{
             border: `1px solid ${accent.soft}`,
@@ -5374,7 +5513,8 @@ function KeyPointsBig({
     <div style={{ background: "#FFFFFF" }}>
       <div
         style={{
-          padding: isMobile ? "56px 24px 32px" : "112px 44px 52px",
+          // v5.3 간격 리듬: 챕터 경계(band) 상단 + 압축된 하단(다음 POINT 카드와 한 묶음).
+          padding: `${padY("band", isMobile)}px ${isMobile ? 24 : 44}px ${isMobile ? 24 : 40}px`,
           textAlign: "center",
         }}
       >
@@ -5602,7 +5742,8 @@ function KeyPointsBig({
             key={`kp-big-${i}`}
             style={{
               position: "relative",
-              padding: isMobile ? "48px 24px 64px" : "88px 56px 104px",
+              // v5.3 간격 리듬: POINT 카드 과대 세로 패딩(88/104) 압축 — 카드당 ~70px 절감.
+              padding: isMobile ? "36px 24px 40px" : "56px 56px 64px",
               background: bg,
             }}
           >
@@ -5701,11 +5842,11 @@ function StorageBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "44px 24px" : "76px 44px",
+        padding: `${padY("band", isMobile)}px ${isMobile ? 24 : 44}px`,
         background: "#FFFFFF",
       }}
     >
-      <SectionTitle title={t.detail.result.storage} regen={onRegen} isMobile={isMobile} editId="sect.storage.title" />
+      <SectionTitle title={t.detail.result.storage} regen={onRegen} isMobile={isMobile} editId="sect.storage.title" overline="GUIDE" editOverlineId="sect.storage.overline" />
 
       {steps.length > 0 && (
         <div
@@ -5758,7 +5899,8 @@ function StorageBlock({
                       height: dot,
                       borderRadius: "50%",
                       background: "#FFFFFF",
-                      border: `${isMobile ? 3 : 4}px solid ${accent.accent}`,
+                      // v5.3 듀오톤: 보관 타임라인 점은 보조 그린 링(줄기 톤) — 소면적 장식.
+                      border: `${isMobile ? 3 : 4}px solid ${accent.secondary}`,
                       flexShrink: 0,
                     }}
                   />
@@ -5932,8 +6074,8 @@ function ReceiveTimelineBlock({
   return (
     <>
       <DotDivider />
-      <div style={{ padding: isMobile ? "44px 24px" : "76px 44px", background: veilTint(accent.soft) }}>
-        <SectionTitle title={rt.title} isMobile={isMobile} editId="sect.receive.title" />
+      <div style={{ padding: `${padY("flow", isMobile)}px ${isMobile ? 24 : 44}px`, background: veilTint(accent.soft) }}>
+        <SectionTitle title={rt.title} isMobile={isMobile} editId="sect.receive.title" overline="TIMELINE" editOverlineId="sect.receive.overline" />
         <div
           style={{
             background: "#FFFFFF",
@@ -5976,7 +6118,8 @@ function ReceiveTimelineBlock({
                         height: circle,
                         borderRadius: "50%",
                         background: "#FFFFFF",
-                        border: `${isMobile ? 2 : 3}px solid ${accent.accent}`,
+                        // v5.3 듀오톤: 수령 타임라인 노드 링도 보조 그린(줄기 톤)으로 통일.
+                        border: `${isMobile ? 2 : 3}px solid ${accent.secondary}`,
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
@@ -6082,11 +6225,11 @@ function FaqBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "44px 24px" : "76px 44px",
+        padding: `${padY("band", isMobile)}px ${isMobile ? 24 : 44}px`,
         background: layout.altSectionBg(accent),
       }}
     >
-      <SectionTitle title={t.detail.result.faq} regen={onRegen} isMobile={isMobile} editId="sect.faq.title" />
+      <SectionTitle title={t.detail.result.faq} regen={onRegen} isMobile={isMobile} editId="sect.faq.title" overline="FAQ" editOverlineId="sect.faq.overline" />
       <div
         style={{
           background: "#FFFFFF",
@@ -6201,7 +6344,7 @@ function SizeDiagramBlock({
   return (
     <>
       <DotDivider />
-      <div style={{ padding: isMobile ? "44px 24px" : "76px 44px", background: "#FFFFFF" }}>
+      <div style={{ padding: `${padY("flow", isMobile)}px ${isMobile ? 24 : 44}px`, background: "#FFFFFF" }}>
         <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 10 : 14, marginBottom: isMobile ? 24 : 36 }}>
           <span
             aria-hidden
@@ -6345,13 +6488,64 @@ function SizeDiagramBlock({
 }
 
 /**
+ * v5.3(작업6): 붙박이 배송 문구를 과일 보관 성격(getDeliveryPersona)으로 결정적 변주.
+ *
+ * 반환값은 OverrideText의 fallback으로만 쓰인다 — 슬롯 id는 그대로라 셀러가 이미 덮어쓴
+ * 저장본은 오버라이드가 계속 이긴다. 사전에 없는(판별 불가) 품목은 default 분기로 현행
+ * 기본 문구를 그대로 반환해 구버전 저장본 회귀 0. 사실(산지·당도·수확일) 창작 없이 표현만 다르다.
+ */
+function deliveryCopyVariant(productName: string): {
+  flowStep4Desc: string
+  bodyFallback: string
+} {
+  switch (getDeliveryPersona(productName)) {
+    case "ripen":
+      // 후숙형(복숭아·자두·멜론·키위 등) — 단단하게 도착하는 성격.
+      return {
+        flowStep4Desc: "단단한 상태 그대로 완충 포장해 문 앞까지",
+        bodyFallback:
+          "주문 확인 후 단단한 상태로 정성껏 준비해, 영업일 기준 빠르게 발송해 드려요.\n\n완충 포장으로 문 앞까지 안전하게 도착하며, 도서·산간 지역은 1~2일 정도 더 걸릴 수 있어요.",
+      }
+    case "chill":
+      // 즉시냉장형(딸기·사과·포도·감귤 등) — 받는 즉시 냉장 권장 성격.
+      return {
+        flowStep4Desc: "신선함 지켜 냉장하기 좋게 문 앞까지",
+        bodyFallback:
+          "주문 확인 후 가장 신선한 상태로 준비해, 영업일 기준 빠르게 발송해 드려요.\n\n받으신 뒤 바로 냉장 보관하시면 신선함이 오래가요. 도서·산간 지역은 1~2일 정도 더 걸릴 수 있어요.",
+      }
+    case "room":
+      // 실온형(매실 등) — 실온에서도 견디는 성격.
+      return {
+        flowStep4Desc: "실온에서도 튼튼하게 완충 포장해 문 앞까지",
+        bodyFallback:
+          "주문 확인 후 정성껏 준비해, 영업일 기준 빠르게 발송해 드려요.\n\n완충 포장으로 문 앞까지 도착하며, 도서·산간 지역은 1~2일 정도 더 걸릴 수 있어요.",
+      }
+    default:
+      // 판별 불가(fruit-facts 미등록) — 현행 기본 문구 그대로(회귀 0).
+      return {
+        flowStep4Desc: "완충 포장으로 신선하게 문 앞까지",
+        bodyFallback: t.detail.result.deliveryBody,
+      }
+  }
+}
+
+/**
  * v2.8 신선함을 잇는 4단계 (수플린 FARM→AIR→COLD→HOME 레퍼런스).
  * 국내 산지직송에 맞게 각색: 수확 → 손 선별·포장 → 출고 → 문 앞 도착.
  *
  * v2.8-b: "당일 수확 / 당일 포장 / 콜드체인" 은 셀러가 trust에서 실제 체크한 경우에만 강한 문구로.
  * 미체크 시 일반화 문구 — 다른 신뢰 요소(TrustBadgesRow 등)와 동일한 게이팅 원칙 준수 (허위광고 방지).
+ * v5.3(작업6): 4단계 마지막 스텝 문구를 과일 보관 성격으로 변주(productName 필요).
  */
-function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: boolean }) {
+function DeliveryFlowBlock({
+  trust,
+  isMobile,
+  productName,
+}: {
+  trust?: TrustInfo
+  isMobile: boolean
+  productName: string
+}) {
   const accent = useAccent()
   const layout = useLayout()
   const sameDay = !!trust?.sameDayHarvest
@@ -6376,10 +6570,11 @@ function DeliveryFlowBlock({ trust, isMobile }: { trust?: TrustInfo; isMobile: b
       title: cold ? "콜드체인 출고" : "포장·출고",
       desc: cold ? "신선도를 지키는 냉장 상태로 출고" : "신선하게 포장해 바로 출고",
     },
-    { title: "문 앞 도착", desc: "완충 포장으로 신선하게 문 앞까지" },
+    // v5.3(작업6): 마지막 스텝 desc를 과일 보관 성격으로 변주(default는 현행 문구 그대로).
+    { title: "문 앞 도착", desc: deliveryCopyVariant(productName).flowStep4Desc },
   ]
   return (
-    <div style={{ padding: isMobile ? "52px 24px" : "80px 44px", background: veilTint(accent.soft) }}>
+    <div style={{ padding: `${padY("band", isMobile)}px ${isMobile ? 24 : 44}px`, background: veilTint(accent.soft) }}>
       <div style={{ textAlign: "center", marginBottom: isMobile ? 32 : 48 }}>
         <div
           style={{
@@ -6557,7 +6752,7 @@ function PackagingBlock({
   const accent = useAccent()
   const layout = useLayout()
   return (
-    <div style={{ padding: isMobile ? "52px 24px" : "80px 44px", background: "#FFFFFF" }}>
+    <div style={{ padding: `${padY("flow", isMobile)}px ${isMobile ? 24 : 44}px`, background: "#FFFFFF" }}>
       <div style={{ textAlign: "center", marginBottom: isMobile ? 32 : 48 }}>
         <div
           style={{
@@ -6675,9 +6870,19 @@ function PackagingBlock({
   )
 }
 
-function DeliveryBlock({ isMobile, trust }: { isMobile: boolean; trust?: TrustInfo }) {
+function DeliveryBlock({
+  isMobile,
+  trust,
+  productName,
+}: {
+  isMobile: boolean
+  trust?: TrustInfo
+  productName: string
+}) {
   // 허위광고 방지: "당일 발송" 확정 약속은 셀러가 sameDayHarvest를 체크한 경우에만 노출.
   const sameDay = !!trust?.sameDayHarvest
+  // v5.3(작업6): 배송 안내 문단 fallback을 과일 보관 성격으로 변주(슬롯 id는 그대로).
+  const deliveryBodyFallback = deliveryCopyVariant(productName).bodyFallback
   return (
     <div
       style={{
@@ -6687,7 +6892,7 @@ function DeliveryBlock({ isMobile, trust }: { isMobile: boolean; trust?: TrustIn
       }}
     >
       {/* v3.8(지시3): 배송 안내는 약관류 — quiet 위계(작고 SUB 색). */}
-      <SectionTitle title={t.detail.result.deliveryTitle} variant="quiet" isMobile={isMobile} editId="sect.delivery.title" />
+      <SectionTitle title={t.detail.result.deliveryTitle} variant="quiet" isMobile={isMobile} editId="sect.delivery.title" overline="DELIVERY" editOverlineId="sect.delivery.overline" />
       {/* v2.4: 초록 배경·주황 원형 이모지 삭제 → 얇은 라인 카드 */}
       <div
         style={{
@@ -6708,7 +6913,7 @@ function DeliveryBlock({ isMobile, trust }: { isMobile: boolean; trust?: TrustIn
         >
           <OverrideText
             id="delivery.body"
-            fallback={t.detail.result.deliveryBody}
+            fallback={deliveryBodyFallback}
             multiline
             preserveWhitespace
             maxLength={400}
@@ -6743,11 +6948,11 @@ function RecommendForBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "48px 24px" : "80px 44px",
+        padding: `${padY("flow", isMobile)}px ${isMobile ? 24 : 44}px`,
         background: layout.altSectionBg(accent),
       }}
     >
-      <SectionTitle title={t.detail.result.recommendForTitle} isMobile={isMobile} editId="sect.recommend.title" />
+      <SectionTitle title={t.detail.result.recommendForTitle} isMobile={isMobile} editId="sect.recommend.title" overline="FOR YOU" editOverlineId="sect.recommend.overline" />
       <div
         style={{
           background: "#FFFFFF",
@@ -6819,9 +7024,30 @@ function RecommendForBlock({
  * 셀러가 직접 입력한 후기만 노출한다(AI 생성 금지 — reviews는 CopyInput 입력 흐름).
  * 0건이면 호출부에서 렌더하지 않는다.
  *
- * 각 카드: 별 5개 아이콘 + 후기 본문(34px) + highlight가 본문에 포함되면
+ * 각 카드: (별점 있으면) 별 아이콘 + 후기 본문 + highlight가 본문에 포함되면
  * 그 부분만 accent 배경 형광펜으로 강조. highlight가 본문에 없으면 강조 없이 본문만.
+ * v5.3(작업3): 별점/작성자/옵션은 셀러가 입력한 것만 표기 — 미입력 필드는 렌더 생략(지어내기 방지).
  */
+
+/**
+ * v5.3(작업3): 후기 별점 — 인라인 SVG 별(JPG 위생 준수). 채운 별 rating개 + 나머지 빈 별.
+ * rating이 없으면 호출부에서 렌더하지 않는다(자동 채움·기본 별점 금지).
+ */
+function ReviewStars({ rating, size }: { rating: number; size: number }) {
+  const full = Math.max(0, Math.min(5, Math.round(rating)))
+  const STAR_PATH =
+    "M10 1.5l2.6 5.27 5.82.85-4.21 4.1.99 5.79L10 14.77l-5.2 2.74.99-5.79L1.58 7.62l5.82-.85z"
+  return (
+    <div style={{ display: "flex", gap: 2 }} aria-label={`별점 ${full}점`}>
+      {[0, 1, 2, 3, 4].map((idx) => (
+        <svg key={idx} width={size} height={size} viewBox="0 0 20 20" aria-hidden>
+          <path d={STAR_PATH} fill={idx < full ? "#FFB400" : "#E3E6EA"} />
+        </svg>
+      ))}
+    </div>
+  )
+}
+
 function ReviewsBlock({
   reviews,
   isMobile,
@@ -6830,17 +7056,18 @@ function ReviewsBlock({
   isMobile: boolean
 }) {
   const accent = useAccent()
-  // v3.8(지시4): 후기 진입은 대형 전환점 — 상단 100px 브레이크로 앞 클러스터와 분리.
+  // v3.8(지시4): 후기 진입은 전환점. v5.3: 과대 세로 패딩(100/80)을 챕터 경계(band) 상단 +
+  // 압축 하단으로 줄인다(길이 예산). 후기는 여전히 별도 챕터감 유지.
   return (
-    <div style={{ padding: isMobile ? "64px 24px 48px" : "100px 44px 80px", background: veilTint(accent.soft) }}>
+    <div style={{ padding: `${padY("band", isMobile)}px ${isMobile ? 24 : 44}px ${isMobile ? 40 : 56}px`, background: veilTint(accent.soft) }}>
       {/* v3.8(지시3): 후기는 전환점 — hero 위계 + REVIEW 오버라인. */}
       <SectionTitle title={t.detail.result.reviews.title} variant="hero" overline="REVIEW" isMobile={isMobile} editId="sect.reviews.title" editOverlineId="sect.reviews.overline" />
       <div
         style={{
           display: "flex",
           flexDirection: "column",
-          // 발췌 박스가 카드 위로 걸치므로 카드 간 간격을 넉넉히.
-          gap: isMobile ? 26 : 40,
+          // v5.3: 카드 간 간격 압축(발췌 콜아웃이 흐름 내 배치라 과대 간격 불필요).
+          gap: isMobile ? 20 : 28,
         }}
       >
         {reviews.map((r, i) => {
@@ -6850,6 +7077,11 @@ function ReviewsBlock({
           const hi = r.highlight?.trim()
           const showPull = !!hi && r.text.includes(hi)
           const tilt = i % 2 === 0 ? "rotate(-1.5deg)" : "rotate(1.5deg)"
+          // v5.3(작업3): 작성자·옵션 메타 라인 — 입력된 것만 "김**님 · 3kg 구매" 형식으로.
+          const metaParts: string[] = []
+          if (r.author) metaParts.push(`${r.author}님`)
+          if (r.optionLabel) metaParts.push(`${r.optionLabel} 구매`)
+          const meta = metaParts.join(" · ")
           return (
             <div
               key={`review-${i}`}
@@ -6858,20 +7090,25 @@ function ReviewsBlock({
                 borderRadius: 16,
                 border: `1px solid ${accent.soft}`,
                 boxShadow: `0 4px 16px ${accent.accent}10`,
-                padding: isMobile ? "24px 24px" : "40px 44px",
+                // v5.3: 카드 내부 과대 패딩 압축(가독성 하한은 본문 폰트로 유지).
+                padding: isMobile ? "22px 22px" : "32px 40px",
                 display: "flex",
                 flexDirection: "column",
-                gap: isMobile ? 12 : 18,
+                gap: isMobile ? 12 : 16,
               }}
             >
-              {/* 별 5개 — D18: 셀러 입력에 별점 필드가 없어 자동 생성이므로 렌더 제거.
-                  (셀러 입력 필드 생기면 부활) */}
+              {/* v5.3(작업3): 별점 — 셀러가 입력한 rating이 있을 때만(자동 채움 금지). */}
+              {r.rating != null && (
+                <ReviewStars rating={r.rating} size={isMobile ? 18 : 24} />
+              )}
               {/* 후기 본문 — 강조 없는 평문(A1: 인라인 형광펜 제거). */}
               <p
                 style={{
-                  fontSize: isMobile ? 20 : 34,
+                  // v5.3(작업3): 본문 타이포 한 단계 압축(34→30/20→19) — 길이 단축 기여.
+                  fontSize: isMobile ? 19 : 30,
                   color: INK,
-                  lineHeight: 1.6,
+                  // v5.3: 행간도 한 단계 압축(1.5→1.45) — 가독성 하한 유지.
+                  lineHeight: 1.45,
                   margin: 0,
                   fontFamily: BODY_FONT,
                   fontWeight: 500,
@@ -6911,6 +7148,22 @@ function ReviewsBlock({
                   </span>
                 </div>
               )}
+
+              {/* v5.3(작업3): 작성자·옵션 메타 — 입력된 것만. 셋 다 없으면 이 라인 자체가 없다(회귀 0). */}
+              {meta && (
+                <div
+                  style={{
+                    fontSize: isMobile ? 14 : 22,
+                    color: MUTE,
+                    fontFamily: BODY_FONT,
+                    fontWeight: 600,
+                    letterSpacing: -0.2,
+                    wordBreak: "keep-all",
+                  }}
+                >
+                  {meta}
+                </div>
+              )}
             </div>
           )
         })}
@@ -6944,11 +7197,11 @@ function FarmStoryBlock({
   return (
     <div
       style={{
-        padding: isMobile ? "48px 24px" : "80px 44px",
+        padding: `${padY("band", isMobile)}px ${isMobile ? 24 : 44}px`,
         background: layout.altSectionBg(accent),
       }}
     >
-      <SectionTitle title={t.detail.result.farmStoryTitle} isMobile={isMobile} editId="sect.farm.title" />
+      <SectionTitle title={t.detail.result.farmStoryTitle} isMobile={isMobile} editId="sect.farm.title" overline="FARM" editOverlineId="sect.farm.overline" />
 
       {/* v1.8: trust에 농부 정보 있으면 ProducerCard로 노출 */}
       {hasProducer && (
@@ -7043,7 +7296,7 @@ function ReturnsBlock({ isMobile, trust }: { isMobile: boolean; trust?: TrustInf
       }}
     >
       {/* v3.8(지시3): 교환·환불은 약관류 — quiet 위계. */}
-      <SectionTitle title={t.detail.result.returnsTitle} variant="quiet" isMobile={isMobile} editId="sect.returns.title" />
+      <SectionTitle title={t.detail.result.returnsTitle} variant="quiet" isMobile={isMobile} editId="sect.returns.title" overline="POLICY" editOverlineId="sect.returns.overline" />
       {/* v2.4: 원형 이모지·BG_SOFT 배경 삭제 → 얇은 라인 카드 */}
       <div
         style={{
@@ -7430,9 +7683,21 @@ function SectionTitle({
   const fontSize =
     variant === "hero" ? (isMobile ? 34 : 60) : variant === "quiet" ? (isMobile ? 21 : 34) : (isMobile ? 27 : 46)
   const color = variant === "quiet" ? SUB : INK
-  const showOverline = variant === "hero" && !!overline?.trim()
+  // v5.3: 오버라인 락업을 hero/main variant로 확장(STORY/POINT/REVIEW 톤을 상품정보·보관·
+  // FAQ·추천 등 bare heading 섹션에도 적용). hero 는 기존 큰 오버라인(불변식: 회귀 0), main 은
+  // 작은 락업 오버라인. quiet(약관류 — 배송·교환환불)는 "조용한 위계"가 의도라 accent 오버라인을
+  // 얹지 않는다(리뷰 지적: 굵은 오버라인이 quiet 강등을 되살림). 미지정 호출은 기존 렌더와 동일.
+  const showOverline = !!overline?.trim() && variant !== "quiet"
+  const isHeroOverline = variant === "hero"
+  const overlineFontSize = isHeroOverline ? (isMobile ? 13 : 22) : (isMobile ? 12 : 16)
+  const overlineMb = isHeroOverline ? (isMobile ? 8 : 12) : (isMobile ? 4 : 7)
   // v4.6: editorial 은 여백 1.15배(정수라 ×1은 항등) + 제목 위 얇은 구분선(배경 교차 대신).
-  const marginBottom = Math.round((isMobile ? 24 : 36) * layout.spacingScale)
+  // v5.3 높이 순증 금지: 비-hero 오버라인 추가분은 제목 하단 여백에서 흡수(순증 0에 근접).
+  const overlineAbsorb = showOverline && !isHeroOverline ? (isMobile ? 16 : 26) : 0
+  const marginBottom = Math.max(
+    isMobile ? 12 : 16,
+    Math.round((isMobile ? 24 : 36) * layout.spacingScale) - overlineAbsorb,
+  )
   return (
     <>
       {layout.showRule && (
@@ -7455,15 +7720,16 @@ function SectionTitle({
       }}
     >
       <div>
-        {/* hero 전용 오버라인 영문 라벨 — 기존 대문자 라벨 톤(작은 accent, 넓은 자간) 재사용. */}
+        {/* 오버라인 영문 라벨 — 대문자 락업(작은 accent, 넓은 자간). hero 는 큰 톤,
+            그 외 bare heading 섹션은 작은 락업 톤(STORY/POINT/REVIEW와 시각 통일). */}
         {showOverline && (
           <div
             style={{
-              fontSize: isMobile ? 13 : 22,
+              fontSize: overlineFontSize,
               color: accent.accent,
               fontWeight: 800,
               letterSpacing: 2,
-              marginBottom: isMobile ? 8 : 12,
+              marginBottom: overlineMb,
               fontFamily: BODY_FONT,
             }}
           >

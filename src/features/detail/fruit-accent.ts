@@ -7,10 +7,13 @@
  * 색은 도메인(hallucination 방지 fact 사전)이 아닌 프레젠테이션 관심사라
  * fruit-facts.ts와 분리. productName → detectFruitFactKey → 팔레트 매핑.
  *
- * 각 팔레트 3색:
- * - accent: 메인 포인트 (헤드 강조, POINT 뱃지, CTA)
- * - dark:   진한 변형 (텍스트 대비, 그림자)
- * - soft:   옅은 배경 틴트 (블록 배경 변주)
+ * 각 팔레트 4색:
+ * - accent:    메인 포인트 (헤드 강조, POINT 뱃지, CTA)
+ * - dark:      진한 변형 (텍스트 대비, 그림자)
+ * - soft:      옅은 배경 틴트 (블록 배경 변주)
+ * - secondary: v5.3 듀오톤 보조색 — 과일의 잎·꼭지·줄기에서 온 뮤트 그린.
+ *   소면적 장식(체크·물결 밑줄·타임라인 점·데코)에서만 accent 대신 쓴다.
+ *   대면적 배경·본문 타이포에는 절대 쓰지 않는다(듀오톤 위생).
  */
 
 import { detectFruitFactKey } from "@/domain/fruit-facts"
@@ -19,18 +22,23 @@ export interface AccentPalette {
   accent: string
   dark: string
   soft: string
+  /** v5.3 듀오톤 보조색(잎·줄기 그린 계열, 뮤트). 소면적 장식 전용. */
+  secondary: string
 }
 
 // v2.9 디자이너 뮤트 톤 — 형광기 제거(채도 ↓ + 웜 시프트). 실물 레퍼런스(peach-s02)의
 // 더스티 로즈 블러시처럼 "사람 디자이너가 고른" 차분한 톤. accent엔 흰 글씨 배지가 올라가
 // 므로 흰색 대비를 이전 버전 이상으로 유지(RED/PURPLE ≥ 4.5:1). 웜 계열(주황/골드/복숭아)은
 // 색상 자체가 밝아 흰색 4.5:1이 물리적으로 불가 → 이전 버전과 동등 이상 대비로 맞춤(회귀 없음).
-const RED: AccentPalette = { accent: "#D13F37", dark: "#B93A34", soft: "#FBF1EE" }
-const ORANGE: AccentPalette = { accent: "#DB6129", dark: "#C55524", soft: "#FCF3EA" }
-const GOLD: AccentPalette = { accent: "#D59527", dark: "#C08420", soft: "#FBF6E8" }
-const PURPLE: AccentPalette = { accent: "#7A5FBF", dark: "#64489F", soft: "#F5F2FB" }
-const GREEN: AccentPalette = { accent: "#3F9155", dark: "#337946", soft: "#EFF7F0" }
-const PEACH: AccentPalette = { accent: "#DF7484", dark: "#C75F6E", soft: "#FBF0EE" }
+// v5.3 secondary(듀오톤 보조색): 각 과일의 잎·꼭지·줄기 그린을 뮤트 톤으로 큐레이션.
+// accent 계열과 색상이 겹치지 않게(특히 GREEN 계열은 accent 그린과 명도·색상으로 구분),
+// 흰 바탕 소면적 장식에서 또렷이 보이는 중명도 그린으로 맞췄다(형광기 없음).
+const RED: AccentPalette = { accent: "#D13F37", dark: "#B93A34", soft: "#FBF1EE", secondary: "#6E9459" }
+const ORANGE: AccentPalette = { accent: "#DB6129", dark: "#C55524", soft: "#FCF3EA", secondary: "#4F7E58" }
+const GOLD: AccentPalette = { accent: "#D59527", dark: "#C08420", soft: "#FBF6E8", secondary: "#7C8A46" }
+const PURPLE: AccentPalette = { accent: "#7A5FBF", dark: "#64489F", soft: "#F5F2FB", secondary: "#6B8E4E" }
+const GREEN: AccentPalette = { accent: "#3F9155", dark: "#337946", soft: "#EFF7F0", secondary: "#5B7A3C" }
+const PEACH: AccentPalette = { accent: "#DF7484", dark: "#C75F6E", soft: "#FBF0EE", secondary: "#6C9557" }
 
 /** 브랜드 기본값 (미매칭 과일). 기존 빨강 유지. */
 export const DEFAULT_ACCENT = RED
