@@ -334,6 +334,14 @@ export const ko = {
       cautionsAutoNotice: "자연에서 자란 신선식품 특성상 색과 크기가 조금씩 다를 수 있어요. 너그럽게 이해 부탁드립니다.",
       priceLabel: "판매가",
       retry: "다시 만들기",
+      /** B2(v5.7): 전체 재생성 텍스트 버튼 라벨 + 클릭 시 1회 확인 문구(편집 손실 경고). */
+      retryFull: "카피 전체 다시 생성",
+      retryFullConfirm: "카피를 전체 다시 생성하면 지금까지 편집한 내용이 모두 사라져요. 계속할까요?",
+      /** B2(v5.7): 사이드바 3구역 라벨. */
+      sidebar: {
+        reviewLabel: "검수 결과",
+        screenLabel: "화면 설정",
+      },
       edit: "편집하기 (다음 단계)",
       export: "JPG 다운로드",
       enhanceLabel: "사진 자동 보정 (채도+명도)",

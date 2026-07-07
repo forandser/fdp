@@ -92,6 +92,18 @@
   filter: saturate(1.15) contrast(1.04) brightness(1.02);
 }
 
+/*
+ * B4(v5.7): 편집 발견성 — 아트보드 섹션(.fdp-print 직속 자식) 하나를 호버하면
+ * 그 섹션 안 편집 가능 텍스트([data-inline-edit])에만 옅은 점선 밑줄이 켜진다.
+ * ":hover"는 오프스크린 정적 캡처 클론(html-to-jpg·artboard-segments)에서 절대 매칭되지 않으므로
+ * JPG 결과물에는 밑줄이 찍히지 않는다(위생 무개입 — 별도 클론 정리 불필요).
+ */
+.fdp-print > *:hover [data-inline-edit] {
+  text-decoration: underline dotted var(--color-primary-300, #f4b4a3);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
 /* 인쇄 미리보기 — 사이드 패널/헤더 숨기고 결과 영역만 출력 */
 @media print {
   body * {

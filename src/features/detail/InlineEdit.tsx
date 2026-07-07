@@ -55,6 +55,13 @@ export interface InlineEditProps {
    * 주의: 반환 노드는 표시용 <span> 안에 들어가므로 block 요소(p/h2 등)를 넣으면 안 된다.
    */
   renderDisplay?: (value: string) => ReactNode
+  /**
+   * B3(v5.7): 검수 위반 → 본문 점프용 필드 식별자(예: "story", "keyPoints[0].body").
+   * 표시 <span>에 data-field 로 붙는다. 사이드바 위반 클릭 시 이 속성으로 요소를 찾아
+   * scrollIntoView + 배경 플래시한다. data 속성이라 렌더에 안 보이고, 배경 플래시는
+   * data-inline-edit 를 중화하는 기존 캡처 클론 정리 로직이 그대로 지워 JPG 위생을 유지한다.
+   */
+  dataField?: string
 }
 
 export function InlineEdit({
@@ -68,6 +75,7 @@ export function InlineEdit({
   ariaLabel,
   preserveWhitespace,
   renderDisplay,
+  dataField,
 }: InlineEditProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(value)
@@ -163,6 +171,8 @@ export function InlineEdit({
         tabIndex={disabled ? -1 : 0}
         // 캡처 클론에서 hover 하이라이트 배경을 지우기 위한 마커 (html-to-jpg가 사용)
         data-inline-edit=""
+        // B3: 검수 위반 → 본문 점프 앵커(있을 때만). data 속성이라 JPG 렌더에 안 보인다.
+        {...(dataField ? { "data-field": dataField } : {})}
         // 빈 값 placeholder는 편집 안내일 뿐 콘텐츠가 아니므로 JPG 캡처에서 제거
         {...(isEmpty ? { "data-edit-chrome": "" } : {})}
         aria-label={ariaLabel ?? t.detail.result.inlineEdit.editLabel}

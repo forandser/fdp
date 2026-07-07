@@ -19,7 +19,14 @@ import { DisclosureBlock } from "./DisclosureBlock"
 // v2.7: StickyMobileCta 삭제 (중앙 하단 복사/다운로드 버튼 제거 지시)
 import { QualityScoreCard } from "./QualityScoreCard"
 import { ResearchSummaryPanel } from "./ResearchSummaryPanel"
-import { WidthPresetSwitcher, WIDTH_PRESETS, type WidthPresetKey } from "./WidthPresetSwitcher"
+import {
+  WidthToolbar,
+  VALID_EXPORT_WIDTHS,
+  type ExportWidth,
+  type MobileWidth,
+} from "./WidthPresetSwitcher"
+import { RADIUS } from "./shell-theme"
+import { STORAGE_KEYS } from "@/lib/storage/keys"
 // v2.6: WorkJsonExporter 삭제 (사이드바 3개 액션 제거 지시)
 import { checkComplianceReport } from "@/lib/ai/compliance-report"
 import { scoreCopyQuality } from "@/lib/ai/copy-quality-score"
@@ -264,6 +271,19 @@ interface ResultViewProps {
 }
 
 const RED = "#E03131" // 사이드바 편집 컨트롤용 브랜드 색 (내보내는 페이지엔 accent 사용)
+
+/** B2(v5.7): 사이드바 구역 컨테이너/라벨 공통 스타일(검수 결과·화면 설정 3구역 재편). */
+const SIDEBAR_REGION_STYLE: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 12,
+}
+const SIDEBAR_REGION_LABEL_STYLE: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 800,
+  letterSpacing: 0.4,
+  color: "var(--color-neutral-500)",
+}
 const INK = "#212529"
 const SUB = "#495057"
 const MUTE = "#6E7480"
@@ -1954,15 +1974,85 @@ export function ResultView({
     [layoutVariant],
   )
   const captureRef = useRef<HTMLDivElement>(null)
-  /** v1.9: 폭 프리셋 토글 — 셀러 플랫폼 폭에 맞게 캡처. */
-  const [widthPreset, setWidthPreset] = useState<WidthPresetKey>("smartstore-860")
-  const previewWidth = useMemo(() => {
-    const p = WIDTH_PRESETS.find((x) => x.key === widthPreset)
-    return p?.width ?? 860
-  }, [widthPreset])
+  /**
+   * B1(v5.7): 폭 상태 단일화 — 이 컴포넌트가 "폭 상태의 주인"이다.
+   * - exportWidth = 플랫폼 폭(=JPG 저장 폭 = 미리보기 기본 폭). 툴바·ExportPanel이 공유하는 단일 소스.
+   *   v5.4의 fdp:export-presets(localStorage)로 기억·복원한다.
+   * - mobilePreview = 보조 미리보기(360/414). exportWidth(=저장 폭)는 절대 바꾸지 않는다.
+   *   다만 이 상태에선 공유 captureRef가 모바일 스타일(isMobile)로 렌더되므로, 그대로 캡처하면
+   *   플랫폼 폭 캔버스에 모바일 글자·여백이 찍힌다 → 이 동안 JPG 저장은 막는다(ExportPanel blockedReason).
+   * previewWidth = mobilePreview ?? exportWidth (모바일 확인 중이면 그 폭, 아니면 플랫폼 폭).
+   */
+  const [exportWidth, setExportWidth] = useState<ExportWidth>(860)
+  const [mobilePreview, setMobilePreview] = useState<MobileWidth | null>(null)
+  const previewWidth = mobilePreview ?? exportWidth
+
+  // v5.4 하이드레이션 안전: 서버 기본값(860)으로 프리렌더와 일치시키고 마운트 후 복원.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.EXPORT_PRESETS)
+      if (raw) {
+        const parsed = JSON.parse(raw) as { width?: number }
+        if (VALID_EXPORT_WIDTHS.has(parsed.width as ExportWidth)) {
+          setExportWidth(parsed.width as ExportWidth)
+        }
+      }
+    } catch {
+      // 프라이빗 모드·오염 JSON 등 복원 실패는 무시하고 기본값 사용
+    }
+  }, [])
+
+  /** 플랫폼 폭 변경 → 미리보기·내보내기 동시 반영 + localStorage 기억(모바일 보조는 해제). */
+  const handleChangeExportWidth = (w: ExportWidth) => {
+    setExportWidth(w)
+    setMobilePreview(null) // 플랫폼을 고르면 그 폭을 바로 보여준다(WYSIWYG)
+    try {
+      // targetSliceHeight(ExportPanel 소유)를 보존하도록 병합 저장.
+      const raw = localStorage.getItem(STORAGE_KEYS.EXPORT_PRESETS)
+      const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {}
+      localStorage.setItem(STORAGE_KEYS.EXPORT_PRESETS, JSON.stringify({ ...parsed, width: w }))
+    } catch {
+      // 저장 실패(프라이빗 모드 등)는 무시 — 이번 세션 동작엔 영향 없음
+    }
+  }
+
+  /** 모바일 보조 미리보기 토글(같은 값 다시 누르면 해제). 내보내기 폭은 건드리지 않는다. */
+  const handleToggleMobilePreview = (w: MobileWidth) => {
+    setMobilePreview((prev) => (prev === w ? null : w))
+  }
+
+  /**
+   * B3(v5.7): 검수 위반 클릭 → 본문의 해당 필드로 점프 + 1.5초 배경 플래시.
+   * data-field(=compliance field 경로: "story"·"keyPoints[0].body" 등)로 표시 요소를 찾는다.
+   * 플래시는 background-color 인라인만 건드린다 — 대상은 data-inline-edit 표시 span 이라
+   * 캡처 클론 정리(배경 중화)가 그대로 지워 JPG 위생을 해치지 않는다
+   * (html-to-jpg·artboard-segments 두 내보내기 경로 공통). 대상이 없으면(예: heroKicker·고정문구) 무동작.
+   */
+  const handleJumpToField = (field: string) => {
+    if (typeof document === "undefined") return
+    const el = document.querySelector<HTMLElement>(`[data-field="${field}"]`)
+    if (!el) return
+    el.scrollIntoView({ behavior: "smooth", block: "center" })
+    el.style.transition = "background-color 0s"
+    el.style.backgroundColor = "#FFE08A" // 웜 하이라이트(코랄 셸과 조화)
+    requestAnimationFrame(() => {
+      el.style.transition = "background-color 1.4s ease"
+      el.style.backgroundColor = "transparent"
+    })
+    window.setTimeout(() => {
+      el.style.transition = ""
+      el.style.backgroundColor = ""
+    }, 1600)
+  }
+
+  /** B2(v5.7): 카피 전체 다시 생성 — 편집 손실 위험이 커 1회 확인 후 실행(오클릭 방지). */
+  const handleFullRegen = () => {
+    if (typeof window !== "undefined" && !window.confirm(t.detail.result.retryFullConfirm)) return
+    onRetry()
+  }
+
   // 폰 미리보기(360/414)만 모바일 레이아웃(패딩·폰트 축소).
-  // 쿠팡 780·11번가 831·스토어 860·자사몰 1000 프리셋과 ExportPanel 내보내기 폭
-  // (780/831/860/1000)은 전부 이미지 매체 = 데스크톱 취급.
+  // 쿠팡 780·11번가 831·스토어 860·자사몰 1000은 전부 이미지 매체 = 데스크톱 취급.
   // 임계값 500 = 폰 프리셋(≤414)과 쿠팡(780) 사이.
   const isMobile = previewWidth < 500
 
@@ -2336,21 +2426,16 @@ export function ResultView({
       }}
     >
       <div>
-        <p
-          style={{
-            textAlign: "center",
-            fontSize: 13,
-            color: MUTE,
-            marginBottom: 14,
-          }}
-        >
-          {t.detail.result.inlineEdit.hint}
-          {previewScale < 0.999 && (
-            <span style={{ marginLeft: 8, color: MUTE }}>
-              · 실제 {previewWidth}px를 {Math.round(previewScale * 100)}%로 축소해 보는 중 (저장은 원본 크기)
-            </span>
-          )}
-        </p>
+        {/* B1: 아트보드 위 스티키 통합 폭 툴바 — 미리보기·내보내기 폭 단일 컨트롤 + 편집 힌트/축소 안내.
+            captureRef 바깥 형제 + fdp-no-print → JPG 캡처에 안 찍힌다. */}
+        <WidthToolbar
+          exportWidth={exportWidth}
+          onChangeExportWidth={handleChangeExportWidth}
+          mobilePreview={mobilePreview}
+          onToggleMobilePreview={handleToggleMobilePreview}
+          previewWidth={previewWidth}
+          previewScale={previewScale}
+        />
 
         {/* scale-to-fit: 아트보드는 실제 폭으로 렌더, 화면에는 축소 표시 (v3.0.1) */}
         <div ref={previewOuterRef} style={{ width: "100%" }}>
@@ -2799,95 +2884,118 @@ export function ResultView({
           {t.detail.result.title}
         </h3>
 
-        {/* QualityScoreCard — 카피 종합 점수 (v2.1 심플 모드) */}
-        <QualityScoreCard score={qualityScore} />
+        {/* B2(v5.7): 사이드바 3구역 재편 — 검수 결과 / 화면 설정 / JPG로 내보내기.
+            다운로드는 내보내기 구역의 sticky 푸터로 항상 노출(사이드바가 자체 스크롤 컨테이너). */}
 
-        {/* DisclosureBlock — 식약처 자동 검수 + 면책 (v1.8 — 위반 있으면 자동 강조) */}
-        <DisclosureBlock report={complianceReport} />
+        {/* ── 구역 1: 검수 결과 (품질·검수·리서치·필수표기) ── */}
+        <section style={SIDEBAR_REGION_STYLE}>
+          <div style={SIDEBAR_REGION_LABEL_STYLE}>{t.detail.result.sidebar.reviewLabel}</div>
 
-        {/* v3.5: AI 리서치 요약 (아트보드 밖 — JPG 미포함). 리서치 미사용/실패 시 미노출. */}
-        <ResearchSummaryPanel research={copy.research} />
+          {/* QualityScoreCard — 카피 종합 점수 + 개선 1순위 1줄(B3) */}
+          <QualityScoreCard score={qualityScore} />
 
-        {missing.length > 0 && (
-          <div
+          {/* DisclosureBlock — 식약처 자동 검수(위반 있으면 자동 강조). 위반 클릭 → 본문 점프(B3). */}
+          <DisclosureBlock report={complianceReport} onJumpToField={handleJumpToField} />
+
+          {/* v3.5: AI 리서치 요약 (아트보드 밖 — JPG 미포함). 리서치 미사용/실패 시 미노출. */}
+          <ResearchSummaryPanel research={copy.research} />
+
+          {missing.length > 0 && (
+            <div
+              style={{
+                padding: 10,
+                background: "var(--color-danger-tint)",
+                border: "1px solid var(--color-danger)",
+                borderRadius: 6,
+                color: "var(--color-danger)",
+                fontSize: 13,
+                lineHeight: 1.5,
+              }}
+            >
+              ⚠️ {t.detail.result.missingRequired}
+              <br />
+              <strong>{missing.join(", ")}</strong>
+              <br />
+              <span style={{ color: "var(--color-neutral-700)" }}>
+                이 항목이 없으면 플랫폼에서 미노출 처리될 수 있어요.
+              </span>
+            </div>
+          )}
+        </section>
+
+        {/* ── 구역 2: 화면 설정 (보정 토글 + 전체 재생성) ── */}
+        <section
+          style={{
+            ...SIDEBAR_REGION_STYLE,
+            padding: 12,
+            background: "var(--color-bg-subtle)",
+            borderRadius: RADIUS.card,
+          }}
+        >
+          <div style={SIDEBAR_REGION_LABEL_STYLE}>{t.detail.result.sidebar.screenLabel}</div>
+
+          {/* 사진 자동 보정 */}
+          <label
             style={{
-              padding: 10,
-              background: "var(--color-danger-tint)",
-              border: "1px solid var(--color-danger)",
-              borderRadius: 6,
-              color: "var(--color-danger)",
-              fontSize: 13,
-              lineHeight: 1.5,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "6px 10px",
+              background: "var(--color-bg-surface)",
+              borderRadius: RADIUS.control,
+              cursor: "pointer",
+              fontSize: 12,
+              color: "var(--color-neutral-700)",
             }}
           >
-            ⚠️ {t.detail.result.missingRequired}
-            <br />
-            <strong>{missing.join(", ")}</strong>
-            <br />
-            <span style={{ color: "var(--color-neutral-700)" }}>
-              이 항목이 없으면 플랫폼에서 미노출 처리될 수 있어요.
-            </span>
-          </div>
-        )}
+            <input
+              type="checkbox"
+              checked={enhance}
+              onChange={(e) => setEnhance(e.target.checked)}
+              style={{ accentColor: RED }}
+            />
+            {t.detail.result.enhanceLabel}
+          </label>
 
-        {/* v2.1 심플: 주요 액션 2개만 상단에 */}
+          {/* B2: 전체 재생성은 텍스트 버튼으로 강등 + 1회 확인(오클릭·편집손실 방지). */}
+          <button
+            type="button"
+            onClick={handleFullRegen}
+            title={t.detail.result.retryFullConfirm}
+            style={{
+              alignSelf: "flex-start",
+              padding: "6px 4px",
+              background: "transparent",
+              border: "none",
+              color: "var(--color-neutral-600)",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              textDecoration: "underline",
+              textUnderlineOffset: 3,
+            }}
+          >
+            ↺ {t.detail.result.retryFull}
+          </button>
+        </section>
+
+        {/* ── 구역 3: JPG로 내보내기 (옵션 카드 + 다운로드 sticky 푸터) ──
+            ExportPanel이 프래그먼트로 [옵션 카드]+[sticky 다운로드]를 형제로 뱉으므로,
+            사이드바의 마지막 자식이 되어 다운로드가 스크롤과 무관하게 항상 보인다.
+            좁은 스택 레이아웃(isNarrowLayout)에선 sticky 해제 — 페이지 스크롤을 방해하지 않게. */}
         <ExportPanel
           targetRef={captureRef}
           baseName={sanitizedName}
+          width={exportWidth}
+          stickyDownload={!isNarrowLayout}
           blockedReason={
             copy.headline.trim().length === 0
               ? "카피가 아직 비어 있어요. 3단계에서 카피를 생성(또는 직접 입력)한 뒤 저장해 주세요."
-              : undefined
+              : mobilePreview != null
+                ? "모바일로 확인 중이에요. 저장하려면 위 툴바에서 플랫폼 폭(쿠팡·스토어 등)으로 돌아가 주세요. 지금 저장하면 모바일 글자·여백이 그대로 찍혀요."
+                : undefined
           }
         />
-
-        <ActionButton onClick={onRetry}>{t.detail.result.retry}</ActionButton>
-
-
-        {/* v2.1: 나머지 옵션은 "고급 설정" details로 접기 */}
-        <details style={{ marginTop: 4 }}>
-          <summary
-            style={{
-              cursor: "pointer",
-              fontSize: 12,
-              fontWeight: 700,
-              color: "var(--color-neutral-700)",
-              padding: "6px 0",
-              userSelect: "none",
-            }}
-          >
-            ⚙️ 고급 설정
-          </summary>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 8 }}>
-            {/* 폭 변경 */}
-            <WidthPresetSwitcher value={widthPreset} onChange={setWidthPreset} />
-
-            {/* 사진 자동 보정 */}
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "6px 10px",
-                background: "var(--color-bg-subtle)",
-                borderRadius: 6,
-                cursor: "pointer",
-                fontSize: 12,
-                color: "var(--color-neutral-700)",
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={enhance}
-                onChange={(e) => setEnhance(e.target.checked)}
-                style={{ accentColor: RED }}
-              />
-              {t.detail.result.enhanceLabel}
-            </label>
-
-            {/* v2.6: 전체 카피 복사·JSON 내보내기·불러오기 삭제 (사용자 지시) */}
-          </div>
-        </details>
       </aside>
 
       {/* v2.7: StickyMobileCta 삭제 (사이드바에 이미 있으므로 중복 제거) */}
@@ -7789,35 +7897,5 @@ function SectionTitle({
     </>
   )
 }
-
-function ActionButton({
-  children,
-  onClick,
-  disabled,
-}: {
-  children: React.ReactNode
-  onClick?: () => void
-  disabled?: boolean
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        width: "100%",
-        padding: "12px 16px",
-        background: "var(--color-bg-surface)",
-        color: "var(--color-neutral-900)",
-        border: "1px solid var(--color-neutral-300)",
-        borderRadius: 6,
-        fontSize: 14,
-        fontWeight: 600,
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.5 : 1,
-      }}
-    >
-      {children}
-    </button>
-  )
-}
+// B2(v5.7): ActionButton(전체폭 채움 버튼) 제거 — 사이드바 재편으로 "다시 만들기"가
+// 텍스트 버튼(handleFullRegen)으로 강등되며 유일 사용처가 사라졌다.

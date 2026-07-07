@@ -98,7 +98,25 @@ export function QualityScoreCard({ score }: QualityScoreCardProps) {
         </div>
       </div>
 
-      {/* v2.6: 개선 힌트·차원별 게이지 삭제 — 총점+등급 배지만 유지 */}
+      {/* B3(v5.7): 최상위 개선 제안 1줄만 복원 — 전체 게이지(v2.6 삭제)는 되살리지 않는다.
+          "무엇을 고치면 점수가 오르는지" 한 줄 힌트만 준다. */}
+      {score.topImprovements.length > 0 && (
+        <div
+          style={{
+            marginTop: 10,
+            paddingTop: 10,
+            borderTop: "1px solid var(--color-neutral-100)",
+            fontSize: 12,
+            color: "var(--color-neutral-600)",
+            lineHeight: 1.5,
+          }}
+        >
+          <span style={{ fontWeight: 700, color: "var(--color-neutral-700)" }}>
+            개선 1순위 ·{" "}
+          </span>
+          {score.topImprovements[0]}
+        </div>
+      )}
     </div>
   )
 }

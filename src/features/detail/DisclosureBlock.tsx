@@ -7,15 +7,22 @@
  * 식약처 §8 위반 가능성을 Tier별로 안내.
  */
 
+import type { ReactNode } from "react"
 import type { ComplianceReport } from "@/lib/ai/compliance-report"
 
 interface DisclosureBlockProps {
   report?: ComplianceReport | null
   /** 검수 상세 페널 토글 — 모바일에서 details/summary로 접기 */
   defaultOpen?: boolean
+  /**
+   * B3(v5.7): 위반/불일치 항목 클릭 → 본문의 해당 필드로 점프(scrollIntoView + 플래시).
+   * ResultView가 field(예: "story", "keyPoints[0].body")를 받아 data-field 요소를 찾는다.
+   * 미지정 시 항목은 클릭 불가(정적 텍스트) 그대로.
+   */
+  onJumpToField?: (field: string) => void
 }
 
-export function DisclosureBlock({ report, defaultOpen }: DisclosureBlockProps) {
+export function DisclosureBlock({ report, defaultOpen, onJumpToField }: DisclosureBlockProps) {
   const hasViolations = report && report.violations.length > 0
   const originMismatches = report?.originMismatches ?? []
   const hasOriginMismatch = originMismatches.length > 0
@@ -64,12 +71,14 @@ export function DisclosureBlock({ report, defaultOpen }: DisclosureBlockProps) {
           <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
             {originMismatches.slice(0, 8).map((m, i) => (
               <li key={`om-${i}`} style={{ marginBottom: 4 }}>
-                <strong style={{ color: "#C92A2A" }}>&ldquo;{m.region}&rdquo;</strong>
-                <span style={{ color: "#868E96" }}> ({m.field})</span>
-                <br />
-                <span style={{ color: "#868E96", fontSize: 11 }}>
-                  입력 산지: {m.origin}
-                </span>
+                <JumpRow field={m.field} onJump={onJumpToField}>
+                  <strong style={{ color: "#C92A2A" }}>&ldquo;{m.region}&rdquo;</strong>
+                  <span style={{ color: "#868E96" }}> ({m.field})</span>
+                  <br />
+                  <span style={{ color: "#868E96", fontSize: 11 }}>
+                    입력 산지: {m.origin}
+                  </span>
+                </JumpRow>
               </li>
             ))}
           </ul>
@@ -123,11 +132,13 @@ export function DisclosureBlock({ report, defaultOpen }: DisclosureBlockProps) {
             >
               {report.violations.slice(0, 8).map((v, i) => (
                 <li key={`v-${i}`} style={{ marginBottom: 4 }}>
-                  <strong>[Tier{v.tier}]</strong> {v.matched} ({v.field})
-                  <br />
-                  <span style={{ color: "#868E96", fontSize: 11 }}>
-                    {v.clause}
-                  </span>
+                  <JumpRow field={v.field} onJump={onJumpToField}>
+                    <strong>[Tier{v.tier}]</strong> {v.matched} ({v.field})
+                    <br />
+                    <span style={{ color: "#868E96", fontSize: 11 }}>
+                      {v.clause}
+                    </span>
+                  </JumpRow>
                 </li>
               ))}
             </ul>
@@ -140,5 +151,49 @@ export function DisclosureBlock({ report, defaultOpen }: DisclosureBlockProps) {
         </details>
       )}
     </div>
+  )
+}
+
+/**
+ * B3(v5.7): 위반 항목 클릭 → 본문 점프 트리거.
+ * onJump 없으면 정적 텍스트 그대로(감싸기만), 있으면 좌측정렬 텍스트 버튼으로 승격.
+ * 이 컴포넌트는 사이드바(캡처 밖)에만 렌더되므로 JPG 위생과 무관하다.
+ */
+function JumpRow({
+  field,
+  onJump,
+  children,
+}: {
+  field: string
+  onJump?: (field: string) => void
+  children: ReactNode
+}) {
+  if (!onJump) return <>{children}</>
+  return (
+    <button
+      type="button"
+      onClick={() => onJump(field)}
+      title="클릭하면 본문에서 이 위치로 이동해요"
+      onMouseEnter={(e) => (e.currentTarget.style.textDecoration = "underline")}
+      onMouseLeave={(e) => (e.currentTarget.style.textDecoration = "none")}
+      style={{
+        display: "block",
+        width: "100%",
+        textAlign: "left",
+        padding: 0,
+        margin: 0,
+        border: "none",
+        background: "transparent",
+        font: "inherit",
+        color: "inherit",
+        lineHeight: "inherit",
+        cursor: "pointer",
+      }}
+    >
+      {children}
+      <span aria-hidden style={{ marginLeft: 4, opacity: 0.55, fontSize: 11 }}>
+        ↷ 이동
+      </span>
+    </button>
   )
 }

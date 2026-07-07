@@ -79,8 +79,24 @@ export function EditableResultText({
       ariaLabel={ariaLabel}
       preserveWhitespace={preserveWhitespace}
       renderDisplay={renderDisplay}
+      dataField={pathToFieldId(path)}
     />
   )
+}
+
+/**
+ * B3(v5.7): CopyTextPath → 검수 필드 식별자 문자열.
+ * compliance-report.ts 의 flattenCopy 표기와 정확히 일치시킨다
+ * (예: ["keyPoints",0,"body"] → "keyPoints[0].body", ["story"] → "story").
+ * 이 문자열이 InlineEdit 표시 span 의 data-field 가 되고, 검수 위반 클릭 시 이 값으로 점프한다.
+ */
+function pathToFieldId(path: CopyTextPath): string {
+  let s = ""
+  path.forEach((seg, i) => {
+    if (typeof seg === "number") s += `[${seg}]`
+    else s += i === 0 ? seg : `.${seg}`
+  })
+  return s
 }
 
 // ────────────────────────────────────────────────
