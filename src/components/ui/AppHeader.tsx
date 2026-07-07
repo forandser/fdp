@@ -97,21 +97,24 @@ export function AppHeader({
             <span>{keyMask}</span>
           </span>
         )}
-        <button
-          type="button"
-          onClick={() => void onClearKey()}
-          style={{
-            padding: "6px 14px",
-            borderRadius: "var(--radius-xs)",
-            border: "1px solid var(--color-neutral-400)",
-            background: "var(--color-bg-surface)",
-            color: "var(--color-neutral-900)",
-            fontSize: "var(--font-size-sm)",
-            cursor: "pointer",
-          }}
-        >
-          {t.apiKey.clear}
-        </button>
+        {/* v5.4(작업1): 키가 없을 땐(둘러보기) 삭제 버튼을 숨긴다 — 지울 게 없다. */}
+        {keyMask && (
+          <button
+            type="button"
+            onClick={() => void onClearKey()}
+            style={{
+              padding: "6px 14px",
+              borderRadius: "var(--radius-xs)",
+              border: "1px solid var(--color-neutral-400)",
+              background: "var(--color-bg-surface)",
+              color: "var(--color-neutral-900)",
+              fontSize: "var(--font-size-sm)",
+              cursor: "pointer",
+            }}
+          >
+            {t.apiKey.clear}
+          </button>
+        )}
       </div>
     </header>
   )

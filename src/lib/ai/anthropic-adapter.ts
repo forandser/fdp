@@ -80,7 +80,12 @@ interface AnthropicErrorShape {
   error?: { type?: string; message?: string }
 }
 
-function classifyError(err: unknown): DiagnosticStatus {
+/**
+ * v5.4(작업3): API 에러를 원인 코드로 분류. 진단(diagnose)뿐 아니라 생성·재생성 실패
+ * 경로에서도 원인별 한국어 안내를 띄우려고 export 한다. 순수 함수(어댑터 상태 무관).
+ * 컴포넌트는 provider.ts를 통해서만 가져온다(어댑터 직접 import 금지 규칙 유지).
+ */
+export function classifyError(err: unknown): DiagnosticStatus {
   const e = err as AnthropicErrorShape
   const status = e?.status
   const errType = (e?.error?.type ?? "").toLowerCase()

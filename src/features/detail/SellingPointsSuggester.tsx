@@ -37,6 +37,11 @@ interface Props {
   customKeywords: string[]
   /** 카드 클릭 시 토글 — 부모가 customKeywords 갱신 */
   onToggle: (point: string) => void
+  /**
+   * v5.4(작업1): AI 호출 전 키 보장. 키 없으면 부모가 등록 모달을 띄우고,
+   * 성공 시 true(→그대로 추천 실행)/취소 시 false. 없으면 게이트 없이 진행(하위호환).
+   */
+  onRequireKey?: () => Promise<boolean>
 }
 
 export function SellingPointsSuggester({
@@ -51,6 +56,7 @@ export function SellingPointsSuggester({
   trust,
   customKeywords,
   onToggle,
+  onRequireKey,
 }: Props) {
   const [points, setPoints] = useState<string[] | null>(null)
   const [loading, setLoading] = useState(false)
@@ -72,6 +78,8 @@ export function SellingPointsSuggester({
       setError(t.detail.suggest.needBasics)
       return
     }
+    // v5.4(작업1): 키 없으면 등록 모달 → 성공 시 이어서 추천. 취소면 조용히 중단.
+    if (onRequireKey && !(await onRequireKey())) return
     setError(null)
     setLoading(true)
     try {

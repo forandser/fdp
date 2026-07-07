@@ -7,7 +7,9 @@ import { ResultView, emptyCopy, type LayoutVariant } from "./ResultView"
 import { SeasonHint } from "./SeasonHint"
 import { SellingPointsSuggester } from "./SellingPointsSuggester"
 import { SelfReviewPanel } from "./SelfReviewPanel"
-import { getAIProvider } from "@/lib/ai/provider"
+import { getAIProvider, classifyError, type DiagnosticStatus } from "@/lib/ai/provider"
+import { ApiKeyGate } from "@/features/api-key/ApiKeyGate"
+import { getKeySource } from "@/lib/ai/key-source"
 import { captureArtboardSegments } from "@/lib/exporters/artboard-segments"
 import type {
   CopyInput,
@@ -32,8 +34,18 @@ import {
   newWorkId,
   makeThumbDataUrl,
   getWork,
+  getLatestWork,
   type Work,
 } from "@/lib/storage/works-db"
+import {
+  getDraft,
+  saveDraftMeta,
+  saveDraftPhotos,
+  deleteDraft,
+  computePhotoSig,
+  type DraftForm,
+  type DraftPhotos,
+} from "@/lib/storage/draft-db"
 import { PRESET_KEYWORDS } from "@/domain/keywords"
 import { getEnhancedUrl } from "@/lib/image-enhance/enhance-runner"
 import { t } from "@/lib/i18n"
@@ -216,7 +228,14 @@ function mergeUsage(base: UsageInfo, extra?: UsageInfo): UsageInfo {
   }
 }
 
-export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
+export function DetailMaker({
+  initialWorkId,
+  onKeyRegistered,
+}: {
+  initialWorkId?: string
+  /** v5.4(작업1): 모달로 키를 등록했을 때 부모(헤더 마스크 등)에 알린다. */
+  onKeyRegistered?: () => void | Promise<void>
+}) {
   const [stage, setStage] = useState<Stage>(initialWorkId ? "restoring" : "input")
   const [images, setImages] = useState<UploadedImage[]>([])
   /**
@@ -388,6 +407,17 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   }
   const [generationStep, setGenerationStep] = useState(0)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  /**
+   * v5.4(작업3): 생성·재생성 실패 원인(classifyError 결과). null이면 에러 없음.
+   * "ok"는 넣지 않는다 — 배너 문구는 실패 상태에서만 뜬다.
+   */
+  const [genError, setGenError] = useState<DiagnosticStatus | null>(null)
+  /** v5.4(작업1): AI 필요 동작 클릭 시 뜨는 키 등록 모달 표시 여부. */
+  const [keyGateOpen, setKeyGateOpen] = useState(false)
+  /** 모달 결과를 기다리는 Promise resolver — 등록 성공(true)/취소(false)로 대기 중 동작을 이어가거나 중단. */
+  const keyGateResolveRef = useRef<((ok: boolean) => void) | null>(null)
+  /** 마지막으로 시도한 AI 동작 — 에러 배너의 '다시 시도'·키 재등록 후 이어가기에 재실행. */
+  const lastActionRef = useRef<(() => void | Promise<void>) | null>(null)
   const [result, setResult] = useState<CopyOutput | null>(null)
   const [resultMeta, setResultMeta] = useState<{
     priceNum: number
@@ -418,11 +448,43 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   /** 복원 시 생성된 objectURL — 언마운트 시 일괄 해제 */
   const restoredUrlsRef = useRef<string[]>([])
 
-  /** 데스크탑(>=1280) 좌우 분할 여부 */
-  const [isWide, setIsWide] = useState(() => {
-    if (typeof window === "undefined") return true
-    return window.innerWidth >= SPLIT_BREAKPOINT
-  })
+  /**
+   * v5.4(작업2): 재진입 시 발견한 초안 — 있으면 "이어서 하기" 배너를 띄운다(복원/버리기).
+   * 배너가 떠 있는 동안엔 자동 저장을 멈춰(빈 폼이 초안을 덮어쓰지 않게) 복원 결정을 먼저 받는다.
+   * 초안 시스템은 신규 작업(initialWorkId 없음)에서만 동작 — 기존 작업 편집엔 관여하지 않는다.
+   */
+  const draftEnabled = !initialWorkId
+  const [draftBanner, setDraftBanner] = useState<{ savedAt: number } | null>(null)
+  /** 초안 조회가 끝났는지 — 끝나기 전엔 자동 저장이 앞질러 초안을 덮지 않게 게이트. */
+  const [draftChecked, setDraftChecked] = useState(!!initialWorkId)
+  /** 마지막으로 DRAFT_PHOTOS 에 기록한 사진 서명 — 같으면 사진 재기록 스킵(대용량 반복 방지). */
+  const lastPhotoSigRef = useRef<string | null>(null)
+  /** 자동 저장 디바운스 타이머. */
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  /**
+   * v5.4(작업5): "지난 설정 이어받기" 원천 — 최근 작업 전체(가게 공통 필드 읽기용).
+   * 빈 폼 + 최근 작업 존재 시에만 배너를 띄운다. 초안 배너가 우선(둘 다 있으면 초안만).
+   */
+  const [carrySource, setCarrySource] = useState<Work | null>(null)
+  const [carryApplied, setCarryApplied] = useState(false)
+  /**
+   * 지난 작업에서 켜져 있던 신뢰 약속 — 자동 적용 금지(허위표시 방지). 켰던 항목을 보여주되
+   * 셀러가 직접 켜도록 TrustPromiseChecks 에 힌트로만 전달한다.
+   */
+  const [carriedTrust, setCarriedTrust] = useState<{
+    sameDayHarvest: boolean
+    coldChain: boolean
+    refundGuarantee: boolean
+  } | null>(null)
+
+  /**
+   * 데스크탑(>=1280) 좌우 분할 여부.
+   * v5.4 하이드레이션 수정: 초기값에서 innerWidth를 읽으면 프리렌더 HTML(서버 true)과
+   * 좁은 클라이언트 첫 렌더가 어긋난다(키 게이트 제거로 이 트리가 처음 SSG 대상이 됨).
+   * 서버 기본값(true)으로 시작하고, 아래 effect의 onResize()가 마운트 직후 동기화한다.
+   */
+  const [isWide, setIsWide] = useState(true)
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -716,6 +778,299 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
 
   const isDemoMode = !result && !hasUserInput
 
+  /**
+   * v5.4(작업2): 저장할 가치가 있는 입력이 있는지 — 텍스트/키워드뿐 아니라 신뢰 체크·후기·
+   * 전용 슬롯 사진까지 포함(hasUserInput 보다 넓다). 아무 의미 없는 빈 폼은 초안을 만들지 않는다.
+   */
+  const hasDraftableInput =
+    hasUserInput ||
+    producerName.trim().length > 0 ||
+    producerRegion.trim().length > 0 ||
+    farmerYears.trim().length > 0 ||
+    sameDayHarvest ||
+    coldChain ||
+    refundGuarantee ||
+    reviews.some((r) => r.text.trim().length > 0) ||
+    packagingImage != null ||
+    sizeImage != null
+
+  /** v5.4(작업2): 현재 폼/토글 스냅샷(사진 제외) — 자동 저장 페이로드. */
+  const draftForm = useMemo<DraftForm>(
+    () => ({
+      category,
+      productName,
+      variety,
+      origin,
+      originFromDemo,
+      weight,
+      brix,
+      sizeGrade,
+      extraDescription,
+      farmIntro,
+      producerName,
+      producerRegion,
+      farmerYears,
+      sameDayHarvest,
+      coldChain,
+      refundGuarantee,
+      reviews,
+      presetKeywords,
+      customKeywords,
+      researchEnabled,
+      enhanceImages,
+      photoAnalysisEnabled,
+      layoutVariant,
+    }),
+    [
+      category,
+      productName,
+      variety,
+      origin,
+      originFromDemo,
+      weight,
+      brix,
+      sizeGrade,
+      extraDescription,
+      farmIntro,
+      producerName,
+      producerRegion,
+      farmerYears,
+      sameDayHarvest,
+      coldChain,
+      refundGuarantee,
+      reviews,
+      presetKeywords,
+      customKeywords,
+      researchEnabled,
+      enhanceImages,
+      photoAnalysisEnabled,
+      layoutVariant,
+    ],
+  )
+
+  /** v5.4(작업2): 현재 사진 구성 서명 — 변경 시에만 사진 blob 을 다시 기록하기 위한 비교값. */
+  const currentPhotoSig = useMemo(
+    () =>
+      computePhotoSig(
+        images.map((i) => i.id),
+        packagingImage?.id ?? null,
+        sizeImage?.id ?? null,
+      ),
+    [images, packagingImage, sizeImage],
+  )
+
+  /**
+   * v5.4(작업2): 재진입 시 초안 조회 + (작업5) 최근 작업 원천 로드 — 신규 작업에서만 1회.
+   * 초안이 있으면 배너를 띄우고, 없으면 최근 작업이 있을 때 이어받기 배너 후보를 세운다.
+   */
+  useEffect(() => {
+    if (!draftEnabled) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const draft = await getDraft()
+        if (cancelled) return
+        if (draft) {
+          lastPhotoSigRef.current = draft.photoSig
+          setDraftBanner({ savedAt: draft.savedAt })
+        }
+        // 작업5: 이어받기 원천은 초안 유무와 무관하게 로드(초안 배너가 우선 노출됨).
+        const latest = await getLatestWork()
+        if (!cancelled && latest) setCarrySource(latest)
+      } catch (e) {
+        console.error("[draft-init]", e)
+      } finally {
+        if (!cancelled) setDraftChecked(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [draftEnabled])
+
+  /**
+   * v5.4 리뷰 보완: 배너를 무시하고 새 입력을 시작하면(폼이 빈 상태를 벗어나면) 배너를 접고
+   * 자동 저장을 재개한다 — 복원 대신 새로 쓰기를 택한 암묵적 결정으로 간주. 이 가드가 없으면
+   * 배너가 떠 있는 내내 자동 저장이 꺼져 있어 새 입력이 통째로 유실되는 공백이 생긴다.
+   * (폼이 비어 있는 동안엔 배너가 유지되므로 "빈 폼이 초안을 덮지 않게" 보호는 그대로.)
+   */
+  useEffect(() => {
+    if (draftBanner && hasDraftableInput) setDraftBanner(null)
+  }, [draftBanner, hasDraftableInput])
+
+  /**
+   * v5.4(작업2): 입력 초안 자동 저장 — 디바운스 1.5초. input 단계에서만, 초안 조회가 끝나고
+   * 복원 배너가 정리된 뒤에만 저장한다(빈 폼이 초안을 덮지 않게). 폼 메타는 매번,
+   * 사진 blob 은 서명이 바뀐 경우에만 기록한다(대용량 반복 직렬화 방지).
+   */
+  useEffect(() => {
+    if (!draftEnabled) return
+    if (stage !== "input") return
+    if (!draftChecked || draftBanner) return
+    if (!hasDraftableInput) return
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+    draftTimerRef.current = setTimeout(() => {
+      void (async () => {
+        try {
+          await saveDraftMeta(draftForm, currentPhotoSig)
+          if (lastPhotoSigRef.current !== currentPhotoSig) {
+            const photos: DraftPhotos = {
+              imageBlobs: images.map((i) => i.file),
+              imageIds: images.map((i) => i.id),
+              packagingBlob: packagingImage?.file ?? null,
+              sizeBlob: sizeImage?.file ?? null,
+            }
+            await saveDraftPhotos(photos)
+            lastPhotoSigRef.current = currentPhotoSig
+          }
+        } catch (e) {
+          console.error("[draft-save]", e)
+        }
+      })()
+    }, 1500)
+    return () => {
+      if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+    }
+    // draftForm/currentPhotoSig 가 실제 입력 변화를 대표하므로 개별 필드는 의존성에서 생략.
+  }, [
+    draftEnabled,
+    stage,
+    draftChecked,
+    draftBanner,
+    hasDraftableInput,
+    draftForm,
+    currentPhotoSig,
+    images,
+    packagingImage,
+    sizeImage,
+  ])
+
+  /** v5.4(작업2): 초안 복원 — 폼/토글 + 사진(전체) 되살리기. 복원 후 배너를 닫는다. */
+  const handleRestoreDraft = async () => {
+    try {
+      const draft = await getDraft()
+      if (!draft) {
+        setDraftBanner(null)
+        return
+      }
+      const f = draft.form
+      // 사진 복원(있으면) — objectURL 은 언마운트 시 일괄 해제.
+      if (draft.photos) {
+        const restored: UploadedImage[] = []
+        for (let i = 0; i < draft.photos.imageBlobs.length; i++) {
+          const blob = draft.photos.imageBlobs[i]
+          if (!blob) continue
+          const img = await blobToUploadedImage(blob, i, draft.photos.imageIds?.[i])
+          if (img) {
+            restored.push(img)
+            restoredUrlsRef.current.push(img.url)
+          }
+        }
+        setImages(restored)
+        if (draft.photos.packagingBlob) {
+          const pk = await blobToUploadedImage(draft.photos.packagingBlob, 2000)
+          if (pk) {
+            setPackagingImage(pk)
+            restoredUrlsRef.current.push(pk.url)
+          }
+        }
+        if (draft.photos.sizeBlob) {
+          const sz = await blobToUploadedImage(draft.photos.sizeBlob, 2001)
+          if (sz) {
+            setSizeImage(sz)
+            restoredUrlsRef.current.push(sz.url)
+          }
+        }
+      }
+      setCategory(f.category)
+      setProductName(f.productName)
+      setVariety(f.variety)
+      setOrigin(f.origin)
+      setOriginFromDemo(f.originFromDemo)
+      setWeight(f.weight)
+      setBrix(f.brix)
+      setSizeGrade(f.sizeGrade)
+      setExtraDescription(f.extraDescription)
+      setFarmIntro(f.farmIntro)
+      setProducerName(f.producerName)
+      setProducerRegion(f.producerRegion)
+      setFarmerYears(f.farmerYears)
+      setSameDayHarvest(f.sameDayHarvest)
+      setColdChain(f.coldChain)
+      setRefundGuarantee(f.refundGuarantee)
+      setReviews(Array.isArray(f.reviews) ? f.reviews : [])
+      setPresetKeywords(f.presetKeywords)
+      setCustomKeywords(f.customKeywords)
+      setResearchEnabled(f.researchEnabled)
+      setEnhanceImages(f.enhanceImages)
+      setPhotoAnalysisEnabled(f.photoAnalysisEnabled)
+      setLayoutVariant(f.layoutVariant)
+      lastPhotoSigRef.current = draft.photoSig
+      // 복원했으면 이어받기 배너는 불필요.
+      setCarryApplied(true)
+      setDraftBanner(null)
+    } catch (e) {
+      console.error("[draft-restore]", e)
+      setDraftBanner(null)
+    }
+  }
+
+  /** v5.4(작업2): 초안 버리기 — 저장분 삭제 + 배너 닫기(빈 폼 유지). */
+  const handleDiscardDraft = async () => {
+    if (typeof window !== "undefined" && !window.confirm(t.detail.draft.discardConfirm)) return
+    try {
+      await deleteDraft()
+    } catch (e) {
+      console.error("[draft-discard]", e)
+    }
+    lastPhotoSigRef.current = null
+    setDraftBanner(null)
+  }
+
+  /**
+   * v5.4(작업5): 지난 설정 이어받기 — 가게 공통 필드(농부·산지·연차)만 채운다.
+   * 상품 고유 필드(상품명·중량·당도·품종·사진·후기)는 가져오지 않는다.
+   * 신뢰 약속은 자동 적용 금지 — 켜져 있던 항목을 힌트로만 보여준다(직접 켜도록).
+   */
+  const handleApplyCarryOver = () => {
+    if (!carrySource) return
+    const inp = carrySource.input
+    const trust = inp.trust
+    if (trust?.producerName && !producerName.trim()) setProducerName(trust.producerName)
+    if (trust?.producerRegion && !producerRegion.trim()) setProducerRegion(trust.producerRegion)
+    if (trust?.farmerYears != null && !farmerYears.trim()) setFarmerYears(String(trust.farmerYears))
+    if (inp.origin && inp.origin.trim() && !origin.trim()) {
+      setOrigin(inp.origin.trim())
+      // 실제 지난 산지이므로 예시 힌트는 붙이지 않는다.
+      setOriginFromDemo(false)
+    }
+    // 신뢰 약속은 자동으로 켜지 않고, 지난번 켰던 항목만 힌트로 노출.
+    setCarriedTrust({
+      sameDayHarvest: !!trust?.sameDayHarvest,
+      coldChain: !!trust?.coldChain,
+      refundGuarantee: trust?.refundGuarantee === true,
+    })
+    setCarryApplied(true)
+  }
+
+  /** v5.4(작업5): 이어받기 배너 닫기(새로 입력). */
+  const handleDismissCarryOver = () => setCarryApplied(true)
+
+  /** 초안·이어받기 배너 표시 여부 — 초안이 우선, 신규 작업·빈 폼에서만 이어받기 노출. */
+  const showDraftBanner = draftEnabled && draftBanner !== null
+  const carrySourceHasStoreInfo =
+    carrySource != null &&
+    (!!carrySource.input.trust?.producerName ||
+      !!carrySource.input.trust?.producerRegion ||
+      carrySource.input.trust?.farmerYears != null ||
+      !!carrySource.input.origin?.trim())
+  const showCarryBanner =
+    draftEnabled &&
+    !showDraftBanner &&
+    !carryApplied &&
+    !hasDraftableInput &&
+    carrySourceHasStoreInfo
+
   /** 우측 미리보기에 전달할 카피
    *  - result 있으면 실제 결과
    *  - 사용자 입력 있으면 emptyCopy + spec
@@ -740,6 +1095,55 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
     }
   }, [result, resultMeta, productName, origin, weight])
 
+  /**
+   * v5.4(작업1): 키 등록 모달을 띄우고 결과를 기다린다(등록 성공 true / 취소 false).
+   * 이미 대기 중이면 그 대기를 취소로 정리하고 새로 건다(중복 방지).
+   */
+  const openKeyGate = (): Promise<boolean> => {
+    return new Promise<boolean>((resolve) => {
+      const prev = keyGateResolveRef.current
+      keyGateResolveRef.current = resolve
+      if (prev) prev(false)
+      setKeyGateOpen(true)
+    })
+  }
+
+  /** 모달을 닫고 대기 중 Promise를 결과로 resolve. */
+  const resolveKeyGate = (ok: boolean) => {
+    setKeyGateOpen(false)
+    const resolve = keyGateResolveRef.current
+    keyGateResolveRef.current = null
+    resolve?.(ok)
+  }
+
+  /**
+   * v5.4(작업1): AI 동작 실행 전 키 보장. 키가 있으면 즉시 true, 없으면 모달을 띄우고
+   * 등록 성공 시 true(→호출부가 입력 유실 없이 그 자리에서 이어감). 취소면 false.
+   */
+  const ensureKey = async (): Promise<boolean> => {
+    const key = await getKeySource().getKey()
+    if (key) return true
+    return openKeyGate()
+  }
+
+  /** v5.4(작업3): 에러 배너 — 키 재등록(모달) 후, 되면 실패했던 동작을 그대로 이어서 재실행. */
+  const handleReRegisterKey = () => {
+    void openKeyGate().then((ok) => {
+      if (ok) void lastActionRef.current?.()
+    })
+  }
+
+  /** v5.4(작업3): 에러 배너 — 마지막 동작 다시 시도. */
+  const handleErrorRetry = () => {
+    void lastActionRef.current?.()
+  }
+
+  /** v5.4(작업3): 에러 배너 — Anthropic 콘솔(사용량·잔액) 새 탭으로 열기. */
+  const handleOpenConsole = () => {
+    if (typeof window === "undefined") return
+    window.open(ANTHROPIC_CONSOLE_URL, "_blank", "noopener,noreferrer")
+  }
+
   const handleSubmit = async () => {
     if (!hasMin) {
       if (images.length === 0) setErrorMsg(t.detail.minImages)
@@ -747,7 +1151,13 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       return
     }
 
+    // v5.4: 이 동작을 기억(에러 배너의 '다시 시도'·키 재등록 후 이어가기용).
+    lastActionRef.current = handleSubmit
+    // v5.4(작업1): 키가 없으면 등록 모달 → 성공 시 입력 그대로 이어서 생성. 취소면 중단.
+    if (!(await ensureKey())) return
+
     setErrorMsg(null)
+    setGenError(null)
     // v5.1: 새 생성 시작 — 이전 검수 리포트·비용은 낡으므로 폐기.
     setReviewResult(null)
     setReviewFailed(false)
@@ -900,9 +1310,16 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       } catch (saveErr) {
         console.error("[saveWork]", saveErr)
       }
+
+      // v5.4(작업2): 생성 성공 → 초안은 역할을 다했으므로 삭제(다음 재진입에 유령 배너 방지).
+      if (draftEnabled) {
+        lastPhotoSigRef.current = null
+        void deleteDraft().catch((e) => console.error("[draft-clear]", e))
+      }
     } catch (err) {
       console.error(err)
-      setErrorMsg(t.detail.errors.copy_failed)
+      // v5.4(작업3): 원인별 분류 → 배너에서 원인별 안내·행동 버튼(키 재등록/콘솔/재시도) 노출.
+      setGenError(classifyError(err))
       setStage("error")
     } finally {
       clearInterval(stepTimer)
@@ -1073,6 +1490,10 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   /** 섹션 단위 재생성 */
   const handleSectionRegenerate = async (sectionId: SectionId) => {
     if (!result || !currentInput) return
+    // v5.4: 이 섹션 재생성을 기억 + 키 보장(없으면 모달 → 성공 시 이어서).
+    lastActionRef.current = () => handleSectionRegenerate(sectionId)
+    if (!(await ensureKey())) return
+    setGenError(null)
     setBusySection(sectionId)
     try {
       const patch = await regenerateSection(currentInput, result, sectionId)
@@ -1085,6 +1506,8 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       setReviewUsage(null)
     } catch (e) {
       console.error("[regenerateSection]", e)
+      // v5.4(작업3): 섹션 재생성 실패도 원인별 안내(생성 실패 배너 공유).
+      setGenError(classifyError(e))
     } finally {
       setBusySection(null)
     }
@@ -1097,6 +1520,8 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
    */
   const handleSelfReview = async () => {
     if (reviewing || !result) return
+    // v5.4(작업1): 검수도 AI 호출 — 키 없으면 등록 모달 → 성공 시 이어서 검수.
+    if (!(await ensureKey())) return
     setReviewFailed(false)
     const root =
       typeof document !== "undefined"
@@ -1146,6 +1571,8 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
     setReviewResult(null)
     setReviewFailed(false)
     setReviewUsage(null)
+    // v5.4(작업3): 이전 실패 배너도 초기화.
+    setGenError(null)
   }
 
   if (stage === "restoring") {
@@ -1187,6 +1614,20 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         {t.detail.pageTitle}
       </h1>
 
+      {/* v5.4(작업2): 초안 이어서 하기 배너 — 우선 노출(있으면 이어받기 배너는 숨김). */}
+      {showDraftBanner && draftBanner && (
+        <DraftResumeBanner
+          savedAt={draftBanner.savedAt}
+          onRestore={() => void handleRestoreDraft()}
+          onDiscard={() => void handleDiscardDraft()}
+        />
+      )}
+
+      {/* v5.4(작업5): 지난 설정 이어받기 배너 — 신규 작업·빈 폼 + 최근 작업의 가게 정보가 있을 때. */}
+      {showCarryBanner && (
+        <CarryOverBanner onApply={handleApplyCarryOver} onDismiss={handleDismissCarryOver} />
+      )}
+
       {errorMsg && (
         <div
           style={{
@@ -1201,6 +1642,16 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         >
           ⚠️ {errorMsg}
         </div>
+      )}
+
+      {/* v5.4(작업3): 실패 원인별 안내 — 폼 최상단(스크롤 상단에서 바로 눈에). */}
+      {genError && (
+        <GenErrorBanner
+          status={genError}
+          onReRegisterKey={handleReRegisterKey}
+          onOpenConsole={handleOpenConsole}
+          onRetry={handleErrorRetry}
+        />
       )}
 
       {/* v2.7: 일반 농산물 게이트 UI 삭제 — isOrdinaryProduce는 내부 상수 true 유지 (API에는 계속 전달, 규칙 5 안전망) */}
@@ -1470,6 +1921,7 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
           brix={brix.trim() ? Number(brix) : undefined}
           price={undefined}
           tone={tone}
+          onRequireKey={ensureKey}
         />
       </Step>
 
@@ -1502,6 +1954,7 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
           onSameDayHarvest={setSameDayHarvest}
           onColdChain={setColdChain}
           onRefundGuarantee={setRefundGuarantee}
+          previouslyOn={carriedTrust}
         />
         <div style={{ height: 12 }} />
 
@@ -1571,6 +2024,7 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
               curr.includes(p) ? curr.filter((k) => k !== p) : [...curr, p],
             )
           }}
+          onRequireKey={ensureKey}
         />
         <textarea
           value={extraDescription}
@@ -1846,6 +2300,17 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       {/* v4.6: 레이아웃 무드 변주 스위처 — 오른쪽 결과 미리보기에 즉시 반영(디자인 토큰만 변경). */}
       <LayoutVariantSwitcher value={layoutVariant} onChange={handleLayoutVariantChange} />
 
+      {/* v5.4(작업3): 실패 원인별 안내 — 생성 버튼 인접(긴 폼에서 상단 배너가 시야 밖일 때). */}
+      {genError && (
+        <GenErrorBanner
+          status={genError}
+          compact
+          onReRegisterKey={handleReRegisterKey}
+          onOpenConsole={handleOpenConsole}
+          onRetry={handleErrorRetry}
+        />
+      )}
+
       <button
         type="button"
         onClick={() => void handleSubmit()}
@@ -2056,29 +2521,42 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
   )
 
   return (
-    <div
-      style={{
-        maxWidth: 1480,
-        margin: "0 auto",
-        padding: isWide ? "var(--space-7) var(--space-5)" : "var(--space-10) var(--space-5)",
-        display: "grid",
-        gridTemplateColumns: isWide ? "minmax(440px, 540px) minmax(0, 1fr)" : "1fr",
-        gap: isWide ? 32 : 24,
-        alignItems: "start",
-      }}
-    >
+    <>
       <div
         style={{
-          position: isWide ? "sticky" : "static",
-          top: isWide ? 16 : undefined,
-          maxHeight: isWide ? "calc(100vh - 32px)" : undefined,
-          overflowY: isWide ? "auto" : undefined,
+          maxWidth: 1480,
+          margin: "0 auto",
+          padding: isWide ? "var(--space-7) var(--space-5)" : "var(--space-10) var(--space-5)",
+          display: "grid",
+          gridTemplateColumns: isWide ? "minmax(440px, 540px) minmax(0, 1fr)" : "1fr",
+          gap: isWide ? 32 : 24,
+          alignItems: "start",
         }}
       >
-        {formColumn}
+        <div
+          style={{
+            position: isWide ? "sticky" : "static",
+            top: isWide ? 16 : undefined,
+            maxHeight: isWide ? "calc(100vh - 32px)" : undefined,
+            overflowY: isWide ? "auto" : undefined,
+          }}
+        >
+          {formColumn}
+        </div>
+        {previewColumn}
       </div>
-      {previewColumn}
-    </div>
+
+      {/* v5.4(작업1): AI 필요 동작 클릭 시 키 등록 모달 — 등록 성공 시 하려던 동작을 이어서 실행. */}
+      {keyGateOpen && (
+        <KeyGateModal
+          onSuccess={() => {
+            void onKeyRegistered?.()
+            resolveKeyGate(true)
+          }}
+          onCancel={() => resolveKeyGate(false)}
+        />
+      )}
+    </>
   )
 }
 
@@ -2161,6 +2639,343 @@ function GeneratingOverlay({ step, totalSteps }: { step: number; totalSteps: num
   )
 }
 
+/** v5.4(작업3): 크레딧/한도 안내에서 여는 Anthropic 콘솔(사용량·잔액) 링크. */
+const ANTHROPIC_CONSOLE_URL = "https://console.anthropic.com/settings/billing"
+
+/**
+ * v5.4(작업1): 키 등록 모달 — 기존 ApiKeyGate UI/저장 로직을 그대로 재사용.
+ * 배경 클릭·× 로 취소(onCancel), 검증 성공 시 onSuccess(대기 중 동작 이어감).
+ */
+function KeyGateModal({
+  onSuccess,
+  onCancel,
+}: {
+  onSuccess: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onCancel}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1000,
+        background: "rgba(0,0,0,0.5)",
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "center",
+        padding: "24px 16px",
+        overflowY: "auto",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          position: "relative",
+          width: "100%",
+          maxWidth: 560,
+          margin: "auto",
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: 12,
+            padding: "14px 16px",
+            background: "var(--color-bg-surface)",
+            borderRadius: "var(--radius-md)",
+            boxShadow: "var(--shadow-card)",
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div
+              style={{
+                fontSize: "var(--font-size-md)",
+                fontWeight: 700,
+                color: "var(--color-neutral-900)",
+                marginBottom: 4,
+              }}
+            >
+              🔑 {t.apiKey.gateModalTitle}
+            </div>
+            <div
+              style={{
+                fontSize: "var(--font-size-sm)",
+                color: "var(--color-neutral-500)",
+                lineHeight: 1.55,
+              }}
+            >
+              {t.apiKey.gateModalIntro}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            aria-label={t.apiKey.gateModalClose}
+            style={{
+              flexShrink: 0,
+              width: 32,
+              height: 32,
+              borderRadius: "50%",
+              border: "1px solid var(--color-neutral-300)",
+              background: "var(--color-bg-surface)",
+              color: "var(--color-neutral-700)",
+              fontSize: 18,
+              lineHeight: 1,
+              cursor: "pointer",
+            }}
+          >
+            ×
+          </button>
+        </div>
+        <ApiKeyGate onSuccess={onSuccess} />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * v5.4(작업3): 생성·재생성 실패 원인별 안내 배너. classifyError 결과로 문구·행동 버튼을 고른다.
+ * - invalid_key: 키 재등록(모달) 후 이어서 재실행
+ * - rate_limited(한도/크레딧): 콘솔(사용량·잔액) 열기 + 다시 시도
+ * - geo_blocked/network_error/unknown_error: 다시 시도
+ * 폼 최상단·생성 버튼 인접 양쪽에 노출(긴 폼에서 시야 밖 방지) — compact는 여백만 조절.
+ */
+function GenErrorBanner({
+  status,
+  compact,
+  onReRegisterKey,
+  onOpenConsole,
+  onRetry,
+}: {
+  status: DiagnosticStatus
+  compact?: boolean
+  onReRegisterKey: () => void
+  onOpenConsole: () => void
+  onRetry: () => void
+}) {
+  const e = t.detail.errors
+  const message =
+    status === "invalid_key"
+      ? e.invalid_key
+      : status === "geo_blocked"
+        ? e.geo_blocked
+        : status === "rate_limited"
+          ? e.rate_limited
+          : status === "network_error"
+            ? e.network_error
+            : e.unknown_error
+  const showReRegister = status === "invalid_key"
+  const showConsole = status === "rate_limited"
+  const showRetry = status !== "invalid_key"
+  return (
+    <div
+      role="alert"
+      style={{
+        padding: 14,
+        marginTop: compact ? 4 : 0,
+        marginBottom: compact ? 12 : 16,
+        background: "var(--color-danger-tint)",
+        border: "1px solid var(--color-danger)",
+        borderRadius: "var(--radius-xs)",
+        color: "var(--color-danger)",
+        fontSize: "var(--font-size-md)",
+        lineHeight: 1.5,
+      }}
+    >
+      <div style={{ fontWeight: 700, marginBottom: 4 }}>⚠️ {e.title}</div>
+      <div style={{ marginBottom: 10 }}>{message}</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {showReRegister && (
+          <BannerActionButton primary onClick={onReRegisterKey}>
+            {e.actions.reRegisterKey}
+          </BannerActionButton>
+        )}
+        {showConsole && (
+          <BannerActionButton primary={!showReRegister} onClick={onOpenConsole}>
+            {e.actions.openConsole}
+          </BannerActionButton>
+        )}
+        {showRetry && (
+          <BannerActionButton onClick={onRetry}>{e.actions.retry}</BannerActionButton>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function BannerActionButton({
+  children,
+  onClick,
+  primary,
+}: {
+  children: React.ReactNode
+  onClick: () => void
+  primary?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        padding: "8px 14px",
+        borderRadius: "var(--radius-xs)",
+        border: primary ? "none" : "1px solid var(--color-danger)",
+        background: primary ? "var(--color-danger)" : "var(--color-bg-surface)",
+        color: primary ? "#fff" : "var(--color-danger)",
+        fontSize: "var(--font-size-sm)",
+        fontWeight: 700,
+        cursor: "pointer",
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+/**
+ * v5.4(작업2): 초안 이어서 하기 배너 — 재진입 시 저장된 입력(사진 포함) 복원/버리기.
+ * 복원 결정 전까지 자동 저장이 멈춰 있어(빈 폼이 초안을 덮지 않음) 안전하게 선택할 수 있다.
+ */
+function DraftResumeBanner({
+  savedAt,
+  onRestore,
+  onDiscard,
+}: {
+  savedAt: number
+  onRestore: () => void
+  onDiscard: () => void
+}) {
+  const c = t.detail.draft
+  const timeLabel = (() => {
+    try {
+      const d = new Date(savedAt)
+      const hh = String(d.getHours()).padStart(2, "0")
+      const mm = String(d.getMinutes()).padStart(2, "0")
+      return c.savedAt.replace("{time}", `${d.getMonth() + 1}/${d.getDate()} ${hh}:${mm}`)
+    } catch {
+      return ""
+    }
+  })()
+  return (
+    <div
+      style={{
+        padding: 14,
+        marginBottom: 16,
+        background: "var(--color-primary-50)",
+        border: "1px solid var(--color-primary-600)",
+        borderRadius: "var(--radius-xs)",
+        color: "var(--color-neutral-900)",
+      }}
+    >
+      <div style={{ fontWeight: 700, fontSize: "var(--font-size-md)", marginBottom: 4 }}>
+        📝 {c.bannerTitle}
+      </div>
+      <div style={{ fontSize: "var(--font-size-sm)", color: "var(--color-neutral-700)", lineHeight: 1.5 }}>
+        {c.bannerBody}
+        {timeLabel && (
+          <span style={{ color: "var(--color-neutral-500)" }}> · {timeLabel}</span>
+        )}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+        <BannerActionButton primary onClick={onRestore}>
+          {c.restore}
+        </BannerActionButton>
+        <button
+          type="button"
+          onClick={onDiscard}
+          style={{
+            padding: "8px 14px",
+            borderRadius: "var(--radius-xs)",
+            border: "1px solid var(--color-neutral-300)",
+            background: "var(--color-bg-surface)",
+            color: "var(--color-neutral-700)",
+            fontSize: "var(--font-size-sm)",
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          {c.discard}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * v5.4(작업5): 지난 설정 이어받기 배너 — 최근 작업의 가게 공통 필드(농부·산지·연차)만 채운다.
+ * 상품 고유 필드·사진·후기·신뢰 약속은 가져오지 않는다(신뢰 약속은 힌트로만 노출).
+ */
+function CarryOverBanner({
+  onApply,
+  onDismiss,
+}: {
+  onApply: () => void
+  onDismiss: () => void
+}) {
+  const c = t.detail.carryOver
+  return (
+    <div
+      style={{
+        padding: 14,
+        marginBottom: 16,
+        background: "var(--color-bg-subtle)",
+        border: "1px dashed var(--color-neutral-300)",
+        borderRadius: "var(--radius-xs)",
+        color: "var(--color-neutral-900)",
+      }}
+    >
+      <div style={{ fontWeight: 700, fontSize: "var(--font-size-md)", marginBottom: 4 }}>
+        🏪 {c.bannerTitle}
+      </div>
+      <div style={{ fontSize: "var(--font-size-sm)", color: "var(--color-neutral-700)", lineHeight: 1.5 }}>
+        {c.bannerBody}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+        <button
+          type="button"
+          onClick={onApply}
+          style={{
+            padding: "8px 14px",
+            borderRadius: "var(--radius-xs)",
+            border: "none",
+            background: "var(--color-primary-600)",
+            color: "var(--color-text-on-primary)",
+            fontSize: "var(--font-size-sm)",
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          {c.apply}
+        </button>
+        <button
+          type="button"
+          onClick={onDismiss}
+          style={{
+            padding: "8px 14px",
+            borderRadius: "var(--radius-xs)",
+            border: "1px solid var(--color-neutral-300)",
+            background: "var(--color-bg-surface)",
+            color: "var(--color-neutral-700)",
+            fontSize: "var(--font-size-sm)",
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          {c.dismiss}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function Step({
   number,
   title,
@@ -2236,6 +3051,7 @@ function TrustPromiseChecks({
   onSameDayHarvest,
   onColdChain,
   onRefundGuarantee,
+  previouslyOn,
 }: {
   sameDayHarvest: boolean
   coldChain: boolean
@@ -2243,13 +3059,31 @@ function TrustPromiseChecks({
   onSameDayHarvest: (v: boolean) => void
   onColdChain: (v: boolean) => void
   onRefundGuarantee: (v: boolean) => void
+  /**
+   * v5.4(작업5): 지난 작업에서 켜져 있던 약속 — 자동 적용 금지(허위표시 방지).
+   * 켰던 항목에만 "지난번 켬" 칩을 붙여 셀러가 직접 확인·재체크하도록 넛지한다.
+   */
+  previouslyOn?: { sameDayHarvest: boolean; coldChain: boolean; refundGuarantee: boolean } | null
 }) {
   const c = t.detail.trustPromise
-  const rows: { label: string; on: boolean; onChange: (v: boolean) => void }[] = [
-    { label: c.sameDayHarvest, on: sameDayHarvest, onChange: onSameDayHarvest },
-    { label: c.coldChain, on: coldChain, onChange: onColdChain },
-    { label: c.refundGuarantee, on: refundGuarantee, onChange: onRefundGuarantee },
+  const rows: { label: string; on: boolean; onChange: (v: boolean) => void; wasOn: boolean }[] = [
+    {
+      label: c.sameDayHarvest,
+      on: sameDayHarvest,
+      onChange: onSameDayHarvest,
+      wasOn: !!previouslyOn?.sameDayHarvest,
+    },
+    { label: c.coldChain, on: coldChain, onChange: onColdChain, wasOn: !!previouslyOn?.coldChain },
+    {
+      label: c.refundGuarantee,
+      on: refundGuarantee,
+      onChange: onRefundGuarantee,
+      wasOn: !!previouslyOn?.refundGuarantee,
+    },
   ]
+  const anyPreviouslyOn =
+    !!previouslyOn &&
+    (previouslyOn.sameDayHarvest || previouslyOn.coldChain || previouslyOn.refundGuarantee)
   return (
     <div
       style={{
@@ -2279,6 +3113,29 @@ function TrustPromiseChecks({
       >
         {c.hint}
       </p>
+
+      {/* v5.4(작업5): 지난 작업에서 켰던 약속 안내 — 자동 적용 금지, 직접 켜도록 넛지. */}
+      {anyPreviouslyOn && (
+        <div
+          style={{
+            padding: "8px 10px",
+            marginBottom: 12,
+            background: "#FFF8E7",
+            border: "1px dashed #FFB186",
+            borderRadius: "var(--radius-xs)",
+            fontSize: "var(--font-size-xs)",
+            color: "var(--color-neutral-700)",
+            lineHeight: 1.5,
+          }}
+        >
+          <strong style={{ color: "var(--color-neutral-900)" }}>
+            {t.detail.carryOver.trustNoticeTitle}
+          </strong>
+          <br />
+          {t.detail.carryOver.trustNoticeBody}
+        </div>
+      )}
+
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {rows.map((row) => (
           <label
@@ -2299,6 +3156,22 @@ function TrustPromiseChecks({
               style={{ accentColor: "#E03131", width: 18, height: 18, flexShrink: 0 }}
             />
             {row.label}
+            {row.wasOn && !row.on && (
+              <span
+                style={{
+                  flexShrink: 0,
+                  padding: "2px 8px",
+                  background: "#FFF3CD",
+                  border: "1px solid #FFB186",
+                  borderRadius: 999,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: "#B45309",
+                }}
+              >
+                {t.detail.carryOver.previouslyOn}
+              </span>
+            )}
           </label>
         ))}
       </div>

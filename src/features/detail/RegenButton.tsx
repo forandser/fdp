@@ -9,7 +9,7 @@
  * - 비개발자 사용자: 아이콘 + 짧은 라벨, i18n 키 사용
  */
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { t } from "@/lib/i18n"
 import type { SectionId } from "@/lib/ai/section-regenerate"
 
@@ -37,6 +37,19 @@ export function RegenButton({
 }: RegenButtonProps) {
   const [busy, setBusy] = useState(false)
   const [hover, setHover] = useState(false)
+  /**
+   * v5.4(작업6): 호버가 불가능한 환경(터치)에서는 상시 노출.
+   * 데스크톱(hover 가능)은 기존 동작(평소 흐릿 → 호버 시 또렷) 유지.
+   */
+  const [hoverless, setHoverless] = useState(false)
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return
+    const mq = window.matchMedia("(hover: none)")
+    const sync = () => setHoverless(mq.matches)
+    sync()
+    mq.addEventListener("change", sync)
+    return () => mq.removeEventListener("change", sync)
+  }, [])
 
   const isDisabled = busy || disabled === true
 
@@ -50,8 +63,8 @@ export function RegenButton({
     }
   }
 
-  // 가시성: busy거나 alwaysVisible이면 항상 표시, 그 외엔 hover 시에만.
-  const visible = busy || alwaysVisible === true || hover
+  // 가시성: busy·alwaysVisible·호버불가(터치) 환경이면 항상 표시, 그 외엔 hover 시에만.
+  const visible = busy || alwaysVisible === true || hoverless || hover
 
   const positionStyle: React.CSSProperties = floating === true
     ? { position: "absolute", top: 0, right: 0 }

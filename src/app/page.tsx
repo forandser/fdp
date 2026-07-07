@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { ApiKeyGate } from "@/features/api-key/ApiKeyGate"
 import { AppHeader } from "@/components/ui/AppHeader"
 import { RecentWorks } from "@/features/works/RecentWorks"
 import { ImageProviderGate } from "@/features/settings/ImageProviderGate"
@@ -12,21 +11,18 @@ import { t } from "@/lib/i18n"
 
 export default function HomePage() {
   const router = useRouter()
-  const [hasKey, setHasKey] = useState<boolean | null>(null)
+  // v5.4(작업1): 키 유무는 헤더 마스크 표시에만 쓴다. 홈은 키 없이도 그대로 둘러본다(게이트 삭제).
   const [keyMask, setKeyMask] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const key = await getKeySource().getKey()
       const mask = await getKeySource().getKeyMask()
       if (cancelled) return
-      setHasKey(Boolean(key))
       setKeyMask(mask)
     })()
 
     const unsubscribe = getKeySource().subscribe(() => {
-      setHasKey(false)
       setKeyMask(null)
     })
 
@@ -36,36 +32,12 @@ export default function HomePage() {
     }
   }, [])
 
-  if (hasKey === null) {
-    return (
-      <main className="min-h-screen flex items-center justify-center">
-        <div style={{ color: "var(--color-neutral-500)" }}>{t.app.loading}</div>
-      </main>
-    )
-  }
-
-  if (!hasKey) {
-    return (
-      <main className="min-h-screen flex items-center justify-center px-4">
-        <ApiKeyGate
-          onSuccess={() => {
-            setHasKey(true)
-            void getKeySource()
-              .getKeyMask()
-              .then((m) => setKeyMask(m))
-          }}
-        />
-      </main>
-    )
-  }
-
   return (
     <main className="min-h-screen flex flex-col">
       <AppHeader
         keyMask={keyMask}
         onClearKey={async () => {
           await getKeySource().clearKey()
-          setHasKey(false)
           setKeyMask(null)
         }}
       />

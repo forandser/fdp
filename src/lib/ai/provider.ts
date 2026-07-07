@@ -17,3 +17,5 @@ export function getAIProvider(): AIProvider {
 }
 
 export type { AIProvider, CopyInput, CopyOutput, CopyResult, DiagnosticResult, DiagnosticStatus, UsageInfo } from "./types"
+// v5.4(작업3): 실패 원인 분류기 — 생성·재생성 실패 경로에서 원인별 안내에 쓴다.
+export { classifyError } from "./anthropic-adapter"

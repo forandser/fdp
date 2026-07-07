@@ -1,15 +1,12 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
 import { DetailMaker } from "@/features/detail/DetailMaker"
 import { AppHeader } from "@/components/ui/AppHeader"
 import { getKeySource } from "@/lib/ai/key-source"
-import { t } from "@/lib/i18n"
 
 export default function DetailPage() {
-  const router = useRouter()
-  const [hasKey, setHasKey] = useState<boolean | null>(null)
+  // v5.4(작업1): 키 없이도 진입·입력·미리보기 가능. 키 유무는 헤더 마스크 표시에만 쓴다.
   const [keyMask, setKeyMask] = useState<string | null>(null)
   const [workId, setWorkId] = useState<string | undefined>(undefined)
 
@@ -23,34 +20,21 @@ export default function DetailPage() {
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const key = await getKeySource().getKey()
       const mask = await getKeySource().getKeyMask()
       if (cancelled) return
-      if (!key) {
-        router.replace("/")
-        return
-      }
-      setHasKey(true)
       setKeyMask(mask)
     })()
 
+    // 다른 탭에서 키가 삭제돼도 추방하지 않는다 — 마스크만 지우고 둘러보기는 유지.
     const unsubscribe = getKeySource().subscribe(() => {
-      router.replace("/")
+      setKeyMask(null)
     })
 
     return () => {
       cancelled = true
       unsubscribe()
     }
-  }, [router])
-
-  if (hasKey === null) {
-    return (
-      <main className="min-h-screen flex items-center justify-center">
-        <div style={{ color: "var(--color-neutral-500)" }}>{t.app.loading}</div>
-      </main>
-    )
-  }
+  }, [])
 
   return (
     <main
@@ -62,10 +46,17 @@ export default function DetailPage() {
         showBack
         onClearKey={async () => {
           await getKeySource().clearKey()
-          router.replace("/")
+          setKeyMask(null)
         }}
       />
-      <DetailMaker initialWorkId={workId} />
+      <DetailMaker
+        initialWorkId={workId}
+        onKeyRegistered={async () => {
+          // 모달로 키를 등록하면 헤더 마스크를 즉시 갱신(재마운트 없이 동기화).
+          const mask = await getKeySource().getKeyMask()
+          setKeyMask(mask)
+        }}
+      />
     </main>
   )
 }

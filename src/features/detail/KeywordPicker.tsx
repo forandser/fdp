@@ -25,6 +25,11 @@ interface KeywordPickerProps {
   brix?: number
   price?: number
   tone?: CopyTone
+  /**
+   * v5.4(작업1): AI 호출 전 키 보장. 키 없으면 부모가 등록 모달을 띄우고,
+   * 성공 시 true(→그대로 추천 실행)/취소 시 false. 없으면 게이트 없이 진행(하위호환).
+   */
+  onRequireKey?: () => Promise<boolean>
 }
 
 export function KeywordPicker({
@@ -41,6 +46,7 @@ export function KeywordPicker({
   brix,
   price,
   tone,
+  onRequireKey,
 }: KeywordPickerProps) {
   const [draft, setDraft] = useState("")
   const [aiKeywords, setAiKeywords] = useState<string[] | null>(null)
@@ -80,6 +86,8 @@ export function KeywordPicker({
       setError(t.detail.keywordSuggest.needBasics)
       return
     }
+    // v5.4(작업1): 키 없으면 등록 모달 → 성공 시 이어서 추천. 취소면 조용히 중단.
+    if (onRequireKey && !(await onRequireKey())) return
     setError(null)
     setLoading(true)
     try {

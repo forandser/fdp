@@ -1,8 +1,16 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { exportNodeAsSlicedJpg } from "@/lib/exporters/html-to-jpg"
 import { t } from "@/lib/i18n"
+import { STORAGE_KEYS } from "@/lib/storage/keys"
+import {
+  isFsAccessSupported,
+  pickDirectory,
+  getStoredDirectoryHandle,
+  ensurePermission,
+  clearStoredHandle,
+} from "@/lib/fs/directory-handle"
 
 interface ExportPanelProps {
   /** 캡처 대상 DOM 노드 (ResultView 전체) */
@@ -26,9 +34,17 @@ const WIDTH_PRESETS: { value: WidthPreset; label: string }[] = [
   { value: 1000, label: t.detail.result.exportPanel.platformSelf },
 ]
 
-/** v2.7: File System Access API 지원 여부 (Chrome/Edge only). */
-const SUPPORTS_DIR_PICKER =
-  typeof window !== "undefined" && "showDirectoryPicker" in window
+/**
+ * v2.7: File System Access API 지원 여부 (Chrome/Edge only).
+ * v5.4 하이드레이션 수정: 모듈 상수로 두면 서버(false)와 클라이언트(Edge true)가 갈려
+ * 프리렌더 HTML과 첫 클라이언트 렌더가 어긋난다(React #418 실측). 컴포넌트 안에서
+ * 서버 기본값(false)으로 시작해 마운트 후 동기화한다 — 아래 useState/useEffect 참고.
+ */
+const supportsDirPickerNow = () => isFsAccessSupported()
+
+/** v5.4(작업4): 내보내기 설정 복원 시 허용값 화이트리스트 — 저장본 오염 방어. */
+const VALID_WIDTHS = new Set<WidthPreset>([780, 860, 831, 1000])
+const VALID_SLICE_HEIGHTS = new Set<number>([2000, 3000, 4000, 5000])
 
 export function ExportPanel({ targetRef, baseName, blockedReason }: ExportPanelProps) {
   const [width, setWidth] = useState<WidthPreset>(860)
@@ -43,32 +59,72 @@ export function ExportPanel({ targetRef, baseName, blockedReason }: ExportPanelP
     null,
   )
   const [directoryName, setDirectoryName] = useState<string>("")
+  /** 서버 기본값(false)으로 프리렌더와 일치시키고 마운트 후 실제 지원 여부로 동기화. */
+  const [supportsDirPicker, setSupportsDirPicker] = useState(false)
+
+  /**
+   * v5.4(작업4): 마운트 시 내보내기 설정 복원.
+   * - 폭 프리셋·장당 세로 크기: localStorage(fdp:export-presets)
+   * - 저장 폴더: IDB 영속 핸들(directory-handle.ts) — 권한 요청은 다운로드 시점(사용자 제스처)으로 미룸.
+   *   (마운트 시 requestPermission은 제스처가 없어 실패하므로 이름만 복원해 표시.)
+   */
+  useEffect(() => {
+    setSupportsDirPicker(supportsDirPickerNow())
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.EXPORT_PRESETS)
+      if (raw) {
+        const parsed = JSON.parse(raw) as { width?: number; targetSliceHeight?: number }
+        if (VALID_WIDTHS.has(parsed.width as WidthPreset)) {
+          setWidth(parsed.width as WidthPreset)
+        }
+        if (typeof parsed.targetSliceHeight === "number" && VALID_SLICE_HEIGHTS.has(parsed.targetSliceHeight)) {
+          setTargetSliceHeight(parsed.targetSliceHeight)
+        }
+      }
+    } catch {
+      // 프라이빗 모드·오염 JSON 등 복원 실패는 무시하고 기본값 사용
+    }
+    void (async () => {
+      const handle = await getStoredDirectoryHandle()
+      if (handle) {
+        setDirectoryHandle(handle)
+        setDirectoryName(handle.name)
+      }
+    })()
+  }, [])
+
+  /** v5.4(작업4): 폭·장당 세로 크기 변경을 localStorage에 즉시 기억. */
+  const persistPresets = (next: { width: WidthPreset; targetSliceHeight: number }) => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.EXPORT_PRESETS, JSON.stringify(next))
+    } catch {
+      // 저장 실패(프라이빗 모드 등)는 무시 — 이번 세션 동작엔 영향 없음
+    }
+  }
+
+  const handleChangeWidth = (value: WidthPreset) => {
+    setWidth(value)
+    persistPresets({ width: value, targetSliceHeight })
+  }
+
+  const handleChangeSliceHeight = (value: number) => {
+    setTargetSliceHeight(value)
+    persistPresets({ width, targetSliceHeight: value })
+  }
 
   const handlePickDirectory = async () => {
-    const picker = (
-      window as Window & {
-        showDirectoryPicker?: (opts?: {
-          mode?: "read" | "readwrite"
-        }) => Promise<FileSystemDirectoryHandle>
-      }
-    ).showDirectoryPicker
-    if (!picker) return
-    try {
-      const handle = await picker({ mode: "readwrite" })
+    // pickDirectory: showDirectoryPicker 호출 + IDB 영속 저장 + 취소 시 null.
+    const handle = await pickDirectory()
+    if (handle) {
       setDirectoryHandle(handle)
       setDirectoryName(handle.name)
-    } catch (err) {
-      // 사용자 취소는 정상 (AbortError)
-      const e = err as { name?: string }
-      if (e?.name !== "AbortError") {
-        console.error("[pick-directory]", err)
-      }
     }
   }
 
   const handleClearDirectory = () => {
     setDirectoryHandle(null)
     setDirectoryName("")
+    void clearStoredHandle()
   }
 
   const handleDownload = async () => {
@@ -76,6 +132,13 @@ export function ExportPanel({ targetRef, baseName, blockedReason }: ExportPanelP
     setBusy(true)
     setMessage(null)
     try {
+      // v5.4(작업4): 세션 넘어 복원된 핸들은 권한이 만료됐을 수 있다.
+      // 이 클릭이 사용자 제스처이므로 여기서 재요청(자연 재요청). 실패 시 undefined → 다운로드 폴더 폴백.
+      let dir = directoryHandle ?? undefined
+      if (dir) {
+        const granted = await ensurePermission(dir).catch(() => false)
+        if (!granted) dir = undefined
+      }
       const result = await exportNodeAsSlicedJpg(targetRef.current, {
         width,
         mode: slice,
@@ -83,7 +146,7 @@ export function ExportPanel({ targetRef, baseName, blockedReason }: ExportPanelP
         quality: 0.92,
         pixelRatio: 2,
         baseName,
-        directoryHandle: directoryHandle ?? undefined,
+        directoryHandle: dir,
       })
       setMessage({
         kind: "success",
@@ -136,7 +199,7 @@ export function ExportPanel({ targetRef, baseName, blockedReason }: ExportPanelP
         </label>
         <select
           value={width}
-          onChange={(e) => setWidth(Number(e.target.value) as WidthPreset)}
+          onChange={(e) => handleChangeWidth(Number(e.target.value) as WidthPreset)}
           disabled={busy}
           style={selectStyle}
         >
@@ -198,7 +261,7 @@ export function ExportPanel({ targetRef, baseName, blockedReason }: ExportPanelP
           </label>
           <select
             value={targetSliceHeight}
-            onChange={(e) => setTargetSliceHeight(Number(e.target.value))}
+            onChange={(e) => handleChangeSliceHeight(Number(e.target.value))}
             disabled={busy}
             style={selectStyle}
           >
@@ -234,7 +297,7 @@ export function ExportPanel({ targetRef, baseName, blockedReason }: ExportPanelP
         >
           저장 위치
         </label>
-        {SUPPORTS_DIR_PICKER ? (
+        {supportsDirPicker ? (
           <>
             {directoryName ? (
               <div

@@ -8,6 +8,9 @@ export const STORAGE_KEYS = {
   WORKS_DB: "fdp:works",
   DIRECTORY_HANDLE: "fdp:dir-handle",
   EXPORT_PRESETS: "fdp:export-presets",
+  // v5.4(작업2): 입력 초안 자동 저장 — 폼/토글 메타 1레코드 + 사진 blob 1레코드(사진은 변경 시에만 재기록).
+  DRAFT: "fdp:draft",
+  DRAFT_PHOTOS: "fdp:draft-photos",
   // v5.0-A: 브랜드 프로필 저장소({ [brandId]: BrandProfile } 맵) + 기본 브랜드 id.
   BRANDS_DB: "fdp:brands",
   BRAND_DEFAULT: "fdp:brand-default",

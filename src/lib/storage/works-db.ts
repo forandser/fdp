@@ -133,6 +133,19 @@ export async function getWork(id: string): Promise<Work | null> {
   return map[id] ?? null
 }
 
+/**
+ * v5.4(작업5): 가장 최근(updatedAt 기준) 작업 전체를 반환 — "지난 설정 이어받기"의 원천.
+ * 목록(listWorks)은 요약만 주므로, 가게 공통 필드(농부·산지·연차)를 읽으려면 전체가 필요하다.
+ */
+export async function getLatestWork(): Promise<Work | null> {
+  const map = await readMap()
+  let latest: Work | null = null
+  for (const w of Object.values(map)) {
+    if (!latest || w.updatedAt > latest.updatedAt) latest = w
+  }
+  return latest
+}
+
 /** 단건 삭제. */
 export async function deleteWork(id: string): Promise<void> {
   const map = await readMap()

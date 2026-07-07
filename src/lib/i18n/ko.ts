@@ -63,6 +63,25 @@ export const ko = {
       tip: "JPG, PNG 지원 · 1장당 최대 10MB",
       empty: "아직 업로드된 이미지가 없어요",
     },
+    // v5.4(작업2): 입력 초안 자동 저장 — 재진입 시 "이어서 하기" 배너.
+    draft: {
+      bannerTitle: "작성 중이던 내용이 있어요",
+      bannerBody: "저장해둔 입력(사진 포함)을 이어서 작성할 수 있어요.",
+      restore: "이어서 하기",
+      discard: "버리기",
+      discardConfirm: "작성 중이던 초안을 버릴까요? 되돌릴 수 없어요.",
+      savedAt: "{time} 자동 저장됨",
+    },
+    // v5.4(작업5): 가게 정보 이어받기 — 최근 작업의 가게 공통 필드만 원클릭 채움.
+    carryOver: {
+      bannerTitle: "지난 설정을 불러올까요?",
+      bannerBody: "최근 작업의 가게 공통 정보(농부·산지·연차)만 채워요. 상품명·중량·당도·사진·후기는 가져오지 않아요.",
+      apply: "지난 설정 불러오기",
+      dismiss: "새로 입력",
+      trustNoticeTitle: "지난 작업에서 켰던 약속이 있어요",
+      trustNoticeBody: "허위표시 방지를 위해 자동으로 켜지 않아요. 지금도 지키는 항목만 직접 켜주세요.",
+      previouslyOn: "지난번 켬",
+    },
     step2Basic: "2. 기본 정보",
     field: {
       productName: "상품명",
@@ -188,6 +207,18 @@ export const ko = {
     },
     errors: {
       copy_failed: "카피 생성에 실패했어요. 잠시 후 다시 시도해주세요.",
+      // v5.4(작업3): 실패 원인별 안내 — classifyError 결과(DiagnosticStatus)로 분기. 사람 말투, 비개발자 눈높이.
+      title: "상세페이지를 만들지 못했어요",
+      invalid_key: "API 키가 더 이상 유효하지 않은 것 같아요. 키를 다시 등록하면 이어서 진행할게요.",
+      geo_blocked: "지금 계신 지역에서는 Anthropic 접속이 막힌 것 같아요. VPN이나 네트워크를 확인한 뒤 다시 시도해 주세요.",
+      rate_limited: "요청이 한도에 걸렸거나 크레딧이 부족한 것 같아요. Anthropic 콘솔에서 사용량·잔액을 확인한 뒤 다시 시도해 주세요.",
+      network_error: "인터넷 연결이 잠깐 끊긴 것 같아요. 연결을 확인한 뒤 다시 시도해 주세요.",
+      unknown_error: "잠깐 문제가 생겼어요. 잠시 후 다시 시도해 주세요.",
+      actions: {
+        reRegisterKey: "🔑 키 다시 등록",
+        openConsole: "🔗 Anthropic 콘솔 열기",
+        retry: "🔄 다시 시도",
+      },
     },
     result: {
       title: "상세페이지가 만들어졌어요",
@@ -356,6 +387,10 @@ export const ko = {
   apiKey: {
     title: "API 키 입력",
     gateTitle: "시작",
+    // v5.4(작업1): AI 필요 동작 클릭 시 뜨는 키 등록 모달 안내(둘러보기 중 자연 진입).
+    gateModalTitle: "AI 기능을 쓰려면 키가 필요해요",
+    gateModalIntro: "생성·재생성·AI 검수 같은 기능은 본인 Anthropic 키로 실행돼요. 등록하면 방금 하려던 작업을 그대로 이어서 진행할게요.",
+    gateModalClose: "닫기",
     step1Label: "1단계: Anthropic API 키 입력",
     placeholder: "sk-ant-...",
     needGuide: "키가 없으세요? Anthropic 콘솔 가입 가이드 보기",

@@ -1919,6 +1919,14 @@ function DeliveryPromiseBand({ isMobile, trust }: { isMobile: boolean; trust?: T
   )
 }
 
+/**
+ * v5.4(작업6): 결과 화면 외곽 2열([아트보드|340px])을 세로 스택으로 접는 폭 임계값.
+ * DetailMaker.SPLIT_BREAKPOINT(1280)와 별개 — 이건 결과 화면 자체 컨테이너 폭 기준.
+ * 340px 패널 + 최소한의 아트보드 폭 확보가 안 되는 좁은 뷰에서 패널을 아래로 내린다.
+ * (아트보드 내부 렌더는 불변 — previewScale이 축소만 담당.)
+ */
+const RESULT_STACK_BREAKPOINT = 720
+
 export function ResultView({
   copy,
   images,
@@ -1983,6 +1991,22 @@ export function ResultView({
     ro.observe(art)
     return () => ro.disconnect()
   }, [previewWidth])
+
+  /**
+   * v5.4(작업6): 결과 화면 외곽 2열/세로 스택 전환. 뷰포트 폭 기준(DetailMaker와 동일 패턴).
+   * 좁으면(<720) 아트보드 위·패널 아래로 스택 → 폰에서 미리보기 극축소 방지.
+   */
+  // v5.4 하이드레이션 수정: 초기값에서 innerWidth를 읽으면 프리렌더 HTML(서버 false)과
+  // 좁은 클라이언트 첫 렌더가 어긋난다(React #418). 서버 기본값으로 시작하고
+  // 아래 effect의 onResize()가 마운트 직후 실제 폭으로 동기화한다.
+  const [isNarrowLayout, setIsNarrowLayout] = useState(false)
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const onResize = () => setIsNarrowLayout(window.innerWidth < RESULT_STACK_BREAKPOINT)
+    onResize()
+    window.addEventListener("resize", onResize)
+    return () => window.removeEventListener("resize", onResize)
+  }, [])
 
   const keyPoints: CopyKeyPoint[] = useMemo(() => {
     if (copy.keyPoints && copy.keyPoints.length >= 1) return copy.keyPoints.slice(0, 3)
@@ -2303,7 +2327,10 @@ export function ResultView({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "minmax(0, 1fr) minmax(0, 340px)",
+        // v5.4(작업6): 좁으면 세로 스택(아트보드 위·패널 아래), 넓으면 기존 2열.
+        gridTemplateColumns: isNarrowLayout
+          ? "minmax(0, 1fr)"
+          : "minmax(0, 1fr) minmax(0, 340px)",
         gap: 24,
         alignItems: "start",
       }}
@@ -2746,10 +2773,12 @@ export function ResultView({
       <aside
         className="fdp-no-print"
         style={{
-          position: "sticky",
+          // v5.4(작업6): 스택 모드에선 아트보드 아래로 자연스럽게 흐르도록 sticky 해제
+          // (좁은 화면에서 sticky+내부 스크롤은 다운로드 CTA 접근을 오히려 방해).
+          position: isNarrowLayout ? "static" : "sticky",
           top: 20,
-          maxHeight: "calc(100vh - 40px)",
-          overflowY: "auto",
+          maxHeight: isNarrowLayout ? undefined : "calc(100vh - 40px)",
+          overflowY: isNarrowLayout ? "visible" : "auto",
           background: "var(--color-bg-surface)",
           borderRadius: 12,
           padding: 24,
