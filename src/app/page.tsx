@@ -87,6 +87,8 @@ export default function HomePage() {
             </p>
           </div>
 
+          {/* 썸네일 제작은 별도 사이트로 분리(2026-07-08 사용자 결정) — 홈 진입점 제거.
+              /thumbnail 라우트·코드는 남아 있으나 진입 경로 없음(완전 삭제는 추후 정리). */}
           <div
             style={{
               display: "grid",
@@ -101,13 +103,6 @@ export default function HomePage() {
               description={t.menu.detail.description}
               cta={t.menu.detail.cta}
               primary
-            />
-            <MenuCard
-              href="/thumbnail"
-              icon="🖼️"
-              title={t.menu.thumbnail.title}
-              description={t.menu.thumbnail.description}
-              cta={t.menu.thumbnail.cta}
             />
           </div>
 
