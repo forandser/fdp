@@ -53,6 +53,12 @@ export interface CopyInput {
    * ResultView의 ReviewsBlock이 렌더. 저장 하위호환: 구버전엔 없음(옵셔널).
    */
   reviews?: SellerReview[]
+  /**
+   * v5.8(작업①): 후기 집계(선택) — 셀러 스토어에서 "실제 집계된" 값만.
+   * 개별 후기(reviews)와 별개의 스토어 전체 집계라 per-review인 SellerReview와 분리한다.
+   * 전부 옵셔널 — 하나도 없으면 히어로 직하단 집계 스트립을 렌더하지 않는다(허위·자동채움 금지).
+   */
+  reviewStats?: ReviewStats
   /** 일반 농산물 확인 게이트 (건강기능식품/숙취해소 표시 상품 제외). v1.8 식약처 §10 보호. */
   isOrdinaryProduce?: boolean
   /**
@@ -139,6 +145,19 @@ export interface SellerReview {
   author?: string
   /** 구매 옵션 라벨(예: 3kg). 후기 신뢰용 메타 표기. 미입력이면 생략. */
   optionLabel?: string
+}
+
+/**
+ * v5.8(작업①): 후기 집계 — 셀러 스토어의 실제 집계 숫자만(추정치·기본값 금지).
+ * 전부 옵셔널. 렌더는 입력된 필드만 스트립 셀로 표시하고 "판매자 스토어 집계 기준" 캡션을 자동 부착한다.
+ */
+export interface ReviewStats {
+  /** 누적 후기 수 (0 이상 정수). */
+  totalCount?: number
+  /** 5점(만점) 비율 % (0~100 정수). */
+  fiveStarPct?: number
+  /** 재구매 지표 — 자유 문구(예: "재구매율 1위"). 셀러 직접 입력. */
+  repurchase?: string
 }
 
 /** 신뢰 옵션 — 셀러가 직접 체크/입력한 사실. AI가 임의로 추가 못 함. */

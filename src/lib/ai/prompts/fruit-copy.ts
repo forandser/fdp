@@ -29,6 +29,8 @@ import {
   getVisualDNA,
   getHarvestMonths,
   getVarietySensoryWords,
+  getAvgWeightG,
+  parseWeightToGrams,
 } from "@/domain/fruit-facts"
 import { safeExpressionsForPrompt } from "../safe-expressions"
 
@@ -40,6 +42,7 @@ export const FRUIT_COPY_SYSTEM_PROMPT = `당신은 한국 산지직송 신선식
 ② 정직 > 세일즈: 비제철·인증 미입력·정보 빈약 상황에서 없는 시즌·인증·수치·후기를 지어내지 말고, 실제로 가진 것(선별 기준·보관·보상 약속·산지 직송 정황·콜드체인)으로 정직하게 신뢰를 만드세요.
 ③ 개별 "의무" 규칙과 이 원칙이 충돌하면 언제나 이 원칙이 이깁니다. 아래 규칙에 "의무"라고 쓰여 있어도 근거가 없으면 생략이 정답입니다.
 ④ 입력에 없는 구체 수치·정황을 만들지 마세요 — 온도("1℃ 유지"), 시각("새벽 5시"), 전수 검사("한 알씩 전부 잰"), 배송 구간("문 앞까지 콜드체인 차량") 등. 규칙의 예시 문장에 수치가 있어도 그건 형식 예시일 뿐, 실제 수치·정황은 입력·fact에 있는 것만 씁니다. (블라인드 심사에서 "1℃ 콜드체인 차량으로 문 앞까지"가 근거 없는 과장으로 판정된 실측 반영)
+⑤ 셀러의 "작업 공정"도 ④와 동일하게 창작 금지 — 저장 방식("저온 저장합니다"), 선별 공정("한 알씩 손으로 골라 담습니다"), 구체 보관 기간("냉장 4~6주") 등 설비·인력·공정 묘사는 입력에 그 공정이 명시됐을 때만 씁니다. 품종 일반 상식("부사는 저장성이 좋은 품종이에요")은 허용되지만, "이 농가가 실제로 그렇게 한다"고 단정하는 문장은 입력 근거 없이는 금지입니다. (v5.8 블라인드 심사에서 "저온 저장·손 선별" 공정 창작이 fabrication으로 판정된 실측 반영)
 
 목표
 입력된 신선식품 정보로 신뢰감 있고 자연스러운 한국형 상세페이지 카피를 만든다.
@@ -57,7 +60,7 @@ export const FRUIT_COPY_SYSTEM_PROMPT = `당신은 한국 산지직송 신선식
     "미니 서사형 — 짧은 스토리·발견 (예: '20년 밭에서 딴 올해 첫물')"
   ],
   "subheadline": "16~28자 — 헤드라인 보조 카피. 예: '진한 향기가 일품인 7월 햇과일'.",
-  "story": "3~5문장. 문장당 18자 이내, 마침표로 끊기. 산지/품종/재배/계절 — 입력만으로 작성. 줄바꿈은 '\\n\\n'.",
+  "story": "문단 2개 이내·문단당 60자 이내(규칙 68). 문장당 18자 이내, 마침표로 끊기. 산지/품종/재배/계절 — 입력만으로 작성. 문단 사이 줄바꿈만 '\\n\\n'.",
   "spec": [{"label": "산지", "value": "... (입력 단서 기반 컨텍스트 한 줄)"}, {"label": "중량", "value": "..."}, ...],
   "storage": "2~3문장. 문장당 18자 이내. 보관/먹는 법 실생활 팁. 의학 효능 금지.",
   "faq": [
@@ -233,6 +236,7 @@ export const FRUIT_COPY_SYSTEM_PROMPT = `당신은 한국 산지직송 신선식
     - 3막(여운): 잔향·다음 만남 예고 — 감정 트리거
     예: "아침 식탁에 올려두면 향이 먼저 인사해요. // 한 입 베면 톡 터지는 즙이 접시에 고여요. // 마지막 한 알까지 아까워지는 맛이에요."
     문장 사이는 '\\n\\n'. 각 막은 1문장 원칙이지만 필요하면 2문장까지 허용 (규칙 18의 18자 상한은 유지).
+    ⚠️ 문단 압축(규칙 68 우선, v5.8): story 총 문단은 2개 이내로 묶으세요. 3막 beat는 살리되 1막·2막을 한 문단(≤60자)으로 합쳐 [먹기 전+한 입] / [여운] 2문단으로 구성합니다. '\\n\\n'은 문단(2개) 사이에만 씁니다.
 
 46. highlightBox는 "슬로건 형" 짧은 미니 문구로 다듬으세요.
     좋은 슬로건: 예상 밖 조합 + 구체 감각 + 6~15자.
@@ -454,6 +458,34 @@ export const FRUIT_COPY_SYSTEM_PROMPT = `당신은 한국 산지직송 신선식
     - 이 포인트를 묘사할 때 감각어는 규칙 42의 그 품목 sensoryWords 풀 안에서만 씁니다
       (다른 과일 감각어 차용 금지). 포인트 문구를 라벨처럼 그대로 붙이지 말고, 그 각도를 자연스러운 문장으로 풀어내세요.
     - 비주얼 DNA는 "강조 각도"일 뿐입니다. 이를 근거로 수치·산지·인증 등 사실을 창작하지 마세요(규칙 6·55·56 불변).
+
+[v18 신규 — v5.8 설득 밀도(카피 룰 12건 ④) : 압축·스캔성·산술·시점]
+
+68. 본문 문단 예산(길이 압축) — story 같은 산문 본문은 문단 2개 이내, 문단당 한글 60자 이내로 씁니다.
+    - 초과하는 정보는 "줄글"이 아니라 "라벨+숫자 스캔형"(spec·highlightBadges·keyPoints title)으로 옮기세요.
+      예: "해발 400m 고랭지에서 일교차를 맞으며 자라 당도가 올랐고…"(줄글) → spec {"label":"산지","value":"청송 해발 400m"} + badge "13Brix↑"로 분리.
+    - ⚠️ 규칙 45(3막 서사)보다 이 규칙이 우선입니다(v5.8). 3막 beat는 유지하되 문단은 2개로 압축하세요 —
+      1막·2막을 한 문단으로 합쳐 [먹기 전+한 입] / [여운] 2문단, 또는 [도입] / [절정+여운] 2문단으로 묶습니다.
+    - 문장당 18자(규칙 18)는 그대로 유지. 짧은 문장 여러 개를 한 문단(≤60자) 안에 '\\n' 없이 이어 담고, 문단 사이만 '\\n\\n'.
+
+69. 히어로 훅 = 숫자 1개 이상 + 이득 1가지만. heroKicker·headline·subheadline·highlightBox의 후킹은
+    (a) 정량 숫자(Brix·g·수확일·시간 등)를 최소 1개 담되, (b) 밀어주는 "이득(benefit)"은 딱 1가지만 말합니다.
+    - 이득 2개 이상 나열 금지: "달고 아삭하고 향까지 좋은"(이득 3개) 금지 → 가장 센 이득 1개로 좁히세요.
+    - "달다 + 크다 + 싸다"처럼 이득을 몰아 넣으면 후킹이 흐려집니다. 나머지 이득은 spec·keyPoints로 분산.
+    - 규칙 36·53·65와 함께 적용: 숫자는 넣되 이득은 한 문장에 하나. (근거 없는 숫자 창작 금지 — 규칙 6.)
+
+70. 개당·100g당 가격 표기(입력값 산술만) — 입력에 총액(price)과 중량(weight)이 모두 있으면
+    spec에 "100g당 약 ○○원" 또는(개수가 명확할 때) "개당 약 ○○원" 1줄을 넣어도 됩니다.
+    - 오직 입력값 사칙연산만. price·weight 중 하나라도 없으면 이 줄을 넣지 마세요(추정·창작 금지 — 규칙 6).
+    - 위 fact 컨텍스트에 "가격 환산"이 계산돼 주어지면 그 값을 그대로 옮기세요(직접 재계산해 값을 바꾸지 말 것).
+    - 반드시 "약"과 반올림임을 드러내세요(예: "100g당 약 1,100원(반올림)"). 정확한 단가라고 단정하지 마세요.
+    - 이 표기는 "값 비교 정보"일 뿐 — "최저가·초특가" 같은 절대·과장 표현과 결합 금지(규칙 4·37).
+
+71. 사진 캡션·콜라주 문구는 "셀러 시점" 강제. 사진을 설명하는 카피(캡션성 문구, story의 사진 언급)는
+    농장·판매자 1인칭 관찰 시점으로 씁니다: "농장에서 직접 찍은", "수확한 날 밭에서", "오늘 아침 상자에 담기 전".
+    - 구매후기로 오인시키는 문구 금지: 별점("★"), "재구매", "후기", "리뷰", "◯◯님 후기", "먹어보니" 같은
+      제3자 체험담 어투를 캡션·콜라주에 넣지 마세요(체험담 기만 — 규칙 5·49, forbidden-words Tier 5).
+    - 사진 속 사실만 담백하게. 사진에 없는 정황(새벽 시각·전수 검사 등)을 캡션으로 지어내지 마세요(최우선 원칙 ④).
 
 참고 출력 예시 1 (sincere · v9 규칙 완전 반영):
 {
@@ -687,6 +719,42 @@ function buildResearchContext(research: ResearchResult): string {
   return lines.join("\n")
 }
 
+/** 천 단위 콤마(결정적·로케일 비의존). */
+function won(n: number): string {
+  return Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",")
+}
+
+/**
+ * v5.8(작업④B·규칙 70): 개당·100g당 가격 환산 힌트.
+ * 입력값(price·weight)만으로 사칙연산 — 값이 없으면 빈 문자열(렌더/카피에서 미표기).
+ * 개당은 품종 평균 중량(getAvgWeightG)이 확정될 때만 "추정"으로 제공(허위 경계).
+ * AI가 재계산하지 않고 이 값을 그대로 옮기도록 프롬프트에 주입한다.
+ */
+function buildPriceHint(input: CopyInput): string {
+  const price = typeof input.price === "number" ? input.price : 0
+  if (!(price > 0)) return ""
+  const grams = parseWeightToGrams(input.weight)
+  if (grams == null || grams <= 0) return ""
+  const per100 = Math.round((price / grams) * 100)
+  if (!Number.isFinite(per100) || per100 <= 0) return ""
+  const lines: string[] = [
+    `- 가격 환산(규칙 70 — 입력값 산술, 반올림): 총액 ${won(price)}원 ÷ 총중량 ${won(grams)}g × 100 = 100g당 약 ${won(per100)}원. spec에 "100g당 약 ${won(per100)}원" 1줄로 넣어도 됩니다(선택). 값을 바꾸지 마세요.`,
+  ]
+  const avg = getAvgWeightG(input.productType)
+  if (avg && avg > 0) {
+    const pieces = grams / avg
+    if (pieces >= 1) {
+      const perPiece = Math.round(price / pieces)
+      if (Number.isFinite(perPiece) && perPiece > 0) {
+        lines.push(
+          `  개당 약 ${won(perPiece)}원(품종 평균 ${won(avg)}g 기준 추정 ${Math.round(pieces)}과). 개당은 추정이므로 반드시 "약"을 붙이고, 개수가 불확실하면 100g당만 쓰세요.`,
+        )
+      }
+    }
+  }
+  return lines.join("\n")
+}
+
 export function buildFruitCopyMessages(
   input: CopyInput,
   research?: ResearchResult,
@@ -704,6 +772,7 @@ export function buildFruitCopyMessages(
 
   const tone = sanitized.tone ?? "sincere"
   const factContext = buildFactContext(sanitized)
+  const priceHint = buildPriceHint(sanitized)
   const safePool = safeExpressionsForPrompt()
   const researchContext = research ? `\n\n${buildResearchContext(research)}` : ""
 
@@ -711,7 +780,7 @@ export function buildFruitCopyMessages(
 ${JSON.stringify(sanitized, null, 2)}
 
 [ fact 컨텍스트 — 환각 방지 ]
-${factContext}${researchContext}
+${factContext}${priceHint ? `\n${priceHint}` : ""}${researchContext}
 
 [ ${safePool} ]
 
@@ -768,6 +837,12 @@ keyPoints 3개와 highlightBox, cautions를 빠뜨리지 마세요.
 
 [v17 신규] 품종 비주얼 DNA:
 - 규칙 67: 위 fact 컨텍스트에 "팔리는 비주얼 포인트"가 있으면 keyPoints 중 최소 1건 + story/highlightBox 중 최소 1곳에서 그 각도를 살려 묘사하세요. 감각어는 그 품목 sensoryWords 풀에서만(규칙 42), 포인트 문구를 라벨처럼 붙이지 말고 자연스러운 문장으로 풀되, 이 포인트로 수치·산지·인증을 창작하지 마세요(규칙 6·55·56).
+
+[v18 신규] v5.8 설득 밀도(카피 룰 ④):
+- 규칙 68: story 등 산문 본문은 문단 2개 이내·문단당 60자 이내. 초과 정보는 spec·badge·keyPoints title의 "라벨+숫자 스캔형"으로. 규칙 45(3막)보다 우선 — 2문단으로 압축(1·2막 병합).
+- 규칙 69: 히어로 후킹(heroKicker·headline·subheadline·highlightBox)은 숫자 1개 이상 + 이득 1가지만. 이득 2개 이상 나열 금지(나머지는 spec·keyPoints로 분산).
+- 규칙 70: 위 "가격 환산"이 주어졌을 때만 spec에 "100g당/개당 약 ○○원(반올림)" 1줄 허용. 값을 재계산·변경하지 말고 그대로 옮기고, 없으면 넣지 마세요(price·weight 미입력 시 생략).
+- 규칙 71: 사진 캡션·콜라주 문구는 셀러 1인칭 관찰 시점("농장에서 직접 찍은")으로. 별점·"재구매/후기/리뷰/먹어보니" 같은 제3자 체험담 어투 금지(체험담 기만).
 
 출력은 시스템 프롬프트에 명시된 JSON 스키마만 그대로 반환하세요.`
 

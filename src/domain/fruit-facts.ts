@@ -78,6 +78,27 @@ export interface FruitFact {
    * fruit-facts가 단일 진실원이므로 cautions의 '생식 X'와 정합을 맞춘다.
    */
   rawEdible?: boolean
+  /**
+   * v5.8(작업④A): 고르기 팁 1줄 — 소비자가 좋은 상품을 고를 때 참고할 "일반 상식".
+   * ② 벤토 고르기 캡션·③ 연출에서 소비. 특정 상품 우수성 주장은 넣지 않는다(허위광고 경계).
+   * 확실치 않으면 생략(옵셔널).
+   */
+  pickTip?: string
+  /**
+   * v5.8(작업④A): 보관·섭취 팁 1문장 — storage.note(셀러·배송 관점)와 별개로
+   * 소비자 눈높이의 보관/먹는 법 한 문장. 일반 상식만. 없으면 생략.
+   */
+  consumeTip?: string
+  /**
+   * v5.8(작업④A): 품종·재배방식 정의문 맵(용어 → 정의문). 정의 칩 렌더용.
+   * 예: { 하우스: "시설 재배로 출하 시기를 앞당긴" }. 일반 상식 정의만(우수성 주장 금지). 없으면 생략.
+   */
+  termDefs?: Record<string, string>
+  /**
+   * v5.8(작업④A): 의성어 1개 — ③ 포토브레이크 1곳 오버레이용(예: 수박=쩍, 사과=아삭).
+   * 결정적 렌더. 애매한 품목은 생략(옵셔널).
+   */
+  onomatopoeia?: string
 }
 
 /**
@@ -97,6 +118,10 @@ export interface VisualDNA {
 export const FRUIT_FACTS: Record<string, FruitFact> = {
   "사과": {
     name: "사과",
+    pickTip: "껍질에 윤기가 돌고 손에 묵직하게 잡히는 것이 좋아요.",
+    consumeTip: "다른 과일과 떨어뜨려 냉장하고, 드시기 전 실온에 잠깐 두면 향이 살아나요.",
+    onomatopoeia: "아삭",
+    termDefs: { 조생종: "일찍 익는 여름 사과 계통", 중생종: "추석 무렵 익는 계통", 만생종: "늦가을 수확해 오래 두고 먹는 계통" },
     category: "fruit",
     aliases: ["사과", "홍로", "부사", "감홍", "아오리", "시나노", "시나노골드"],
     varieties: [
@@ -122,6 +147,10 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "배": {
     name: "배",
+    pickTip: "손에 묵직하고 껍질 색이 고르게 도는 것을 고르세요.",
+    consumeTip: "신문지에 싸 냉장하고 시원하게 두었다 드시면 더 맛있어요.",
+    onomatopoeia: "아삭",
+    termDefs: { 조생종: "추석 전 일찍 수확하는 계통", 만생종: "늦게 수확해 저장성이 좋은 계통" },
     category: "fruit",
     aliases: ["배", "신고", "원황", "추황", "황금배", "만풍"],
     varieties: [
@@ -146,6 +175,10 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "감귤": {
     name: "감귤",
+    pickTip: "껍질이 얇고 꼭지가 마르지 않은 것이 신선해요.",
+    consumeTip: "서늘한 곳에 두고 곰팡이 난 알은 바로 골라내 주세요.",
+    onomatopoeia: "톡",
+    termDefs: { 노지: "비닐하우스 없이 바깥 밭에서 키운" },
     category: "fruit",
     aliases: ["감귤", "귤", "노지감귤", "노지귤", "온주"],
     varieties: [
@@ -167,6 +200,10 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "한라봉": {
     name: "한라봉",
+    pickTip: "꼭지가 마르지 않고 손에 묵직하게 잡히는 것을 고르세요.",
+    consumeTip: "냉장 보관하고 드시기 전 실온에 잠깐 두면 향이 살아나요.",
+    onomatopoeia: "톡",
+    termDefs: { 만감류: "감귤을 개량한 크고 향 진한 감귤류" },
     category: "fruit",
     aliases: ["한라봉"],
     varieties: [
@@ -183,6 +220,10 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "천혜향": {
     name: "천혜향",
+    pickTip: "껍질에 탄력이 있고 향이 진하게 나는 것이 좋아요.",
+    consumeTip: "충격에 약하니 겹치지 않게 냉장 보관해 주세요.",
+    onomatopoeia: "톡",
+    termDefs: { 만감류: "감귤을 개량한 향이 진한 감귤류" },
     category: "fruit",
     aliases: ["천혜향"],
     varieties: [
@@ -199,6 +240,10 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "레드향": {
     name: "레드향",
+    pickTip: "껍질이 붉게 돌고 손에 묵직한 것을 고르세요.",
+    consumeTip: "냉장 보관하고 껍질째 깨끗이 씻어 드셔도 좋아요.",
+    onomatopoeia: "톡",
+    termDefs: { 만감류: "감귤을 개량한 붉은 감귤류" },
     category: "fruit",
     aliases: ["레드향"],
     varieties: [
@@ -215,6 +260,10 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "황금향": {
     name: "황금향",
+    pickTip: "껍질이 매끈하고 노란빛이 고르게 도는 것이 좋아요.",
+    consumeTip: "냉장 보관하고 수확 시기가 짧으니 빨리 드시는 게 좋아요.",
+    onomatopoeia: "톡",
+    termDefs: { 만감류: "감귤을 개량한 황금빛 감귤류" },
     category: "fruit",
     aliases: ["황금향"],
     varieties: [
@@ -231,6 +280,10 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "카라향": {
     name: "카라향",
+    pickTip: "향이 진하고 손에 묵직하게 잡히는 것을 고르세요.",
+    consumeTip: "냉장 보관하고 향이 진할 때 드시면 가장 맛있어요.",
+    onomatopoeia: "톡",
+    termDefs: { 만감류: "감귤을 개량한 봄 감귤류" },
     category: "fruit",
     aliases: ["카라향"],
     varieties: [
@@ -247,6 +300,9 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "딸기": {
     name: "딸기",
+    pickTip: "꼭지가 진초록으로 싱싱하고 표면에 윤기가 도는 것이 좋아요.",
+    consumeTip: "씻지 말고 냉장하다가 드시기 직전에 헹궈 주세요.",
+    termDefs: { 하우스: "비닐하우스에서 재배해 겨울에도 수확하는" },
     category: "fruit",
     aliases: ["딸기", "설향", "죽향", "금실", "매향", "킹스베리", "비타베리"],
     varieties: [
@@ -272,6 +328,10 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "복숭아": {
     name: "복숭아",
+    pickTip: "향이 진하고 살짝 눌렀을 때 탄력이 있는 것을 고르세요.",
+    consumeTip: "단단하면 실온에서 하루이틀 두었다가 냉장 후 드세요.",
+    onomatopoeia: "사르르",
+    termDefs: { 딱복: "단단한 식감의 복숭아", 물복: "과즙이 많고 부드러운 복숭아", 조생종: "제철보다 일찍 수확하는 계통" },
     category: "fruit",
     aliases: ["복숭아", "신비", "천도", "백도", "대극천", "썬프레", "선프레", "황도", "백봉"],
     varieties: [
@@ -298,6 +358,8 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "자두": {
     name: "자두",
+    pickTip: "표면에 하얀 분이 고르게 남아 있는 것이 신선해요.",
+    consumeTip: "실온에서 살짝 물러지면 냉장해 시원하게 드세요.",
     category: "fruit",
     aliases: ["자두", "후무사", "포모사", "추희", "대석"],
     varieties: [
@@ -316,6 +378,9 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "포도": {
     name: "포도",
+    pickTip: "알이 단단히 붙어 있고 줄기가 싱싱한 것을 고르세요.",
+    consumeTip: "씻지 말고 마른 종이에 싸 냉장하고 드시기 직전에 헹궈 주세요.",
+    onomatopoeia: "톡",
     category: "fruit",
     aliases: ["포도", "거봉", "캠벨", "MBA"],
     varieties: [
@@ -334,6 +399,9 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "샤인머스캣": {
     name: "샤인머스캣",
+    pickTip: "알이 탱글하고 줄기가 마르지 않은 것이 좋아요.",
+    consumeTip: "마른 종이에 싸 냉장하고 드시기 직전에 씻어 껍질째 드세요.",
+    onomatopoeia: "톡",
     category: "fruit",
     aliases: ["샤인머스캣", "샤인", "마스캇"],
     varieties: [
@@ -354,6 +422,9 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "단감": {
     name: "단감",
+    pickTip: "꼭지가 붙어 있고 껍질이 매끈한 것을 고르세요.",
+    consumeTip: "냉장 보관하고 말랑해지기 전 단단할 때 드시면 아삭해요.",
+    onomatopoeia: "아삭",
     category: "fruit",
     aliases: ["단감", "부유", "차랑"],
     varieties: [
@@ -376,6 +447,9 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "참외": {
     name: "참외",
+    pickTip: "골이 뚜렷하고 노란빛이 진하게 도는 것이 좋아요.",
+    consumeTip: "냉장 보관하고 껍질째 깨끗이 씻어 씨까지 드셔도 좋아요.",
+    onomatopoeia: "아삭",
     category: "fruit",
     aliases: ["참외", "꿀참외", "성주참외", "슈퍼금싸라기"],
     varieties: [
@@ -395,6 +469,9 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "수박": {
     name: "수박",
+    pickTip: "두드리면 맑은 소리가 나고 꼭지가 싱싱한 것을 고르세요.",
+    consumeTip: "서늘한 곳에 두고 드시기 2~3시간 전 냉장하면 시원해요.",
+    onomatopoeia: "쩍",
     category: "fruit",
     aliases: ["수박", "꿀수박", "복수박", "애플수박", "흑수박"],
     varieties: [
@@ -412,6 +489,9 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "멜론": {
     name: "멜론",
+    pickTip: "그물 무늬가 촘촘하고 꼭지 반대쪽에서 단 향이 나는 것이 좋아요.",
+    consumeTip: "받으면 실온에서 후숙한 뒤 향이 오르면 냉장해 드세요.",
+    termDefs: { 후숙: "수확 뒤 실온에 두어 단맛과 향을 끌어올리는 과정" },
     category: "fruit",
     aliases: ["멜론", "머스크멜론", "네트멜론", "허니듀", "백자멜론"],
     varieties: [
@@ -429,6 +509,9 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "체리": {
     name: "체리",
+    pickTip: "알이 단단하고 줄기가 초록으로 싱싱한 것을 고르세요.",
+    consumeTip: "냉장 보관하고 변질이 빠르니 2~3일 안에 드시는 게 좋아요.",
+    onomatopoeia: "톡",
     category: "fruit",
     aliases: ["체리", "빙체리", "라이니어"],
     varieties: [
@@ -447,6 +530,9 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "블루베리": {
     name: "블루베리",
+    pickTip: "표면에 하얀 분이 남아 있고 알이 탱탱한 것이 좋아요.",
+    consumeTip: "씻지 말고 냉장하고, 오래 두려면 냉동 보관하세요.",
+    onomatopoeia: "톡",
     category: "fruit",
     aliases: ["블루베리"],
     varieties: [
@@ -465,6 +551,9 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "키위": {
     name: "키위",
+    pickTip: "살짝 눌렀을 때 탄력이 있는 것이 잘 익은 거예요.",
+    consumeTip: "단단하면 실온에서 후숙하고 말랑해지면 냉장해 드세요.",
+    termDefs: { 후숙: "수확 뒤 실온에 두어 단맛을 끌어올리는 과정" },
     category: "fruit",
     aliases: ["키위", "그린키위", "골드키위", "참다래"],
     varieties: [
@@ -482,6 +571,9 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "망고": {
     name: "망고",
+    pickTip: "향이 진하고 살짝 눌렀을 때 탄력이 있는 것을 고르세요.",
+    consumeTip: "덜 익었으면 실온에서 후숙하고, 냉장은 완숙 후에 하세요.",
+    termDefs: { 후숙: "수확 뒤 실온에 두어 완숙시키는 과정" },
     category: "fruit",
     aliases: ["망고", "애플망고", "어윈", "카라바오"],
     varieties: [
@@ -499,6 +591,9 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "바나나": {
     name: "바나나",
+    pickTip: "껍질이 밝은 노란빛이고 상처가 없는 것이 좋아요.",
+    consumeTip: "실온에 걸어 두고 껍질에 갈변이 생겨도 과육은 괜찮아요.",
+    termDefs: { 후숙: "수확 뒤 실온에 두어 단맛을 올리는 과정" },
     category: "fruit",
     aliases: ["바나나", "캐번디시", "몽키바나나"],
     varieties: [
@@ -516,6 +611,8 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "파인애플": {
     name: "파인애플",
+    pickTip: "잎이 싱싱하고 밑동에서 단 향이 나는 것을 고르세요.",
+    consumeTip: "꼭지를 잘라 거꾸로 실온에 하루 두면 단맛이 고르게 퍼져요.",
     category: "fruit",
     aliases: ["파인애플", "MD2", "퀸"],
     varieties: [
@@ -533,6 +630,9 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "곶감": {
     name: "곶감",
+    pickTip: "표면에 하얀 분이 고르게 피고 속이 말랑한 것이 좋아요.",
+    consumeTip: "냉장 보관하고 오래 두려면 냉동했다가 살짝 녹여 드세요.",
+    termDefs: { 반건시: "겉만 말리고 속은 말랑하게 남긴 곶감", 건시: "속까지 바싹 말린 곶감" },
     category: "fruit",
     aliases: ["곶감", "반건시", "건시", "감말랭이"],
     varieties: [
@@ -551,6 +651,8 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "매실": {
     name: "매실",
+    pickTip: "흠집이 없고 단단하며 향이 진한 것을 고르세요.",
+    consumeTip: "받으면 바로 청이나 장아찌로 담그시는 게 좋아요.",
     category: "fruit",
     aliases: ["매실", "청매", "황매", "금매", "백매"],
     varieties: [
@@ -569,6 +671,10 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
   "토마토": {
     name: "토마토",
+    pickTip: "꼭지가 싱싱하고 껍질에 탄력이 도는 것이 좋아요.",
+    consumeTip: "꼭지를 위로 두고 실온 보관하다 익으면 냉장해 드세요.",
+    onomatopoeia: "톡",
+    termDefs: { 후숙: "수확 뒤 실온에 두어 붉게 익히는 과정" },
     category: "fruit",
     aliases: ["토마토", "대저짭짤이", "방울토마토", "흑토마토", "스테비아 토마토"],
     varieties: [
@@ -675,6 +781,26 @@ export function getStorageMode(fruit: string): StorageMode | null {
 /** 감각어 풀 — 카피 생성 시 이 풀에서만 어휘 차용 허용(과일 단위). */
 export function getSensoryWords(fruit: string): string[] {
   return getFact(fruit)?.sensoryWords ?? []
+}
+
+/** v5.8(작업④A): 고르기 팁 1줄 — 없으면 null. 렌더는 값이 있을 때만(허위 금지). */
+export function getPickTip(productName: string): string | null {
+  return getFact(productName)?.pickTip ?? null
+}
+
+/** v5.8(작업④A): 보관·섭취 팁 1문장 — 없으면 null. */
+export function getConsumeTip(productName: string): string | null {
+  return getFact(productName)?.consumeTip ?? null
+}
+
+/** v5.8(작업④A): 품종·재배방식 정의문 맵 — 없으면 빈 객체. 정의 칩 렌더용. */
+export function getTermDefs(productName: string): Record<string, string> {
+  return getFact(productName)?.termDefs ?? {}
+}
+
+/** v5.8(작업④A): 의성어 1개 — 없으면 null. 포토브레이크 1곳 오버레이 게이트. */
+export function getOnomatopoeia(productName: string): string | null {
+  return getFact(productName)?.onomatopoeia ?? null
 }
 
 /**

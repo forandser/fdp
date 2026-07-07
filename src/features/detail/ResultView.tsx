@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { t } from "@/lib/i18n"
-import type { CopyOutput, CopyKeyPoint, TrustInfo, SellerReview, ProductCategory, PhotoAnalysisItem } from "@/lib/ai/types"
+import type { CopyOutput, CopyKeyPoint, TrustInfo, SellerReview, ReviewStats, ProductCategory, PhotoAnalysisItem } from "@/lib/ai/types"
 import type { SectionId } from "@/lib/ai/section-regenerate"
 // v5.0-C: 브랜드 스냅샷 타입. brand-db 는 타 에이전트가 작성 중 —
 // 미존재 시 본인 tsc 에서 "Cannot find module" 로 잡히면 노트만(교차 계약).
@@ -44,6 +44,12 @@ import {
   estimateCountLabel,
   getHarvestMonths,
   getBrixRange,
+  // v5.8(작업②): 벤토 가격 셀 산술·고르기 팁 캡션·정의 칩. fruit-facts.ts(작업④ 추가 필드) 소비만.
+  parseWeightToGrams,
+  getPickTip,
+  getTermDefs,
+  // v5.8(작업③D): 의성어 오버레이 — fruit-facts.onomatopoeia(작업④ 추가) 읽기만. 페이지 1곳 상한.
+  getOnomatopoeia,
   getStorageInfo,
   isRawEdible,
   // v5.3(작업6): 붙박이 배송 문구를 과일 보관 성격으로 결정적 변주하기 위한 페르소나.
@@ -253,6 +259,12 @@ interface ResultViewProps {
    * CopyOutput이 아니라 입력 흐름(CopyInput.reviews)에서 내려온다.
    */
   reviews?: SellerReview[]
+  /**
+   * v5.8(작업①): 후기 집계(선택) — 셀러 스토어 실제 집계. 히어로 직하단 얇은 스트립으로 렌더.
+   * 없거나 전 필드 미입력이면 스트립 자체 미렌더(기존 렌더와 100% 동일 · 허위 금지).
+   * CopyOutput이 아니라 입력 흐름(CopyInput.reviewStats)에서 내려온다.
+   */
+  reviewStats?: ReviewStats
   onRetry: () => void
   onCopyChange: (next: CopyOutput) => void
   onSectionRegenerate?: (sectionId: SectionId) => Promise<void>
@@ -1954,12 +1966,13 @@ export function ResultView({
   sizeImage,
   photoAnalysis,
   productName,
-  price: _price,
+  price,
   origin,
   weight,
   category,
   trust,
   reviews,
+  reviewStats,
   onRetry,
   onCopyChange,
   onSectionRegenerate,
@@ -2104,6 +2117,27 @@ export function ResultView({
   }, [copy.keyPoints])
 
   /**
+   * v5.8(작업②B): 「우리 농장 출하 기준」 체크리스트로 승격할 POINT — 선별·검수·수확 성격만.
+   * 이 POINT들은 벤토 체크리스트 셀(컴팩트)로 내려가고 KeyPointsBig의 대형 카드에선 숨긴다
+   * (같은 문구 중복 렌더 방지 = 길이 순감의 원천). 원본 인덱스를 유지해 편집 경로가 정확히 꽂힌다.
+   * 가드: 매칭이 0개거나 전량(=KeyPointsBig가 빈 껍데기가 됨)이면 승격하지 않는다. 최대 2개.
+   * 새 입력 필드 없음 — 셀러가 이미 쓴 POINT만 재배치(허위 금지). 포장·배송 성격은 대형 카드로 남긴다.
+   */
+  const shipmentPoints = useMemo<{ point: CopyKeyPoint; idx: number }[]>(() => {
+    const SHIP = /(선별|엄선|검수|골라|골랐|고른|당도계|검품|손질|세척|수확|따요|따서|아침에|출고|출하|담아)/
+    const flagged = keyPoints
+      .map((point, idx) => ({ point, idx }))
+      .filter(({ point }) => SHIP.test(point.title ?? "") || SHIP.test(point.body ?? ""))
+    if (flagged.length === 0 || flagged.length >= keyPoints.length) return []
+    return flagged.slice(0, 2)
+  }, [keyPoints])
+  /** 위에서 승격된 POINT의 원본 인덱스 — KeyPointsBig가 이 인덱스는 대형 카드로 렌더하지 않는다. */
+  const shipmentHideIndices = useMemo(
+    () => new Set(shipmentPoints.map((s) => s.idx)),
+    [shipmentPoints],
+  )
+
+  /**
    * v5.2-A: 문제카드 수(좌측 사진 슬롯 개수). ProblemArcBlock 과 동일 규칙(최대 3, 문제 있을 때만).
    * planImages 에 넘겨 problemArc 사진 슬롯을 그만큼 확보한다(analysis 있을 때만 실제 배정).
    */
@@ -2155,6 +2189,16 @@ export function ResultView({
   )
   const heroImage = imagePlan.hero
   const galleryImages = imagePlan.gallery
+
+  /**
+   * v5.8(작업①): 후기 콜라주 배경 사진 — 기존 사진 슬롯에서 결정적으로 1장 선택(신규 슬롯 배정 없음).
+   * 히어로(항상 존재 시 재사용) → 갤러리 첫 장 순. 갤러리 블록과 인접 중복을 피하려 히어로를 우선한다.
+   * 사진이 아예 없으면 null → ReviewsBlock은 기존 카드형 폴백을 유지(회귀 0).
+   */
+  const reviewBgImage = useMemo<UploadedImage | null>(
+    () => heroImage ?? galleryImages[0] ?? null,
+    [heroImage, galleryImages],
+  )
 
   /**
    * v4.4 사진 캡션 폴백 — imageId → visibleNote(관찰 메모). 갤러리 캡션 슬롯의
@@ -2212,14 +2256,106 @@ export function ResultView({
   )
 
   /**
-   * 노출할 고객 후기 — 본문이 있는 것만(최대 3개). 0건이면 ReviewsBlock 미노출.
+   * v5.8(작업③): 사진 연출 변주 3종의 파생 슬롯 — planImages 결과를 "읽기만" 한다(구조·불변식 무변경).
+   * 미충족(사진 수·태그 부족)이면 전부 빈 값 → 각 호출부가 현행 렌더로 폴백한다.
+   *  - C 절단면 시퀀스: photoAnalysis role "cut" 컷 2장+ (없으면 빈 배열 → 현행 유지).
+   *  - B 폴라로이드 콜라주: 총 사진 6장+(포토브레이크 2슬롯 확보 하한) & 후보 4장+.
+   *  - 두 변주는 서로 다른 사진을 쓰도록 컷을 먼저 claim → 콜라주가 나머지에서 채운다(중복 0).
+   *  - 컷/콜라주가 가져간 사진은 갤러리에서 제거(galleryFinal) → 같은 사진 중복 렌더 방지.
+   */
+  const photoVariants = useMemo(() => {
+    // C: 절단면/과육 컷 — analysis 있을 때만. 결정적(images 원본 순서), 최대 3장.
+    const cutSeq: UploadedImage[] = []
+    if (photoAnalysis && photoAnalysis.length > 0) {
+      for (const img of images) {
+        if (analysisById.get(img.id)?.role === "cut") cutSeq.push(img)
+        if (cutSeq.length >= 3) break
+      }
+    }
+    const cutActive = cutSeq.length >= 2
+    const cutIds = new Set((cutActive ? cutSeq : []).map((i) => i.id))
+
+    // B: 폴라로이드 콜라주 — 총 6장+에서만(포토브레이크 2개를 대체해 순증 방지). 4장 고정(컴팩트).
+    // 후보: 포토브레이크 사진 + 갤러리(컷 제외). 히어로·컷 제외, 중복 제거.
+    const collage: UploadedImage[] = []
+    if (images.length >= 6) {
+      const seen = new Set<string>(cutIds)
+      const heroId = imagePlan.hero?.id
+      for (const img of [...imagePlan.breaks, ...galleryImages]) {
+        if (collage.length >= 4) break
+        if (img.id === heroId || seen.has(img.id)) continue
+        seen.add(img.id)
+        collage.push(img)
+      }
+    }
+    const collageActive = collage.length >= 4
+    const collageIds = new Set((collageActive ? collage : []).map((i) => i.id))
+
+    const galleryFinal = galleryImages.filter(
+      (img) => !cutIds.has(img.id) && !collageIds.has(img.id),
+    )
+    return {
+      cutSeq: cutActive ? cutSeq : [],
+      cutActive,
+      collage: collageActive ? collage : [],
+      collageActive,
+      galleryFinal,
+    }
+  }, [images, photoAnalysis, analysisById, imagePlan, galleryImages])
+
+  /** v5.8(작업③D): 의성어 — 품종 매칭 시 1개. 페이지에서 단 1곳만 오버레이(아래 target으로 상한 강제). */
+  const onomatopoeia = useMemo(() => getOnomatopoeia(productName), [productName])
+  /**
+   * 의성어 오버레이 위치 — 콜라주 > 컷 스트립 > 포토브레이크0 순 단 하나만 선택(상한 1).
+   * 선택된 블록만 showOnomatopoeia=true 로 받으므로 코드 구조 자체가 "페이지당 1회"를 보장한다.
+   */
+  const onomatopoeiaTarget: "collage" | "cut" | "photobreak" | null = useMemo(() => {
+    if (!onomatopoeia) return null
+    if (photoVariants.collageActive) return "collage"
+    if (photoVariants.cutActive) return "cut"
+    if (imagePlan.breaks[0]) return "photobreak"
+    return null
+  }, [onomatopoeia, photoVariants.collageActive, photoVariants.cutActive, imagePlan.breaks])
+
+  /**
+   * v5.8(작업③A): 핀 콜아웃 칩 — 셀러가 고른 highlightBadges(감각/특징 어휘)에서만 뽑는다(창작 금지).
+   * 짧은 어휘(≤10자)만, 중복 제거, 최대 4개. 3개 미만이면 콜아웃 미발동(현행 POINT 카드 유지).
+   */
+  const calloutChips = useMemo(() => {
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const raw of copy.highlightBadges ?? []) {
+      const w = raw.trim()
+      if (!w || w.length > 10 || seen.has(w)) continue
+      seen.add(w)
+      out.push(w)
+      if (out.length >= 4) break
+    }
+    return out
+  }, [copy.highlightBadges])
+  /**
+   * 콜아웃을 적용할 POINT 원본 인덱스 — 출하 체크리스트로 승격돼 숨겨지지 않은 "첫" 노출 POINT 중
+   * 사진이 배정된 것. 칩 3개 미만이거나 대상이 없으면 -1(현행 대형 카드 렌더).
+   */
+  const calloutIndex = useMemo(() => {
+    if (calloutChips.length < 3) return -1
+    for (let i = 0; i < keyPoints.length; i++) {
+      if (shipmentHideIndices.has(i)) continue
+      return imagePlan.keyPoints[i] ? i : -1 // 첫 노출 POINT에 사진 없으면 미발동(결정적·단순).
+    }
+    return -1
+  }, [calloutChips.length, keyPoints, shipmentHideIndices, imagePlan.keyPoints])
+
+  /**
+   * 노출할 고객 후기 — 본문이 있는 것만(최대 5개, v5.8). 0건이면 ReviewsBlock 미노출.
    * 셀러 직접 입력이라 AI가 만들지 않는다. highlight는 text에 실제로 포함될 때만 강조.
    */
   const validReviews = useMemo<SellerReview[]>(() => {
     if (!reviews || reviews.length === 0) return []
     return reviews
       .filter((r) => r && r.text.trim().length > 0)
-      .slice(0, 3)
+      // v5.8(작업①): 콜라주 말풍선 렌더 상한 5개(초과분 미렌더).
+      .slice(0, 5)
       .map((r) => ({
         text: r.text.trim(),
         highlight: r.highlight?.trim() || undefined,
@@ -2504,6 +2640,10 @@ export function ResultView({
               brix={extractBrix(copy)}
             />
 
+            {/* v5.8(작업①): 후기 집계 스트립 — 히어로 직하단. 셀러가 입력한 집계 값만(허위 금지).
+                하나도 없으면 내부에서 null 반환 → 렌더 안 됨(기존 렌더와 동일). */}
+            <ReviewStatsStrip stats={reviewStats} isMobile={isMobile} />
+
             {/* 배송 약속 밴드 — Hero CTA 직후 (리서치: 배송 약속 상단 +27.1%) */}
             <DeliveryPromiseBand isMobile={isMobile} trust={trust} />
 
@@ -2652,16 +2792,17 @@ export function ResultView({
             {validReviews.length > 0 && (
               <>
                 <DotDivider />
-                <ReviewsBlock reviews={validReviews} isMobile={isMobile} />
+                <ReviewsBlock reviews={validReviews} bgImage={reviewBgImage} isMobile={isMobile} />
               </>
             )}
 
-            {/* 4. GALLERY (2x2) */}
-            {galleryImages.length > 0 && (
+            {/* 4. GALLERY (2x2) — v5.8(작업③): 컷 스트립/콜라주가 흡수한 사진은 galleryFinal 에서
+                제외되어 같은 사진이 두 번 찍히지 않는다(변주 미발동이면 galleryFinal === galleryImages). */}
+            {photoVariants.galleryFinal.length > 0 && (
               <>
                 <DotDivider />
                 <GalleryBlock
-                  images={galleryImages}
+                  images={photoVariants.galleryFinal}
                   productName={productName}
                   isMobile={isMobile}
                   noteFor={(id) => photoNoteById.get(id)}
@@ -2671,22 +2812,37 @@ export function ResultView({
 
             <DotDivider />
 
-            {/* 5. SPEC + PRICE */}
-            <SpecBlock
+            {/* 5. SPEC + PRICE — v5.8(작업②): 벤토 데이터 그리드로 대체.
+                당도 게이지·중량/개수·개당/100g당 가격·출하 기준 체크리스트를 2컬럼 1블록으로 통합.
+                (크기·중량 서술 섹션과 선별·수확 POINT를 흡수 → 아래 SizeDiagramBlock/KeyPointsBig가 그만큼 축소) */}
+            <BentoDataGrid
               copy={copy}
               productName={productName}
               weight={weight}
+              price={price}
               onCopyChange={onCopyChange}
               onRegen={renderRegen("spec")}
               isMobile={isMobile}
+              shipmentPoints={shipmentPoints}
             />
 
             {/* v4.5: 5-1. 제철 캘린더 — 스펙 부근. fruit-facts 품종 매칭 실패/연중 수확이면 미노출. */}
             <SeasonCalendarBlock productName={productName} isMobile={isMobile} />
 
-            {/* v4.8-c: 포토 브레이크 ① — 스펙·제철 캘린더(데이터 표) 클러스터 직후, 텍스트 연속
-                구간의 첫 숨통. 사진 여유 없으면(breaks[0] 없음) 조용히 미노출(게이팅). */}
-            {imagePlan.breaks[0] && (
+            {/* 포토 브레이크 ①(슬롯0) — v5.8(작업③C): 절단면 컷 2장+ 이면 세로 대신 가로 컷 시퀀스로
+                대체. 컷이 없고 콜라주도 없을 때만 기존 풀블리드 포토브레이크(게이팅). 셋 다 미충족이면 미노출. */}
+            {photoVariants.cutActive ? (
+              <>
+                <DotDivider />
+                <CutSequenceStripBlock
+                  photos={photoVariants.cutSeq}
+                  productName={productName}
+                  isMobile={isMobile}
+                  onomatopoeia={onomatopoeia}
+                  showOnomatopoeia={onomatopoeiaTarget === "cut"}
+                />
+              </>
+            ) : !photoVariants.collageActive && imagePlan.breaks[0] ? (
               <>
                 <DotDivider />
                 <PhotoBreakBlock
@@ -2696,23 +2852,25 @@ export function ResultView({
                   captionFallback={
                     photoNoteById.get(imagePlan.breaks[0].id) ?? PHOTOBREAK_SAFE_CAPTIONS[0]
                   }
+                  onomatopoeia={onomatopoeia}
+                  showOnomatopoeia={onomatopoeiaTarget === "photobreak"}
                 />
               </>
-            )}
+            ) : null}
 
-            {/* 5a. 크기·중량 안내 — 크기 전용 슬롯 사진 또는 무게 데이터가 있을 때만.
-                v3.7: sizeImage가 있으면 사진 + 무게카드, 없으면 기존 동작(무게 데이터만). */}
+            {/* 5a. 크기 참고 사진 — v5.8(작업②C): 중량·개수 환산은 벤토로 이관되어 이 섹션은
+                크기 전용 슬롯 사진이 있을 때만 렌더(사진 없으면 미노출). */}
             <SizeDiagramBlock
               productName={productName}
-              weight={weight}
               sizeImage={sizeImage}
               isMobile={isMobile}
               noun={noun}
               hasSizeMention={hasSizeMention}
             />
 
-            {/* 6. POINT BIG CARDS */}
-            {keyPoints.length > 0 && (
+            {/* 6. POINT BIG CARDS — v5.8(작업②B): 출하 기준(선별·수확)으로 승격된 POINT는
+                벤토 체크리스트로 내려가 여기선 숨긴다. 남는 대형 카드가 1장 이상일 때만 렌더. */}
+            {keyPoints.length - shipmentHideIndices.size > 0 && (
               <>
                 <DotDivider />
                 <KeyPointsBig
@@ -2722,6 +2880,9 @@ export function ResultView({
                   pointImageFor={pointImageFor}
                   isMobile={isMobile}
                   noun={noun}
+                  hideIndices={shipmentHideIndices}
+                  calloutIndex={calloutIndex}
+                  calloutChips={calloutChips}
                 />
               </>
             )}
@@ -2737,9 +2898,19 @@ export function ResultView({
               </>
             )}
 
-            {/* v4.8-c: 포토 브레이크 ② — 페이지에서 가장 긴 텍스트 연속(수령 타임라인→보관→
-                레시피→FAQ→배송·교환환불) 진입 직전. 사진 여유 없으면(breaks[1] 없음) 미노출(게이팅). */}
-            {imagePlan.breaks[1] && (
+            {/* 포토 브레이크 ②(슬롯1) — v5.8(작업③B): 사진 6장+ 이면 두 포토브레이크를 폴라로이드
+                콜라주 1블록으로 대체(순증 방지). 콜라주 미발동이면 기존 풀블리드 포토브레이크(게이팅). */}
+            {photoVariants.collageActive ? (
+              <>
+                <DotDivider />
+                <PolaroidCollageBlock
+                  photos={photoVariants.collage}
+                  isMobile={isMobile}
+                  onomatopoeia={onomatopoeia}
+                  showOnomatopoeia={onomatopoeiaTarget === "collage"}
+                />
+              </>
+            ) : imagePlan.breaks[1] ? (
               <>
                 <DotDivider />
                 <PhotoBreakBlock
@@ -2751,7 +2922,7 @@ export function ResultView({
                   }
                 />
               </>
-            )}
+            ) : null}
 
             {/* v4.5: 6-1. 수령 후 타임라인 — 보관 섹션 위. fruit-facts storage 없으면 미노출.
                 copy.storage(셀러 원문) 유무와 무관하게 fruit-facts storage 매칭 시 노출한다. */}
@@ -4880,12 +5051,17 @@ function PhotoBreakBlock({
   isMobile,
   slot,
   captionFallback,
+  onomatopoeia,
+  showOnomatopoeia,
 }: {
   image: UploadedImage
   isMobile: boolean
   /** 캡션 편집 슬롯 번호 — id는 photobreak.caption.{slot}. 페이지 등장 순서와 일치(위=0, 아래=1). */
   slot: 0 | 1
   captionFallback: string
+  /** v5.8(작업③D): 의성어(fruit-facts). showOnomatopoeia 로 이 블록에 실릴 때만 오버레이. */
+  onomatopoeia?: string | null
+  showOnomatopoeia?: boolean
 }) {
   const accent = useAccent()
   const layout = useLayout()
@@ -4940,6 +5116,226 @@ function PhotoBreakBlock({
           maxLength={24}
         />
       </div>
+      {showOnomatopoeia && onomatopoeia && (
+        <OnomatopoeiaOverlay text={onomatopoeia} isMobile={isMobile} tone="onDark" />
+      )}
+    </div>
+  )
+}
+
+/**
+ * v5.8(작업③D): 의성어 대형 디스플레이 타이포 오버레이 — 사진/블록 위에 장식 1개.
+ * 페이지당 1회만 렌더(호출부가 target 으로 상한 강제). 세로 픽셀 추가 0(position:absolute).
+ * 인라인 CSS/텍스트만 → JPG 위생 안전. 결정적(고정 위치·회전). 사실 주장 없음(감각 의성어).
+ */
+function OnomatopoeiaOverlay({
+  text,
+  isMobile,
+  tone = "onDark",
+}: {
+  text: string
+  isMobile: boolean
+  /** onDark: 사진 위(흰 글씨+그림자) / onLight: 밝은 배경 위(잉크 글씨). */
+  tone?: "onDark" | "onLight"
+}) {
+  const onDark = tone === "onDark"
+  return (
+    <div
+      aria-hidden
+      style={{
+        position: "absolute",
+        right: isMobile ? 14 : 30,
+        top: isMobile ? 12 : 22,
+        transform: "rotate(-8deg)",
+        fontFamily: DISPLAY_FONT,
+        fontWeight: 900,
+        fontSize: isMobile ? 52 : 100,
+        lineHeight: 1,
+        letterSpacing: -2,
+        color: onDark ? "#FFFFFF" : INK,
+        textShadow: onDark ? "0 3px 16px rgba(0,0,0,0.5)" : "none",
+        pointerEvents: "none",
+        userSelect: "none",
+        wordBreak: "keep-all",
+        zIndex: 2,
+      }}
+    >
+      {text}
+    </div>
+  )
+}
+
+/**
+ * v5.8(작업③B): 폴라로이드 콜라주 — 갤러리·포토브레이크에서 모은 사진 4장을 흰 폴라로이드 프레임 +
+ * 결정적 회전(인덱스 기반 ±6°, 난수 금지) + 그림자로 한 블록에 배치한다. 포토브레이크 2개를 대체.
+ * 캡션은 셀러 시점 고정 문구("농장에서 직접 찍은 사진들") — 구매후기 오인 문구 금지(사실 주장 없음).
+ * 호출부에서 사진 수 미충족(<4)이면 미발동(현행 포토브레이크 폴백). 인라인 CSS/hex만 → JPG 위생.
+ */
+const COLLAGE_ROT = [-6, 4, -5, 6, -3, 5] // 결정적 회전 패턴(±6°). Math.random 금지.
+function PolaroidCollageBlock({
+  photos,
+  isMobile,
+  onomatopoeia,
+  showOnomatopoeia,
+}: {
+  photos: UploadedImage[]
+  isMobile: boolean
+  onomatopoeia?: string | null
+  showOnomatopoeia?: boolean
+}) {
+  const accent = useAccent()
+  return (
+    <div
+      style={{
+        position: "relative",
+        background: accent.soft,
+        padding: isMobile ? "28px 22px 34px" : "46px 44px 54px",
+      }}
+    >
+      <p
+        style={{
+          margin: 0,
+          marginBottom: isMobile ? 20 : 30,
+          textAlign: "center",
+          fontFamily: BODY_FONT,
+          fontWeight: 800,
+          fontSize: isMobile ? 16 : 24,
+          color: SUB,
+          letterSpacing: -0.4,
+          wordBreak: "keep-all",
+        }}
+      >
+        <OverrideText id="collage.caption" fallback="농장에서 직접 찍은 사진들" maxLength={24} />
+      </p>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(4, 1fr)",
+          gap: isMobile ? 18 : 24,
+          alignItems: "start",
+        }}
+      >
+        {photos.map((img, i) => (
+          <div
+            key={img.id}
+            style={{
+              background: "#FFFFFF",
+              padding: isMobile ? "8px 8px 26px" : "10px 10px 34px",
+              borderRadius: 3,
+              boxShadow: "0 8px 22px rgba(0,0,0,0.16)",
+              transform: `rotate(${COLLAGE_ROT[i % COLLAGE_ROT.length]}deg)`,
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={img.url}
+              alt=""
+              style={{ width: "100%", aspectRatio: "1", objectFit: "cover", display: "block" }}
+            />
+          </div>
+        ))}
+      </div>
+      {showOnomatopoeia && onomatopoeia && (
+        <OnomatopoeiaOverlay text={onomatopoeia} isMobile={isMobile} tone="onLight" />
+      )}
+    </div>
+  )
+}
+
+/**
+ * v5.8(작업③C): 절단면 시퀀스 — photoAnalysis "cut" 컷 2~3장을 가로 만화 컷으로 나열한다.
+ * 세로 나열 대비 압축. 캡션은 셀러 시점 중립 문구("반으로 가르면" 계열) — 사실 주장(당도·산지) 금지.
+ * 컷 사이 화살표(→)로 시퀀스감. 주체 크롭(useCrop, 분석 있을 때만) 재사용. 인라인 CSS/hex → JPG 위생.
+ * 호출부에서 컷 2장+ 일 때만 렌더(그 외 현행 유지).
+ */
+const CUTSEQ_CAPTIONS = ["반으로 가르면", "속이 이렇게", "한 조각 더"]
+function CutSequenceStripBlock({
+  photos,
+  productName,
+  isMobile,
+  onomatopoeia,
+  showOnomatopoeia,
+}: {
+  photos: UploadedImage[]
+  productName: string
+  isMobile: boolean
+  onomatopoeia?: string | null
+  showOnomatopoeia?: boolean
+}) {
+  const accent = useAccent()
+  const crop = useCrop()
+  const shown = photos.slice(0, 3)
+  const cells: React.ReactNode[] = []
+  shown.forEach((img, i) => {
+    if (i > 0) {
+      cells.push(
+        <div
+          key={`cutseq-arrow-${i}`}
+          aria-hidden
+          style={{
+            alignSelf: "center",
+            fontSize: isMobile ? 24 : 40,
+            fontWeight: 900,
+            color: accent.accent,
+            fontFamily: DISPLAY_FONT,
+            lineHeight: 1,
+            flexShrink: 0,
+          }}
+        >
+          →
+        </div>,
+      )
+    }
+    const box = crop.boxOf(img)
+    cells.push(
+      <div key={img.id} style={{ flex: "1 1 0", minWidth: 0 }}>
+        <div style={{ borderRadius: 8, overflow: "hidden", boxShadow: "0 4px 16px rgba(0,0,0,0.1)" }}>
+          {box ? (
+            <CroppedImage image={img} box={box} slotRatio={1} alt={`${productName} ${i + 1}`} />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={img.url}
+              alt={`${productName} ${i + 1}`}
+              style={{ width: "100%", aspectRatio: "1", objectFit: "cover", display: "block" }}
+            />
+          )}
+        </div>
+        <div
+          style={{
+            marginTop: isMobile ? 8 : 12,
+            textAlign: "center",
+            fontFamily: BODY_FONT,
+            fontWeight: 700,
+            fontSize: isMobile ? 13 : 20,
+            color: SUB,
+            letterSpacing: -0.3,
+            wordBreak: "keep-all",
+          }}
+        >
+          <OverrideText
+            id={`cutseq.caption.${i}`}
+            fallback={CUTSEQ_CAPTIONS[i] ?? CUTSEQ_CAPTIONS[CUTSEQ_CAPTIONS.length - 1]}
+            maxLength={16}
+          />
+        </div>
+      </div>,
+    )
+  })
+  return (
+    <div
+      style={{
+        position: "relative",
+        background: "#FFFFFF",
+        padding: isMobile ? "24px 16px 28px" : "38px 40px 44px",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", gap: isMobile ? 8 : 16 }}>
+        {cells}
+      </div>
+      {showOnomatopoeia && onomatopoeia && (
+        <OnomatopoeiaOverlay text={onomatopoeia} isMobile={isMobile} tone="onDark" />
+      )}
     </div>
   )
 }
@@ -5277,28 +5673,97 @@ function specLabelIcon(label: string): (p: LineIconProps) => React.JSX.Element {
   return PackIcon
 }
 
-function SpecBlock({
+/** v5.8(작업②): 원 단위 콤마 구분 — 결정적(로케일 비의존, JPG 안전). */
+function formatWon(n: number): string {
+  return Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",")
+}
+
+/**
+ * v5.8(작업②): 벤토 데이터 그리드 — 기존 SpecBlock을 대체하는 통합 정보 블록.
+ *
+ * 흩어져 있던 스펙 카드·당도 게이지·중량/개수 환산·개당/100g당 가격·출하 기준 체크리스트를
+ * 2컬럼 벤토 1블록으로 모은다. 셀 순서 = 정보 위계(맛→가격→신선도→나머지). 대표 수치 1개
+ * (당도, 없으면 가격)만 대형 stat(900)로 승격한다. 타사·마트 비교 열은 만들지 않는다(ADR — 허위광고 회피).
+ *
+ * 허위 금지: 모든 셀은 셀러 입력이 있을 때만 렌더 —
+ *  · 가격 셀: price>0 && 중량 파싱 성공(입력값 단순 산술만, 창작 없음). price 미연결 시 자동 미렌더.
+ *  · 중량 개수 환산·개당 g: fruit-facts avgWeightG 매칭 시에만.
+ *  · 출하 기준 체크리스트: 승격된 POINT(shipmentPoints)가 있을 때만.
+ *  · 고르기 팁 캡션 / 정의 칩: fruit-facts에 값이 있고 상품명에 해당 용어가 있을 때만.
+ */
+function BentoDataGrid({
   copy,
   productName,
-  weight: _weight, // 개수 환산이 크기 블록으로 이관되어 미사용 (인터페이스는 유지)
+  weight,
+  price,
   onCopyChange,
   onRegen,
   isMobile,
+  shipmentPoints,
 }: {
   copy: CopyOutput
   productName: string
   weight?: string
+  /** v5.8(작업②): 판매가(원). 현재 파이프라인 미연결(0) → 가격 셀은 price>0일 때만 = 사실상 휴면. */
+  price: number
   onCopyChange: (next: CopyOutput) => void
   onRegen: React.ReactNode
   isMobile: boolean
+  /** v5.8(작업②B): 출하 기준 체크리스트로 승격된 POINT(원본 인덱스 유지 — 편집 경로용). */
+  shipmentPoints: { point: CopyKeyPoint; idx: number }[]
 }) {
   const accent = useAccent()
   const specCount = copy.spec.length
+  const bento = t.detail.result.bento
+  const sr = t.detail.result.sizeRef
 
   // 당도 기준선 바 — fruit-facts 매칭 시에만 사용할 기준값.
   const brixFact = FRUIT_FACTS[detectFruitFactKey(productName) ?? ""]
 
-  // (개수 환산은 크기 블록이 전담 — v3.1-b에서 스펙 쪽 중복 행 삭제)
+  // v5.8(작업②): 중량·개수 환산 값(크기 블록에서 이관) — 중량 셀에 붙는 보조 행.
+  const trimmedWeight = weight?.trim() || null
+  const avgWeightG = getAvgWeightG(productName)
+  const perPieceLabel = avgWeightG != null ? sr.perPiece.replace("{g}", `${avgWeightG}`) : null
+  const boxCount =
+    trimmedWeight && avgWeightG != null ? estimateCountLabel(trimmedWeight, avgWeightG) : null
+  const boxCountLabel =
+    boxCount && trimmedWeight
+      ? sr.boxCount.replace("{weight}", trimmedWeight).replace("{count}", boxCount)
+      : null
+
+  // v5.8(작업②): 개당/100g당 단가 — 입력 가격 + 중량의 단순 산술만(창작·기본값 없음).
+  const grams = trimmedWeight ? parseWeightToGrams(trimmedWeight) : null
+  const priceValid = Number.isFinite(price) && price > 0 && grams != null && grams > 0
+  const per100gWon = priceValid ? formatWon((price / (grams as number)) * 100) : null
+  const perEachWon =
+    priceValid && avgWeightG != null ? formatWon((price * avgWeightG) / (grams as number)) : null
+
+  // v5.8(작업②E): 고르기 팁 캡션(당도 셀) — 해당 과일에 값이 있을 때만.
+  const pickTip = getPickTip(productName)
+  // v5.8(작업②E): 정의 칩 1개 — 상품명에 등장하는 품종/재배방식 용어가 사전에 있을 때만.
+  const termEntry =
+    Object.entries(getTermDefs(productName)).find(([term]) => productName.includes(term)) ?? null
+
+  // 라벨 유형별 정보 위계 우선순위(작업②D): 맛(당도)1 · 신선/수확3 · 중량/크기4 · 산지5 · 기타6.
+  // (가격은 별도 합성 셀, 당도 있으면 그 다음(2). 당도 없으면 가격이 대표 stat이 되어 최상단.)
+  const priorityOf = (label: string): number => {
+    if (/(당도|Brix|brix|맛|당)/.test(label)) return 1
+    if (/(수확|신선|제철|출하)/.test(label)) return 3
+    if (/(중량|무게|크기|용량|수량|개수)/.test(label)) return 4
+    if (/(산지|원산지|생산지|재배|농장)/.test(label)) return 5
+    return 6
+  }
+  const isWeightLabel = (label: string): boolean =>
+    /(중량|무게|크기|용량|수량|개수)/.test(label)
+
+  // v5.8(작업② fix): 중량 정보 유실 방지 폴백.
+  //  개당g·박스개수 환산은 원래 '중량류 라벨 스펙 카드'에만 부속 렌더된다(showWeightExtra).
+  //  그런데 weight는 copy.spec과 독립된 입력 prop이라, 셀러가 중량을 입력했는데 AI/시나리오
+  //  copy.spec에 중량류 라벨 카드가 없고 sizeImage도 없으면(크기 블록은 사진 전용으로 축소됨)
+  //  입력 중량 값과 환산이 어디에도 안 나온다(과거 SizeDiagramBlock이 담당하던 회귀).
+  //  → 중량류 스펙 카드가 하나도 없을 때만 입력 중량을 살리는 전용 셀을 합성(입력값만·창작 없음).
+  const hasWeightSpec = copy.spec.some((s) => isWeightLabel(s.label))
+  const showWeightFallback = !!trimmedWeight && !hasWeightSpec
 
   // v3.4 fix(이슈3): 당도 카드(대형 숫자 + Brix 기준선 바)는 세로로 훨씬 길어,
   // 같은 2열 행에 놓인 옆 카드(중량 등)에 ~400px 빈 공간을 만들었다.
@@ -5313,9 +5778,12 @@ function SpecBlock({
   }
   // 풀폭으로 뺄 당도 카드 인덱스(첫 매칭 1개만) + 그리드에 남을 나머지.
   const featuredIdx = copy.spec.findIndex(isTallBrix)
+  // v5.8(작업②D): 남는 셀을 정보 위계 순으로 정렬(신선/수확 → 중량 → 산지 → 기타). i는 원본
+  // 인덱스라 편집 경로 불변. Array.sort는 안정 정렬 → 같은 우선순위는 입력 순서 유지.
   const gridSpecs = copy.spec
     .map((s, i) => ({ s, i }))
     .filter(({ i }) => i !== featuredIdx)
+    .sort((a, b) => priorityOf(a.s.label) - priorityOf(b.s.label))
   // 그리드 열 수 — 남은 카드가 1개면 1열, 아니면 2열.
   const columns = gridSpecs.length <= 1 ? "1fr" : "repeat(2, minmax(0, 1fr))"
 
@@ -5333,7 +5801,7 @@ function SpecBlock({
           gridColumn: fullSpan ? "1 / -1" : undefined,
           background: "#FFFFFF",
           border: `1px solid ${LINE}`,
-          borderRadius: 14,
+          borderRadius: 18, // v5.8(작업②): 벤토 radius(16~20급)
           padding: isMobile ? "24px 24px" : "32px 34px",
           display: "flex",
           flexDirection: "column",
@@ -5412,6 +5880,22 @@ function SpecBlock({
                     isMobile={isMobile}
                   />
                 )}
+                {/* v5.8(작업②E): 고르기 팁 캡션 — 해당 과일에 값이 있을 때만(당도 셀 1줄). */}
+                {pickTip && (
+                  <div
+                    style={{
+                      marginTop: isMobile ? 8 : 12,
+                      fontSize: isMobile ? 12 : 19,
+                      color: SUB,
+                      fontFamily: BODY_FONT,
+                      lineHeight: 1.5,
+                      wordBreak: "keep-all",
+                    }}
+                  >
+                    <span style={{ fontWeight: 800, color: accent.dark }}>{bento.pickTipLabel}</span>{" "}
+                    {pickTip}
+                  </div>
+                )}
               </>
             )
           })()
@@ -5423,31 +5907,49 @@ function SpecBlock({
               .reduce((max, tok) => Math.max(max, tok.length), 0)
             const isLongId = longestToken >= 12
             const baseSize = isMobile ? 22 : 40
+            // v5.8(작업②): 중량 셀이면 개당 g·박스 개수 환산을 보조 행으로(크기 블록에서 이관).
+            const showWeightExtra = isWeightLabel(s.label) && (perPieceLabel || boxCountLabel)
             return (
-              <div
-                style={{
-                  fontSize: isLongId ? (isMobile ? 15 : 26) : baseSize,
-                  fontWeight: 800,
-                  color: INK,
-                  lineHeight: 1.35,
-                  // 긴 식별자는 어떤 위치에서도 안 꺾이게(nowrap), 일반 값은 keep-all.
-                  wordBreak: "keep-all",
-                  whiteSpace: isLongId ? "nowrap" : undefined,
-                  overflow: isLongId ? "hidden" : undefined,
-                  textOverflow: isLongId ? "ellipsis" : undefined,
-                  fontFamily: BODY_FONT,
-                  letterSpacing: -0.3,
-                }}
-              >
-                <EditableResultText
-                  copy={copy}
-                  onChange={onCopyChange}
-                  path={["spec", i, "value"]}
-                  maxLength={100}
-                  placeholder={s.label}
-                  renderDisplay={renderNoBreakParens}
-                />
-              </div>
+              <>
+                <div
+                  style={{
+                    fontSize: isLongId ? (isMobile ? 15 : 26) : baseSize,
+                    fontWeight: 800,
+                    color: INK,
+                    lineHeight: 1.35,
+                    // 긴 식별자는 어떤 위치에서도 안 꺾이게(nowrap), 일반 값은 keep-all.
+                    wordBreak: "keep-all",
+                    whiteSpace: isLongId ? "nowrap" : undefined,
+                    overflow: isLongId ? "hidden" : undefined,
+                    textOverflow: isLongId ? "ellipsis" : undefined,
+                    fontFamily: BODY_FONT,
+                    letterSpacing: -0.3,
+                  }}
+                >
+                  <EditableResultText
+                    copy={copy}
+                    onChange={onCopyChange}
+                    path={["spec", i, "value"]}
+                    maxLength={100}
+                    placeholder={s.label}
+                    renderDisplay={renderNoBreakParens}
+                  />
+                </div>
+                {showWeightExtra && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 4 : 6, marginTop: isMobile ? 4 : 6 }}>
+                    {perPieceLabel && (
+                      <div style={{ fontSize: isMobile ? 14 : 22, color: SUB, fontFamily: BODY_FONT, fontWeight: 600 }}>
+                        {renderNoBreakParens(perPieceLabel)}
+                      </div>
+                    )}
+                    {boxCountLabel && (
+                      <div style={{ fontSize: isMobile ? 14 : 22, color: accent.dark, fontFamily: BODY_FONT, fontWeight: 800 }}>
+                        {renderNoBreakParens(boxCountLabel)}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
             )
           })()
         )}
@@ -5464,20 +5966,80 @@ function SpecBlock({
     >
       <SectionTitle title={t.detail.result.spec} regen={onRegen} isMobile={isMobile} editId="sect.spec.title" overline="SPEC" editOverlineId="sect.spec.overline" />
 
-      {specCount > 0 ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 10 : 16 }}>
-          {/* 키 큰 당도 카드(기준선 바 포함)는 풀폭 — 옆 카드 여백 덩어리 제거(이슈3). */}
+      {specCount > 0 || priceValid || shipmentPoints.length > 0 || showWeightFallback ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 12 : 16 }}>
+          {/* 맛(당도) — 키 큰 당도 카드(기준선 바 포함)는 풀폭 대표 stat. (작업②D 위계 1) */}
           {featuredIdx >= 0 && renderCard(copy.spec[featuredIdx], featuredIdx)}
-          {/* 나머지 스펙은 2열 그리드 유지 */}
+
+          {/* 가격 — 개당/100g당 단가(입력 가격+중량 산술). 당도 없으면 이 셀이 대표 stat. (작업②D 위계 2)
+              price 파이프라인 미연결(0)이면 priceValid=false → 자동 미렌더(허위 금지). */}
+          {priceValid && (
+            <div
+              style={{
+                gridColumn: "1 / -1",
+                background: accent.soft,
+                border: `1px solid ${accent.soft}`,
+                borderRadius: 18,
+                padding: isMobile ? "24px 24px" : "32px 34px",
+                display: "flex",
+                flexDirection: "column",
+                gap: isMobile ? 8 : 12,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: isMobile ? 7 : 10,
+                  fontSize: isMobile ? 15 : 24,
+                  color: SUB,
+                  fontWeight: 700,
+                  fontFamily: BODY_FONT,
+                  letterSpacing: 0.5,
+                }}
+              >
+                {(() => {
+                  const MiniIcon = specLabelIcon("가격")
+                  return <MiniIcon color={accent.accent} size={isMobile ? 20 : 30} />
+                })()}
+                <span>{bento.priceLabel}</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: isMobile ? 6 : 10, lineHeight: 1, color: accent.accent, fontFamily: DISPLAY_FONT }}>
+                <span style={{ fontSize: featuredIdx >= 0 ? (isMobile ? 40 : 68) : (isMobile ? 60 : 100), fontWeight: 900, letterSpacing: -3 }}>
+                  {per100gWon}
+                </span>
+                <span style={{ fontSize: isMobile ? 15 : 26, fontWeight: 800, color: accent.dark, fontFamily: BODY_FONT, letterSpacing: 1 }}>
+                  {bento.per100gUnit}
+                </span>
+              </div>
+              {perEachWon && (
+                <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: isMobile ? 4 : 8 }}>
+                  <span style={{ fontSize: isMobile ? 16 : 26, color: SUB, fontFamily: BODY_FONT, fontWeight: 700 }}>
+                    {bento.perEach.replace("{won}", perEachWon)}
+                  </span>
+                  {/* v5.8(작업② fix): 개당가는 품종 평균 중량으로 과수 추정 → 입력 중량만이 아님을 병기(허위 방지). */}
+                  {avgWeightG != null && (
+                    <span style={{ fontSize: isMobile ? 11 : 15, color: MUTE, fontFamily: BODY_FONT, fontWeight: 600 }}>
+                      {bento.perEachNote.replace("{g}", `${avgWeightG}`)}
+                    </span>
+                  )}
+                </div>
+              )}
+              <div style={{ fontSize: isMobile ? 10 : 14, color: MUTE, fontFamily: BODY_FONT, lineHeight: 1.4 }}>
+                {bento.priceCaption}
+              </div>
+            </div>
+          )}
+
+          {/* 신선도·중량·산지·기타 — 정보 위계 순 2열 벤토 그리드. (작업②D 위계 3~) */}
           {gridSpecs.length > 0 && (
             <div
               style={{
                 display: "grid",
                 gridTemplateColumns: columns,
-                gap: isMobile ? 10 : 16,
+                gap: isMobile ? 12 : 16,
               }}
             >
-              {/* v2.3: 이모지 아이콘 삭제, 카드 테두리 얇은 회색, 라벨/값 리듬 통일 */}
               {/* F(minor): 2열 그리드에서 홀수 개면 마지막 카드를 풀폭으로. */}
               {gridSpecs.map(({ s, i }, gi) =>
                 renderCard(
@@ -5488,6 +6050,163 @@ function SpecBlock({
                     gi === gridSpecs.length - 1,
                 ),
               )}
+            </div>
+          )}
+
+          {/* v5.8(작업② fix): 중량 폴백 셀 — copy.spec에 중량류 라벨 카드가 없을 때만.
+              입력 중량 값 + 개당g·박스개수 환산을 살린다(SizeDiagramBlock 사진 전용화로 인한 유실 방지).
+              weight는 copy.spec 밖 prop이라 편집 대상 아님 → 비편집 평문(허위 없음, 입력값만). */}
+          {showWeightFallback && (
+            <div
+              style={{
+                background: "#FFFFFF",
+                border: `1px solid ${LINE}`,
+                borderRadius: 18,
+                padding: isMobile ? "24px 24px" : "32px 34px",
+                display: "flex",
+                flexDirection: "column",
+                gap: isMobile ? 12 : 16,
+                minWidth: 0,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: isMobile ? 7 : 10,
+                  fontSize: isMobile ? 15 : 24,
+                  color: SUB,
+                  fontWeight: 700,
+                  fontFamily: BODY_FONT,
+                  letterSpacing: 0.5,
+                }}
+              >
+                {(() => {
+                  const MiniIcon = specLabelIcon(bento.weightLabel)
+                  return <MiniIcon color={accent.accent} size={isMobile ? 20 : 30} />
+                })()}
+                <span>{bento.weightLabel}</span>
+              </div>
+              <div
+                style={{
+                  fontSize: isMobile ? 22 : 40,
+                  fontWeight: 800,
+                  color: INK,
+                  lineHeight: 1.35,
+                  wordBreak: "keep-all",
+                  fontFamily: BODY_FONT,
+                  letterSpacing: -0.3,
+                }}
+              >
+                {renderNoBreakParens(trimmedWeight as string)}
+              </div>
+              {(perPieceLabel || boxCountLabel) && (
+                <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 4 : 6, marginTop: isMobile ? 4 : 6 }}>
+                  {perPieceLabel && (
+                    <div style={{ fontSize: isMobile ? 14 : 22, color: SUB, fontFamily: BODY_FONT, fontWeight: 600 }}>
+                      {renderNoBreakParens(perPieceLabel)}
+                    </div>
+                  )}
+                  {boxCountLabel && (
+                    <div style={{ fontSize: isMobile ? 14 : 22, color: accent.dark, fontFamily: BODY_FONT, fontWeight: 800 }}>
+                      {renderNoBreakParens(boxCountLabel)}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 우리 농장 출하 기준 ✓체크리스트 — 선별·수확 성격 POINT를 컴팩트 리스트로(작업②B).
+              셀러가 이미 쓴 POINT만 재배치(새 입력 없음). 타사·마트 비교 열 없음(ADR). */}
+          {shipmentPoints.length > 0 && (
+            <div
+              style={{
+                gridColumn: "1 / -1",
+                background: "#FFFFFF",
+                border: `1px solid ${LINE}`,
+                borderRadius: 18,
+                padding: isMobile ? "22px 24px" : "30px 34px",
+                display: "flex",
+                flexDirection: "column",
+                gap: isMobile ? 12 : 16,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: isMobile ? 7 : 10,
+                  fontSize: isMobile ? 15 : 24,
+                  color: SUB,
+                  fontWeight: 700,
+                  fontFamily: BODY_FONT,
+                  letterSpacing: 0.5,
+                }}
+              >
+                {(() => {
+                  const MiniIcon = specLabelIcon("선별")
+                  return <MiniIcon color={accent.accent} size={isMobile ? 20 : 30} />
+                })()}
+                <span>{bento.shipmentTitle}</span>
+              </div>
+              {shipmentPoints.map(({ idx }) => (
+                <div key={`ship-${idx}`} style={{ display: "flex", alignItems: "flex-start", gap: isMobile ? 8 : 12 }}>
+                  <span
+                    aria-hidden
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                      marginTop: isMobile ? 2 : 4,
+                      width: isMobile ? 20 : 30,
+                      height: isMobile ? 20 : 30,
+                      borderRadius: "50%",
+                      background: accent.accent,
+                      color: "#FFFFFF",
+                      fontSize: isMobile ? 12 : 18,
+                      fontWeight: 900,
+                    }}
+                  >
+                    ✓
+                  </span>
+                  <div style={{ fontSize: isMobile ? 17 : 28, color: INK, fontWeight: 800, fontFamily: BODY_FONT, lineHeight: 1.35, wordBreak: "keep-all", minWidth: 0 }}>
+                    <EditableResultText
+                      copy={copy}
+                      onChange={onCopyChange}
+                      path={["keyPoints", idx, "title"]}
+                      maxLength={40}
+                      renderDisplay={renderNoBreakParens}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* v5.8(작업②E): 정의 칩 1개 — 상품명에 등장하는 품종/재배방식 용어가 사전에 있을 때만. */}
+          {termEntry && (
+            <div style={{ display: "flex" }}>
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "baseline",
+                  gap: isMobile ? 5 : 8,
+                  padding: isMobile ? "8px 14px" : "12px 20px",
+                  borderRadius: 999,
+                  background: "#FFFFFF",
+                  border: `1px solid ${LINE}`,
+                  fontSize: isMobile ? 12 : 19,
+                  fontFamily: BODY_FONT,
+                  color: SUB,
+                  lineHeight: 1.4,
+                  wordBreak: "keep-all",
+                }}
+              >
+                <span style={{ fontWeight: 800, color: accent.dark }}>{termEntry[0]}</span>
+                <span>{termEntry[1]}</span>
+              </span>
             </div>
           )}
         </div>
@@ -5509,9 +6228,6 @@ function SpecBlock({
           여기에 상품 정보 카드가 들어갑니다
         </div>
       )}
-
-      {/* v3.1-b: 스펙 쪽 개수 환산 행 삭제 — 바로 아래 크기 블록(SizeDiagramBlock)이
-          같은 환산을 카드로 보여줘 연속 중복이었다 (하네스 실측에서 발견). */}
     </div>
   )
 }
@@ -5626,6 +6342,20 @@ function SeasonCalendarBlock({
   )
 }
 
+/**
+ * v5.8(작업③A): 핀 콜아웃 칩 4슬롯 — 10·2·5·7시 고정 배치 + 지시선 좌표(viewBox 0~100).
+ * pos: 사진 래퍼 기준 절대 위치. line: [칩앵커x, 칩앵커y, 사진중심쪽 끝x, 끝y] — 결정적.
+ */
+const CALLOUT_SLOTS: {
+  pos: React.CSSProperties
+  line: [number, number, number, number]
+}[] = [
+  { pos: { top: "3%", left: "0%" }, line: [15, 16, 44, 45] }, // 10시
+  { pos: { top: "3%", right: "0%" }, line: [85, 16, 56, 45] }, // 2시
+  { pos: { bottom: "9%", right: "0%" }, line: [85, 84, 56, 55] }, // 5시
+  { pos: { bottom: "9%", left: "0%" }, line: [15, 84, 44, 55] }, // 7시
+]
+
 function KeyPointsBig({
   points,
   copy,
@@ -5633,6 +6363,9 @@ function KeyPointsBig({
   pointImageFor,
   isMobile,
   noun,
+  hideIndices,
+  calloutIndex,
+  calloutChips,
 }: {
   points: CopyKeyPoint[]
   copy: CopyOutput
@@ -5641,6 +6374,13 @@ function KeyPointsBig({
   isMobile: boolean
   /** A3: 카테고리 명사 — 섹션 제목의 {noun} 치환. */
   noun: string
+  /** v5.8(작업②B): 출하 기준 체크리스트로 승격돼 벤토로 내려간 POINT의 원본 인덱스 —
+   *  대형 카드로 중복 렌더하지 않는다(index는 보존 → 편집 경로 정확). 미전달이면 전량 렌더(하위호환). */
+  hideIndices?: Set<number>
+  /** v5.8(작업③A): 이 인덱스 POINT는 대형 카드 대신 핀 콜아웃(칩+지시선)으로 렌더. -1이면 미발동. */
+  calloutIndex?: number
+  /** 핀 콜아웃 칩 — 셀러 highlightBadges 파생(3~4개). calloutIndex 카드에만 사용. */
+  calloutChips?: string[]
 }) {
   const accent = useAccent()
   const layout = useLayout()
@@ -5722,10 +6462,169 @@ function KeyPointsBig({
 
       {/* v2.6: POINT별 배경색 살짝 변주 (아보카도·수플린 페이지 톤 참조) */}
       {points.map((p, i) => {
+        // v5.8(작업②B): 출하 기준 체크리스트로 승격된 POINT는 여기서 미렌더(i는 보존 → 편집 경로 불변).
+        if (hideIndices?.has(i)) return null
         const img = pointImageFor(i)
         // v2.8: POINT 배경 변주 — 흰 / 옅은 회색 / 과일 축색 soft 틴트
         const bgTints = ["#FFFFFF", "#FAFBFC", accent.soft]
         const bg = bgTints[i % bgTints.length]
+
+        // v5.8(작업③A): 핀 콜아웃 — 지정 인덱스 & 사진 & 칩 3개+ 일 때 대형 카드를 콜아웃으로 대체.
+        //   칩(셀러 highlightBadges)을 사진 4모서리(10·2·5·7시)에 알약으로 얹고 SVG 지시선으로 잇는다.
+        //   POINT 텍스트(제목·본문)는 컴팩트하게 아래 배치 — 편집 경로(keyPoints[i].*) 그대로 보존.
+        if (calloutIndex === i && img && (calloutChips?.length ?? 0) >= 3) {
+          const chips = (calloutChips ?? []).slice(0, 4)
+          const cbox = crop.boxOf(img)
+          return (
+            <div
+              key={`kp-callout-${i}`}
+              style={{
+                position: "relative",
+                padding: isMobile ? "36px 24px 40px" : "48px 56px 56px",
+                background: bg,
+              }}
+            >
+              <div
+                style={{
+                  // v5.8(작업③A fix): 데스크톱은 이미지-텍스트 가로 2열(지그재그와 동일 골격)로 렌더해
+                  //  세로 순증 방지(길이 순증 금지). 세로 스택(이미지 520 위 + 텍스트)은 대체 대상
+                  //  지그재그 행보다 훨씬 길었다. 모바일은 기존 세로 스택 유지(모바일 콜아웃 이미지가
+                  //  스택 POINT 카드 이미지보다 작아 순증 없음).
+                  display: isMobile ? "flex" : "grid",
+                  flexDirection: isMobile ? "column" : undefined,
+                  gridTemplateColumns: isMobile ? undefined : "4fr 6fr",
+                  columnGap: isMobile ? undefined : 44,
+                  alignItems: "center",
+                  gap: isMobile ? 22 : undefined,
+                }}
+              >
+                <div style={{ position: "relative", width: "100%", maxWidth: isMobile ? 360 : "100%" }}>
+                  <div
+                    style={{
+                      borderRadius: 12,
+                      overflow: "hidden",
+                      boxShadow: "0 6px 24px rgba(0,0,0,0.13)",
+                    }}
+                  >
+                    {cbox ? (
+                      <CroppedImage image={img} box={cbox} slotRatio={1} />
+                    ) : (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={img.url}
+                        alt=""
+                        style={{ width: "100%", aspectRatio: "1", objectFit: "cover", display: "block" }}
+                      />
+                    )}
+                  </div>
+                  {/* 지시선 — 각 칩에서 사진 중심 쪽으로. 결정적 좌표(viewBox 0~100). */}
+                  <svg
+                    viewBox="0 0 100 100"
+                    preserveAspectRatio="none"
+                    aria-hidden
+                    style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}
+                  >
+                    {chips.map((_, ci) => {
+                      const [x1, y1, x2, y2] = CALLOUT_SLOTS[ci].line
+                      return (
+                        <g key={ci}>
+                          <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={accent.accent} strokeWidth={0.7} />
+                          <circle cx={x2} cy={y2} r={1.5} fill={accent.accent} />
+                        </g>
+                      )
+                    })}
+                  </svg>
+                  {/* 칩 — 사진 모서리 알약. 셀러 어휘만(창작 금지). */}
+                  {chips.map((chip, ci) => (
+                    <div
+                      key={ci}
+                      style={{
+                        position: "absolute",
+                        ...CALLOUT_SLOTS[ci].pos,
+                        background: "#FFFFFF",
+                        color: INK,
+                        border: `2px solid ${accent.accent}`,
+                        borderRadius: 999,
+                        padding: isMobile ? "6px 12px" : "9px 18px",
+                        fontSize: isMobile ? 13 : 19,
+                        fontWeight: 800,
+                        fontFamily: BODY_FONT,
+                        whiteSpace: "nowrap",
+                        letterSpacing: -0.3,
+                        boxShadow: "0 2px 10px rgba(0,0,0,0.14)",
+                      }}
+                    >
+                      {chip}
+                    </div>
+                  ))}
+                </div>
+                <div style={{ textAlign: isMobile ? "center" : "left", maxWidth: isMobile ? "100%" : undefined, minWidth: 0 }}>
+                  <div
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: isMobile ? "6px 14px" : "8px 18px",
+                      background: accent.accent,
+                      color: "#FFF",
+                      fontSize: isMobile ? 13 : 20,
+                      fontWeight: 800,
+                      letterSpacing: 2,
+                      marginBottom: isMobile ? 14 : 18,
+                      fontFamily: BODY_FONT,
+                    }}
+                  >
+                    POINT {p.num}
+                  </div>
+                  <h3
+                    style={{
+                      fontSize: isMobile ? 28 : 44,
+                      fontWeight: layout.headingWeight,
+                      margin: 0,
+                      marginBottom: isMobile ? 12 : 16,
+                      color: INK,
+                      lineHeight: 1.2,
+                      fontFamily: layout.headingFontFamily,
+                      letterSpacing: -1,
+                      ...WRAP_BALANCE,
+                    }}
+                  >
+                    <EditableResultText
+                      copy={copy}
+                      onChange={onCopyChange}
+                      path={["keyPoints", i, "title"]}
+                      maxLength={40}
+                      placeholder={`POINT ${i + 1} 큰 제목 (예: 새벽 5시에 따 보내요)`}
+                    />
+                  </h3>
+                  <p
+                    style={{
+                      fontSize: isMobile ? 18 : 28,
+                      color: SUB,
+                      lineHeight: 1.6,
+                      margin: 0,
+                      whiteSpace: "pre-line",
+                      fontFamily: BODY_FONT,
+                      fontWeight: 500,
+                      wordBreak: "keep-all",
+                      ...WRAP_PRETTY,
+                    }}
+                  >
+                    <EditableResultText
+                      copy={copy}
+                      onChange={onCopyChange}
+                      path={["keyPoints", i, "body"]}
+                      multiline
+                      maxLength={300}
+                      preserveWhitespace
+                      placeholder="구체 사실 + 숫자 (Brix / kg / 시간 / 재구매율 등)를 담아 2~3문장"
+                    />
+                  </p>
+                </div>
+              </div>
+            </div>
+          )
+        }
 
         // v3.8(지시2): 지그재그 — 데스크톱 & 사진 있을 때만 좌우 2열(6:4).
         //  홀수 POINT(01,03…)는 텍스트 좌·사진 우, 짝수(02…)는 반대. 세로 중앙 정렬.
@@ -6443,15 +7342,13 @@ function FaqBlock({
  */
 function SizeDiagramBlock({
   productName,
-  weight,
   sizeImage,
   isMobile,
   noun,
   hasSizeMention,
 }: {
   productName?: string
-  weight?: string
-  /** v3.7: 크기 비교 전용 슬롯 사진(손·동전·자와 함께). 있으면 무게카드 위에 렌더. */
+  /** v3.7: 크기 비교 전용 슬롯 사진(손·동전·자와 함께). 이 섹션은 이제 이 사진만 담당. */
   sizeImage?: UploadedImage | null
   isMobile: boolean
   /** A3: 카테고리 명사 — 편차 안내 문구의 {noun} 치환. */
@@ -6464,19 +7361,9 @@ function SizeDiagramBlock({
   const sr = t.detail.result.sizeRef
   const name = productName?.trim() || "이 상품"
 
-  const avgWeightG = productName ? getAvgWeightG(productName) : null
-  const perPieceLabel = avgWeightG != null ? sr.perPiece.replace("{g}", `${avgWeightG}`) : null
-  const boxCount =
-    weight?.trim() && avgWeightG != null ? estimateCountLabel(weight.trim(), avgWeightG) : null
-  const boxCountLabel =
-    boxCount && weight?.trim()
-      ? sr.boxCount.replace("{weight}", weight.trim()).replace("{count}", boxCount)
-      : null
-
-  // v3.7: 크기 전용 사진이 있거나 무게 데이터가 있을 때만 렌더.
-  // 둘 다 없으면 기존과 동일하게 섹션 자체를 렌더하지 않는다.
-  const hasWeightInfo = !!weight?.trim() || perPieceLabel != null
-  if (!hasWeightInfo && !sizeImage) return null
+  // v5.8(작업②C): 중량·개당g·박스 개수 환산은 벤토 데이터 그리드(BentoDataGrid)로 이관.
+  // 이 블록은 크기 참고 '사진'만 담당한다 — 사진이 없으면 섹션 미노출(무게 데이터만으론 더 이상 띄우지 않음).
+  if (!sizeImage) return null
 
   return (
     <>
@@ -6549,46 +7436,7 @@ function SizeDiagramBlock({
           </div>
         )}
 
-        {/* 무게·개수 카드 — 개당 g / 박스 개수 환산 / 중량 (있는 행만) */}
-        {(perPieceLabel || boxCountLabel || weight?.trim()) && (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: isMobile ? 10 : 14,
-              padding: isMobile ? "22px 24px" : "34px 40px",
-              background: accent.soft,
-              borderRadius: 12,
-              marginBottom: isMobile ? 20 : 28,
-            }}
-          >
-            {weight?.trim() && (
-              <div
-                style={{
-                  fontSize: isMobile ? 18 : 30,
-                  color: INK,
-                  fontWeight: 800,
-                  fontFamily: BODY_FONT,
-                  letterSpacing: -0.3,
-                }}
-              >
-                <OverrideText id="size.weightLabel" fallback="중량" maxLength={16} /> · {renderNoBreakParens(weight.trim())}
-              </div>
-            )}
-            {perPieceLabel && (
-              <div style={{ fontSize: isMobile ? 18 : 30, color: SUB, fontFamily: BODY_FONT, fontWeight: 600 }}>
-                {renderNoBreakParens(perPieceLabel)}
-              </div>
-            )}
-            {boxCountLabel && (
-              <div style={{ fontSize: isMobile ? 18 : 32, color: accent.dark, fontFamily: BODY_FONT, fontWeight: 800 }}>
-                {renderNoBreakParens(boxCountLabel)}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* 정직한 편차 안내 — 개수 환산이 있을 때만 그 편차를, 아니면 크기 편차 문구.
+        {/* 정직한 편차 안내 — 크기 편차 문구(개수 환산은 벤토로 이관됨).
             D17: 입력 faq/cautions에 "크기" 항목이 이미 있으면 이 보일러플레이트 박스는 생략. */}
         {!hasSizeMention && (
           <div
@@ -6609,11 +7457,7 @@ function SizeDiagramBlock({
             <br />
             <OverrideText
               id="size.deviation"
-              fallback={
-                boxCountLabel
-                  ? sr.deviation.replace("{noun}", noun)
-                  : sr.deviationSize.replace("{noun}", noun)
-              }
+              fallback={sr.deviationSize.replace("{noun}", noun)}
               multiline
               maxLength={200}
             />
@@ -7185,11 +8029,107 @@ function ReviewStars({ rating, size }: { rating: number; size: number }) {
   )
 }
 
+/**
+ * v5.8(작업①): 후기 집계 스트립 — 히어로 직하단 얇은 가로 스트립(대형 숫자 + 라벨).
+ * 셀러가 입력한 집계 값만 셀로 렌더하고 "판매자 스토어 집계 기준" 캡션을 자동 부착한다.
+ * 하나도 없으면 null(미렌더 — 기존 렌더와 100% 동일). 결정성: 난수·Date 없음,
+ * 천단위 구분은 정규식(toLocaleString 회피 — 캡처 로케일 비의존).
+ */
+function ReviewStatsStrip({ stats, isMobile }: { stats?: ReviewStats; isMobile: boolean }) {
+  const accent = useAccent()
+  const rs = t.detail.result.reviewStats
+  const cells: { big: string; label: string }[] = []
+  if (stats?.totalCount != null) {
+    const n = String(stats.totalCount).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
+    cells.push({ big: `${n}${rs.countUnit}`, label: rs.countLabel })
+  }
+  if (stats?.fiveStarPct != null) {
+    cells.push({ big: `${stats.fiveStarPct}%`, label: rs.fiveLabel })
+  }
+  const rep = stats?.repurchase?.trim()
+  if (rep) cells.push({ big: rep, label: rs.repurchaseLabel })
+  if (cells.length === 0) return null
+  return (
+    <div style={{ padding: isMobile ? "14px 24px 10px" : "16px 44px 12px", background: "#FFFFFF" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "stretch",
+          border: `1px solid ${accent.soft}`,
+          borderRadius: 14,
+          overflow: "hidden",
+          background: veilTint(accent.soft),
+        }}
+      >
+        {cells.map((cell, i) => (
+          <div
+            key={`rs-${i}`}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              textAlign: "center",
+              padding: isMobile ? "10px 8px" : "14px 12px",
+              borderLeft: i > 0 ? `1px solid ${accent.soft}` : "none",
+              display: "flex",
+              flexDirection: "column",
+              gap: 3,
+            }}
+          >
+            <span
+              style={{
+                fontSize: isMobile ? 22 : 32,
+                fontWeight: 900,
+                color: accent.dark,
+                letterSpacing: -0.6,
+                lineHeight: 1.1,
+                fontFamily: BODY_FONT,
+                wordBreak: "keep-all",
+              }}
+            >
+              {cell.big}
+            </span>
+            <span
+              style={{
+                fontSize: isMobile ? 12 : 15,
+                fontWeight: 700,
+                color: MUTE,
+                letterSpacing: -0.2,
+                fontFamily: BODY_FONT,
+              }}
+            >
+              {cell.label}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div
+        style={{
+          marginTop: 6,
+          textAlign: "center",
+          fontSize: isMobile ? 11 : 13,
+          color: MUTE,
+          fontFamily: BODY_FONT,
+          fontWeight: 600,
+          letterSpacing: -0.2,
+        }}
+      >
+        {rs.caption}
+      </div>
+    </div>
+  )
+}
+
 function ReviewsBlock({
   reviews,
+  bgImage,
   isMobile,
 }: {
   reviews: SellerReview[]
+  /**
+   * v5.8(작업①): 콜라주 배경 사진(기존 슬롯에서 결정적 선택). 있으면 사진 위 반투명 말풍선 콜라주,
+   * 없으면(null) 기존 카드형 폴백(회귀 0). 신규 사진 슬롯을 배정하지 않는다.
+   */
+  bgImage?: UploadedImage | null
   isMobile: boolean
 }) {
   const accent = useAccent()
@@ -7199,6 +8139,129 @@ function ReviewsBlock({
     <div style={{ padding: `${padY("band", isMobile)}px ${isMobile ? 24 : 44}px ${isMobile ? 40 : 56}px`, background: veilTint(accent.soft) }}>
       {/* v3.8(지시3): 후기는 전환점 — hero 위계 + REVIEW 오버라인. */}
       <SectionTitle title={t.detail.result.reviews.title} variant="hero" overline="REVIEW" isMobile={isMobile} editId="sect.reviews.title" editOverlineId="sect.reviews.overline" />
+      {bgImage ? (
+        // v5.8(작업①): 콜라주 — 셀러 사진 1장 위 반투명 백색 말풍선(결정적 인덱스 오프셋, 난수 금지).
+        <div
+          style={{
+            position: "relative",
+            borderRadius: 20,
+            overflow: "hidden",
+            minHeight: isMobile ? 300 : 380,
+            boxShadow: `0 12px 34px ${accent.accent}22`,
+          }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={bgImage.url}
+            alt=""
+            aria-hidden
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+          />
+          {/* 가독성 오버레이 — 반투명 잉크 그라디언트(filter류 없음 · html-to-image 호환). */}
+          <div
+            aria-hidden
+            style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(20,22,25,0.28) 0%, rgba(20,22,25,0.50) 100%)" }}
+          />
+          <div
+            style={{
+              position: "relative",
+              display: "flex",
+              flexDirection: "column",
+              gap: isMobile ? 14 : 20,
+              padding: isMobile ? "26px 18px" : "40px 44px",
+            }}
+          >
+            {reviews.map((r, i) => {
+              const hi = r.highlight?.trim()
+              const showHi = !!hi && r.text.includes(hi)
+              const metaParts: string[] = []
+              if (r.author) metaParts.push(`${r.author}님`)
+              if (r.optionLabel) metaParts.push(`${r.optionLabel} 구매`)
+              const meta = metaParts.join(" · ")
+              // 결정성: 난수 금지 — 좌우 번갈이 + 인덱스 계단식 수평 이동(±).
+              const left = i % 2 === 0
+              const nudge = (i % 3) * (isMobile ? 5 : 12)
+              const shift = left ? nudge : -nudge
+              // v5.8(작업① fix): 말풍선 편집 오버라이드 키를 후기 '내용'에서 파생(인덱스 결합 제거).
+              //  index 기반 키(review.bubble.{i})는 후기 재정렬·삭제 시 편집 문구가 다른 후기에
+              //  오귀속됐다. 내용 해시 키는 같은 후기가 어느 위치로 가든 그 후기에 안정적으로 귀속.
+              //  결정적(난수·Date 없음) — JPG 캡처 안전.
+              let bh = 0
+              for (let k = 0; k < r.text.length; k++) bh = (bh * 31 + r.text.charCodeAt(k)) | 0
+              const bubbleKey = `review.bubble.${(bh >>> 0).toString(36)}`
+              return (
+                <div
+                  key={`review-bubble-${i}`}
+                  style={{
+                    alignSelf: left ? "flex-start" : "flex-end",
+                    maxWidth: isMobile ? "90%" : "78%",
+                    transform: `translateX(${shift}px)`,
+                    background: "rgba(255,255,255,0.93)",
+                    borderRadius: 16,
+                    borderTopLeftRadius: left ? 4 : 16,
+                    borderTopRightRadius: left ? 16 : 4,
+                    boxShadow: "0 8px 24px rgba(0,0,0,0.22)",
+                    padding: isMobile ? "14px 16px" : "20px 26px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: isMobile ? 8 : 10,
+                  }}
+                >
+                  {/* 별점 — 셀러가 입력한 rating이 있을 때만(자동 채움 금지). */}
+                  {r.rating != null && <ReviewStars rating={r.rating} size={isMobile ? 15 : 20} />}
+                  {/* 말풍선 본문 — OverrideText 편집 패턴(내용 파생 안정키 → 재정렬·삭제에도 안정). */}
+                  <OverrideText
+                    id={bubbleKey}
+                    fallback={r.text}
+                    multiline
+                    preserveWhitespace
+                    maxLength={200}
+                    style={{
+                      fontSize: isMobile ? 16 : 22,
+                      color: INK,
+                      lineHeight: 1.45,
+                      fontFamily: BODY_FONT,
+                      fontWeight: 600,
+                      wordBreak: "keep-all",
+                    }}
+                  />
+                  {/* 강조 — highlight가 본문에 실제 포함될 때만(기존 로직 재사용). */}
+                  {showHi && (
+                    <span
+                      style={{
+                        fontSize: isMobile ? 14 : 19,
+                        fontWeight: 800,
+                        color: accent.dark,
+                        lineHeight: 1.35,
+                        fontFamily: BODY_FONT,
+                        letterSpacing: -0.2,
+                        wordBreak: "keep-all",
+                      }}
+                    >
+                      “{hi}”
+                    </span>
+                  )}
+                  {/* 작성자·옵션 메타 — 입력된 것만. 셋 다 없으면 이 라인 자체가 없다(회귀 0). */}
+                  {meta && (
+                    <div
+                      style={{
+                        fontSize: isMobile ? 13 : 17,
+                        color: MUTE,
+                        fontFamily: BODY_FONT,
+                        fontWeight: 600,
+                        letterSpacing: -0.2,
+                        wordBreak: "keep-all",
+                      }}
+                    >
+                      {meta}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ) : (
       <div
         style={{
           display: "flex",
@@ -7305,6 +8368,7 @@ function ReviewsBlock({
           )
         })}
       </div>
+      )}
     </div>
   )
 }

@@ -20,6 +20,7 @@ import type {
   PhotoAnalysisItem,
   PhotoAnalysisResult,
   ProductCategory,
+  ReviewStats,
   SelfReviewResult,
   SellerReview,
   TrustInfo,
@@ -274,6 +275,15 @@ export function DetailMaker({
    * 저장/복원 하위호환: 구버전 저장본엔 input.reviews 없음(옵셔널).
    */
   const [reviews, setReviews] = useState<SellerReview[]>([])
+  /**
+   * v5.8(작업①): 후기 집계 입력(선택) — 폼은 문자열로 보관(빈칸 허용), 저장/렌더 직전 숫자 정규화.
+   * 스토어에서 실제 집계된 값만 입력. 하나도 없으면 스트립 미렌더(허위·자동채움 금지).
+   */
+  const [reviewStats, setReviewStats] = useState<ReviewStatsForm>({
+    totalCount: "",
+    fiveStarPct: "",
+    repurchase: "",
+  })
   const [presetKeywords, setPresetKeywords] = useState<string[]>([])
   const [customKeywords, setCustomKeywords] = useState<string[]>([])
   /**
@@ -338,6 +348,9 @@ export function DetailMaker({
     if (refundGuarantee) out.refundGuarantee = true
     return out
   }, [producerName, producerRegion, farmerYears, sameDayHarvest, coldChain, refundGuarantee])
+
+  /** v5.8(작업①): 생성 전 미리보기용 후기 집계 — 폼 문자열을 정규화(유효 값만). */
+  const previewReviewStats = useMemo(() => normalizeReviewStats(reviewStats), [reviewStats])
 
   /** 상품명 실시간 SEO 검증 — v1.9. */
   const seoCheck = useMemo(() => {
@@ -610,6 +623,12 @@ export function DetailMaker({
             ? input.reviews.filter((r) => r && typeof r.text === "string")
             : [],
         )
+        // v5.8(작업①): 후기 집계 복원 — 구버전 저장본엔 없음(하위호환). 숫자→문자열 폼으로.
+        setReviewStats({
+          totalCount: input.reviewStats?.totalCount != null ? String(input.reviewStats.totalCount) : "",
+          fiveStarPct: input.reviewStats?.fiveStarPct != null ? String(input.reviewStats.fiveStarPct) : "",
+          repurchase: input.reviewStats?.repurchase ?? "",
+        })
         setExtraDescription(extra)
         setPresetKeywords(preset)
         setCustomKeywords(custom)
@@ -1210,7 +1229,7 @@ export function DetailMaker({
         }
       })
       .filter((r) => r.text.length > 0)
-      .slice(0, 3)
+      .slice(0, REVIEW_MAX)
 
     const input: CopyInput = {
       category,
@@ -1224,6 +1243,8 @@ export function DetailMaker({
       farmIntro: farmIntro.trim() || undefined,
       trust: trustData,
       reviews: cleanReviews.length > 0 ? cleanReviews : undefined,
+      // v5.8(작업①): 후기 집계 — 유효 값만. 하나도 없으면 undefined(스트립 미렌더).
+      reviewStats: normalizeReviewStats(reviewStats),
       highlightKeywords: allKeywords,
       recommendBadge: undefined,
       tone: "sincere",
@@ -1979,7 +2000,12 @@ export function DetailMaker({
         <div style={{ height: 12 }} />
 
         {/* 고객 후기 (선택) — 실제 받은 후기만 직접 입력(AI 생성 아님). 최대 3개. */}
-        <ReviewsInput reviews={reviews} onChange={setReviews} />
+        <ReviewsInput
+          reviews={reviews}
+          onChange={setReviews}
+          stats={reviewStats}
+          onStatsChange={setReviewStats}
+        />
         <div style={{ height: 12 }} />
 
         {/* 농부 정식 정보 (선택) — 신뢰 카드용. v1.8 */}
@@ -2501,6 +2527,7 @@ export function DetailMaker({
         category={currentInput?.category ?? category}
         trust={currentInput?.trust ?? trustForPreview}
         reviews={currentInput?.reviews ?? reviews}
+        reviewStats={currentInput?.reviewStats ?? previewReviewStats}
         onCopyChange={handleCopyChange}
         onSectionRegenerate={result ? handleSectionRegenerate : undefined}
         busySection={busySection}
@@ -3204,19 +3231,44 @@ function TrustPromiseChecks({
 }
 
 /**
- * 고객 후기 입력 — 셀러가 실제 받은 후기만 직접 입력(AI 생성 금지). 최대 3개.
+ * 고객 후기 입력 — 셀러가 실제 받은 후기만 직접 입력(AI 생성 금지). 최대 5개.
  * 각 후기: 본문(최대 200자) + 강조할 핵심 문장(선택).
  * "실제 받은 후기만 넣어주세요 — 지어내면 안 돼요" 안내를 명시.
  */
-const REVIEW_MAX = 3
+// v5.8(작업①): 콜라주 말풍선 렌더 상한(3~4개 권장, 최대 5)에 맞춰 입력 상한을 5로 상향.
+const REVIEW_MAX = 5
 const REVIEW_TEXT_MAX = 200
+
+/** v5.8(작업①): 후기 집계 폼 상태(문자열 보관 — 빈칸 허용). */
+type ReviewStatsForm = { totalCount: string; fiveStarPct: string; repurchase: string }
+
+/**
+ * v5.8(작업①): 후기 집계 폼(문자열) → ReviewStats. 유효한 값만 통과시킨다.
+ * 추정치·자동 채움 금지 — 빈칸/무효 값은 필드 자체를 생략하고, 셋 다 없으면 undefined.
+ */
+function normalizeReviewStats(raw: ReviewStatsForm): ReviewStats | undefined {
+  const countTrim = raw.totalCount.trim()
+  const fiveTrim = raw.fiveStarPct.trim()
+  const repTrim = raw.repurchase.trim()
+  const countN = Number(countTrim)
+  const fiveN = Number(fiveTrim)
+  const out: ReviewStats = {}
+  if (countTrim && Number.isFinite(countN) && countN >= 0) out.totalCount = Math.floor(countN)
+  if (fiveTrim && Number.isFinite(fiveN) && fiveN >= 0 && fiveN <= 100) out.fiveStarPct = Math.round(fiveN)
+  if (repTrim) out.repurchase = repTrim.slice(0, 30)
+  return out.totalCount != null || out.fiveStarPct != null || out.repurchase != null ? out : undefined
+}
 
 function ReviewsInput({
   reviews,
   onChange,
+  stats,
+  onStatsChange,
 }: {
   reviews: SellerReview[]
   onChange: (next: SellerReview[]) => void
+  stats: ReviewStatsForm
+  onStatsChange: (next: ReviewStatsForm) => void
 }) {
   const c = t.detail.reviews
   const update = (idx: number, patch: Partial<SellerReview>) => {
@@ -3480,6 +3532,79 @@ function ReviewsInput({
           {c.add}
         </button>
       )}
+
+      {/* v5.8(작업①): 스토어 후기 집계(선택) — 실제 집계 숫자만. 히어로 직하단 스트립으로 렌더. */}
+      <div
+        style={{
+          marginTop: 16,
+          paddingTop: 14,
+          borderTop: "1px dashed var(--color-neutral-200)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
+        <div
+          style={{
+            fontSize: "var(--font-size-sm)",
+            fontWeight: 700,
+            color: "var(--color-neutral-900)",
+          }}
+        >
+          {c.statsTitle}
+        </div>
+        <p
+          style={{
+            fontSize: "var(--font-size-xs)",
+            color: "var(--color-danger)",
+            margin: 0,
+            lineHeight: 1.5,
+            fontWeight: 600,
+          }}
+        >
+          {c.statsHint}
+        </p>
+        <div style={{ display: "flex", gap: 8 }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 0 }}>
+            <span style={{ fontSize: "var(--font-size-xs)", fontWeight: 600, color: "var(--color-neutral-700)" }}>
+              {c.statsCountLabel}
+            </span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={stats.totalCount}
+              onChange={(e) => onStatsChange({ ...stats, totalCount: e.target.value.replace(/[^0-9]/g, "").slice(0, 7) })}
+              placeholder={c.statsCountPh}
+              style={inputStyle}
+            />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 0 }}>
+            <span style={{ fontSize: "var(--font-size-xs)", fontWeight: 600, color: "var(--color-neutral-700)" }}>
+              {c.statsFiveLabel}
+            </span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={stats.fiveStarPct}
+              onChange={(e) => onStatsChange({ ...stats, fiveStarPct: e.target.value.replace(/[^0-9]/g, "").slice(0, 3) })}
+              placeholder={c.statsFivePh}
+              style={inputStyle}
+            />
+          </label>
+        </div>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ fontSize: "var(--font-size-xs)", fontWeight: 600, color: "var(--color-neutral-700)" }}>
+            {c.statsRepurchaseLabel}
+          </span>
+          <input
+            type="text"
+            value={stats.repurchase}
+            onChange={(e) => onStatsChange({ ...stats, repurchase: e.target.value.slice(0, 30) })}
+            placeholder={c.statsRepurchasePh}
+            style={inputStyle}
+          />
+        </label>
+      </div>
     </div>
   )
 }
