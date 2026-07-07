@@ -73,6 +73,20 @@ export interface FruitFact {
   rawEdible?: boolean
 }
 
+/**
+ * 품종별 "팔리는 비주얼 포인트" — 상세페이지가 시각적으로 강조할 각도 + 모티프.
+ *
+ * 교차 계약: getVisualDNA(factKey)가 반환. FruitMotifs.tsx의 모티프 키와 짝을 이룬다.
+ * ⚠️ points는 "비주얼 강조 각도"일 뿐 — 수치·산지 등 사실을 창작하는 근거가 아니다.
+ *    카피에서 이 포인트를 묘사할 때도 감각어는 그 품목 sensoryWords 풀 안에서만 쓴다(카피 규칙 42·67).
+ */
+export interface VisualDNA {
+  /** 팔리는 비주얼 포인트 1~3개 (예: "껍질 광택", "아삭 단면"). 시각 강조 각도. */
+  points: string[]
+  /** FruitMotifs 모티프 키 (예: "apple"). 미지원 키면 모티프 렌더는 생략(안전). */
+  motif: string
+}
+
 export const FRUIT_FACTS: Record<string, FruitFact> = {
   "사과": {
     name: "사과",
@@ -565,6 +579,41 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   },
 }
 
+/**
+ * 품종별 비주얼 DNA — 상세페이지 시각 강조 각도(points) + 모티프(motif).
+ * FRUIT_FACTS의 각 키에 1:1 대응. motif는 FruitMotifs 지원 키 중 하나
+ * (전용 모티프가 없는 품목은 범용 "fruit"로 폴백). points는 품종 일반의
+ * 시각 상식만 담고 수치·산지는 넣지 않는다(환각 방지).
+ */
+export const VISUAL_DNA: Record<string, VisualDNA> = {
+  "사과": { points: ["껍질 광택", "아삭 단면"], motif: "apple" },
+  "배": { points: ["시원한 과즙 단면", "매끈한 껍질"], motif: "pear" },
+  "감귤": { points: ["얇은 껍질", "탱탱한 속알"], motif: "citrus" },
+  "한라봉": { points: ["볼록 솟은 꼭지", "두툼한 과육"], motif: "citrus" },
+  "천혜향": { points: ["촉촉한 과육", "껍질 윤기"], motif: "citrus" },
+  "레드향": { points: ["붉은 빛", "쫀쫀한 과육"], motif: "citrus" },
+  "황금향": { points: ["황금빛 껍질", "매끈한 표면"], motif: "citrus" },
+  "카라향": { points: ["진한 주황빛", "촉촉한 결"], motif: "citrus" },
+  "딸기": { points: ["윤기", "붉은 단면"], motif: "strawberry" },
+  "복숭아": { points: ["과육 결", "맺힌 과즙"], motif: "peach" },
+  "자두": { points: ["껍질의 분", "자줏빛 광택"], motif: "plum" },
+  "포도": { points: ["과분(하얀 가루)", "알 탱탱함"], motif: "grape" },
+  "샤인머스캣": { points: ["투명한 연둣빛", "알 탱탱함"], motif: "grape" },
+  "단감": { points: ["매끈한 주홍빛", "단단한 단면"], motif: "persimmon" },
+  "참외": { points: ["노란 채도", "아삭한 속"], motif: "chamoe" },
+  "수박": { points: ["붉은 속", "시원한 단면"], motif: "watermelon" },
+  "멜론": { points: ["그물 무늬", "진한 과육색"], motif: "fruit" },
+  "체리": { points: ["짙은 선홍빛", "탱글한 알"], motif: "fruit" },
+  "블루베리": { points: ["과분(하얀 가루)", "톡 터지는 알"], motif: "blueberry" },
+  "키위": { points: ["씨 방사 단면", "초록 과육"], motif: "kiwi" },
+  "망고": { points: ["진한 노란 과육", "도톰한 결"], motif: "fruit" },
+  "바나나": { points: ["샛노란 껍질", "부드러운 결"], motif: "fruit" },
+  "파인애플": { points: ["노란 과육", "도톰한 결"], motif: "fruit" },
+  "곶감": { points: ["쫀득한 결", "하얀 분"], motif: "persimmon" },
+  "매실": { points: ["진한 청록빛", "통통한 알"], motif: "plum" },
+  "토마토": { points: ["붉은 채도", "탱탱한 껍질"], motif: "tomato" },
+}
+
 /** alias 인덱스. */
 const ALIAS_INDEX: Map<string, string> = new Map()
 for (const [key, fact] of Object.entries(FRUIT_FACTS)) {
@@ -618,6 +667,19 @@ export function getStorageMode(fruit: string): StorageMode | null {
 /** 감각어 풀 — 카피 생성 시 이 풀에서만 어휘 차용 허용. */
 export function getSensoryWords(fruit: string): string[] {
   return getFact(fruit)?.sensoryWords ?? []
+}
+
+/**
+ * 품종 비주얼 DNA 조회 (교차 계약).
+ * factKey 직접 매칭 우선, 실패 시 상품명 자동 식별(detectFruitFactKey)로 폴백.
+ * 어느 쪽도 매칭 안 되면 null.
+ * points는 "비주얼 강조 각도"일 뿐 — 이를 근거로 수치·산지를 창작하지 않는다.
+ */
+export function getVisualDNA(factKey: string): VisualDNA | null {
+  const direct = VISUAL_DNA[factKey]
+  if (direct) return direct
+  const detected = detectFruitFactKey(factKey)
+  return detected ? VISUAL_DNA[detected] ?? null : null
 }
 
 /**

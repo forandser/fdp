@@ -36,6 +36,10 @@ import {
   getBrixRange,
   getStorageInfo,
   isRawEdible,
+  // v4.9-A: 비주얼 DNA(팔리는 비주얼 각도 + 모티프 키). 타 에이전트가 fruit-facts.ts 에
+  // 정의 중 — import 해서 소비만. 심볼 미존재 시 tsc 에서 잡히면 노트만(교차 계약).
+  getVisualDNA,
+  type VisualDNA,
 } from "@/domain/fruit-facts"
 import { resolveAccent, DEFAULT_ACCENT, mixHex, type AccentPalette } from "./fruit-accent"
 import {
@@ -53,6 +57,7 @@ import {
   LeafIcon,
   type LineIconProps,
 } from "./LineIcons"
+import { FruitMotif } from "./FruitMotifs"
 
 /**
  * A3(카테고리 명사) — 고정 문구의 "과일" 자리를 카테고리에 맞춰 치환.
@@ -366,6 +371,18 @@ function useLayout(): LayoutTokens {
 }
 
 /**
+ * v4.9-A 과일 모티프 컨텍스트 — AccentContext/LayoutContext 와 동일 패턴.
+ * ResultView 가 getVisualDNA(factKey).motif(품종 매칭 시) 를 골라 Provider 로 내리고,
+ * 각 지점(히어로 킥커·POINT/STORY 라벨·클로징 서명·soft 히어로 흩뿌림)이 useMotifKind()
+ * 로 소비한다. 값이 null 이면(품종 미매칭 = getVisualDNA null) 전 지점 모티프 미노출(게이팅).
+ * Provider 밖 렌더 폴백도 null(안전).
+ */
+const MotifContext = createContext<string | null>(null)
+function useMotifKind(): string | null {
+  return useContext(MotifContext)
+}
+
+/**
  * textWrap(balance/pretty)은 Edge/Chrome이 지원하지만 React CSSProperties 타입에는
  * 아직 없어 얇게 확장한다. html-to-image는 같은 엔진으로 렌더하므로 JPG에도 동일 적용된다.
  */
@@ -537,6 +554,15 @@ export function planImages(
      * 모든 분기가 byId(비어있지 않은 analysis 로만 생성) 존재 여부로 게이팅된다.
      */
     analysis?: PhotoAnalysisItem[]
+    /**
+     * v4.9-A DNA 가중치(선택). getVisualDNA(factKey).points 에 "과즙"·"단면" 계열
+     * 포인트가 있을 때 true — cut 역할(클로즈업/컷) 사진을 POINT·punch 슬롯에서 한 단계
+     * 더 우선한다(감각 강조).
+     * ★ 불변식: 이 플래그는 byId(analysis 존재) 와 AND 로만 작동한다. analysis 없으면(byId
+     *   undefined) 아래 boostCut 이 항상 false → 기존(v4.4) 슬롯 배정과 100% 동일. DNA 없이도
+     *   (플래그 미전달·false) 동일. 켜질 때만 cut 우선순위를 useCount 위로 끌어올린다.
+     */
+    dnaFavorsCut?: boolean
   },
 ): ImagePlan {
   const keyPointCount = Math.max(0, opts.keyPointCount)
@@ -557,6 +583,8 @@ export function planImages(
     const it = itemOf(img)
     return !!it && (!!it.blurry || !!it.dark)
   }
+  // v4.9-A: DNA 가중치 — cut 우선순위 강화. analysis(byId) 있을 때만 켜진다(불변식).
+  const boostCut = !!byId && !!opts.dnaFavorsCut
   // 고정 길이 우선순위 키의 사전식 비교(작을수록 우선).
   const lexLess = (a: number[], b: number[]): boolean => {
     for (let i = 0; i < a.length; i++) {
@@ -650,6 +678,11 @@ export function planImages(
    */
   const pickFeature = (
     preferRole?: PhotoAnalysisItem["role"],
+    /**
+     * v4.9-A: DNA cut 가중치 켤 때만 true(POINT 슬롯). 역할 일치를 사용횟수보다 앞세워
+     * cut 사진을 "한 단계 더" 우선한다. false(기본)면 키 순서가 기존과 완전 동일(불변식).
+     */
+    boostRole?: boolean,
   ): UploadedImage | undefined => {
     if (rest.length === 0) return undefined
     let best: UploadedImage | undefined
@@ -659,12 +692,14 @@ export function planImages(
     rest.forEach((img, idx) => {
       const c = useCount.get(img.id) ?? 0
       if (c >= MAX_REUSE) return // 규칙 ②: 2회 초과 사용 금지
-      // 우선순위 키(작을수록 우선): [사용횟수, 역할 불일치, 품질저하, 원본 순서].
+      // 우선순위 키(작을수록 우선): 기본 [사용횟수, 역할 불일치, 품질저하, 원본 순서].
       // analysis 없으면 역할·품질 항이 모두 0 → 키가 [c,0,0,idx]가 되어
       // "사용횟수 최소 → 동점 시 원본 앞" 기존 동작과 완전히 동일하다(불변식).
       const roleMiss = byId && preferRole ? (roleOf(img) === preferRole ? 0 : 1) : 0
       const lowq = byId && isLowQ(img) ? 1 : 0
-      const key = [c, roleMiss, lowq, idx]
+      // v4.9-A: boostRole 이면 역할 일치를 사용횟수 앞으로 — cut 사진을 한 단계 더 우선.
+      //   (boostRole 은 boostCut && preferRole 일 때만 true. 그 외엔 기존 키 그대로.)
+      const key = boostRole ? [roleMiss, c, lowq, idx] : [c, roleMiss, lowq, idx]
       if (img.id === prevId) {
         // 규칙 ③: 직전과 같은 사진은 마지막 후보로만.
         if (!bestSameKey || lexLess(key, bestSameKey)) {
@@ -694,9 +729,10 @@ export function planImages(
   // 단, rest가 아예 0장(사진 1장뿐)일 때만 hero 폴백 허용(규칙 ⑤: 히어로+1곳).
   const onlyHero = rest.length === 0
   // v4.4: POINT 카드는 cut 역할(클로즈업/컷) 사진을 우선 배정.
+  // v4.9-A: DNA 가 "과즙·단면"을 강조하면(boostCut) cut 역할을 사용횟수보다 앞세워 더 우선.
   const keyPoints: (UploadedImage | undefined)[] = []
   for (let i = 0; i < keyPointCount; i++) {
-    const img = pickFeature(byId ? "cut" : undefined)
+    const img = pickFeature(byId ? "cut" : undefined, boostCut)
     keyPoints.push(img ?? (onlyHero && i === 0 ? hero : undefined))
   }
 
@@ -721,6 +757,9 @@ export function planImages(
   // v3.8 fix: 갤러리 예약분(reserved)에는 손대지 않는다 — punch 는 예약 안 된 잉여(unused)만 사용.
   //           그래야 갤러리가 모자이크 최소 장수를 온전히 확보한다(진단 #1).
   // v4.4: analysis 있으면 분위기 컷에 어울리는 cut 역할·비저품질 사진을 우선.
+  // v4.9-A: punch 는 이미 unused 풀에서 cut 역할을 최우선(find 첫 순위)으로 집으므로
+  //   DNA cut 가중치가 별도 코드 없이 이미 반영된다. boostCut 은 useCount 타이브레이크가
+  //   cut 를 밀어낼 수 있는 POINT 슬롯(위)에서만 순위를 끌어올리면 충분하다(punch 무변경 = 안전).
   let punch: UploadedImage | undefined
   let leftover: UploadedImage[]
   if (byId && unused.length > 0) {
@@ -1645,6 +1684,28 @@ export function ResultView({
   }, [copy.keyPoints])
 
   /**
+   * v4.9-A 비주얼 DNA — 품종 매칭(detectFruitFactKey) → getVisualDNA. 기존 detectFruitFactKey
+   * 사용 지점과 동일한 factKey 를 재사용한다. 매칭 실패(null)면 visualDNA 도 null →
+   * 모티프 전 지점 미노출(게이팅)·이미지 가중치 불변(불변식).
+   */
+  const visualDNA = useMemo<VisualDNA | null>(() => {
+    const key = detectFruitFactKey(productName)
+    return key ? getVisualDNA(key) : null
+  }, [productName])
+  /** 모티프 키 — Provider 로 각 지점에 주입. DNA 없으면 null(전 지점 미노출). */
+  const motifKind = visualDNA?.motif ?? null
+  /**
+   * DNA points 에 "과즙"·"단면" 계열이 있으면 planImages 에서 cut 사진을 한 단계 더 우선.
+   * DNA 없으면 false → 이미지 배정 기존과 100% 동일(불변식).
+   */
+  const dnaFavorsCut = useMemo(() => {
+    const pts = visualDNA?.points
+    if (!pts || pts.length === 0) return false
+    const CUT_TOKENS = ["과즙", "즙", "단면", "과육", "속살", "컷"]
+    return pts.some((p) => CUT_TOKENS.some((tk) => p.includes(tk)))
+  }, [visualDNA])
+
+  /**
    * v3.0 중앙 이미지 배정 — 모든 블록이 여기서 나온 imagePlan을 소비한다.
    * v3.1-b: RecipeBlock이 사진을 안 쓰게 되어 recipe 슬롯은 항상 0 —
    * 그만큼의 사진이 갤러리로 흘러간다.
@@ -1655,8 +1716,9 @@ export function ResultView({
         keyPointCount: keyPoints.length,
         recipeCount: 0,
         analysis: photoAnalysis ?? undefined,
+        dnaFavorsCut,
       }),
-    [images, keyPoints.length, photoAnalysis],
+    [images, keyPoints.length, photoAnalysis, dnaFavorsCut],
   )
   const heroImage = imagePlan.hero
   const galleryImages = imagePlan.gallery
@@ -1832,6 +1894,7 @@ export function ResultView({
   return (
     <AccentContext.Provider value={accent}>
     <LayoutContext.Provider value={layout}>
+    <MotifContext.Provider value={motifKind}>
     <EditContext.Provider value={{ copy, onCopyChange }}>
     <div
       style={{
@@ -2361,6 +2424,7 @@ export function ResultView({
       {/* v2.7: StickyMobileCta 삭제 (사이드바에 이미 있으므로 중복 제거) */}
     </div>
     </EditContext.Provider>
+    </MotifContext.Provider>
     </LayoutContext.Provider>
     </AccentContext.Provider>
   )
@@ -2657,6 +2721,50 @@ function HeadlineCandidateChips({
   )
 }
 
+/**
+ * v4.9-A soft 히어로 배경 모티프 흩뿌림 — soft 변주에서만, 품종 매칭(kind) 있을 때만.
+ * 옅은(opacity 0.08~0.12) 미니 모티프 3개를 "모서리에만" 결정적으로 배치한다.
+ *  - Math.random 없음: 위치·회전·크기 전부 고정값(같은 입력 → 같은 결과).
+ *  - 음수 오프셋 + 부모 overflow:hidden 으로 모서리 밖은 잘려 코너 워터마크로만 보인다.
+ *  - 부모 isolation:isolate 격리 컨텍스트에서 zIndex:-1 → heroBg 위, 텍스트 아래(겹침 회피).
+ *  - pointerEvents:none — 편집 클릭 방해 없음.
+ */
+function HeroMotifScatter({
+  kind,
+  accent,
+  isMobile,
+}: {
+  kind: string
+  accent: AccentPalette
+  isMobile: boolean
+}) {
+  return (
+    <div
+      aria-hidden
+      style={{
+        position: "absolute",
+        inset: 0,
+        zIndex: -1,
+        overflow: "hidden",
+        pointerEvents: "none",
+      }}
+    >
+      {/* 좌상단 코너 */}
+      <div style={{ position: "absolute", top: isMobile ? -14 : -18, left: isMobile ? -12 : -10, transform: "rotate(-14deg)" }}>
+        <FruitMotif kind={kind} size={isMobile ? 52 : 82} color={accent.accent} opacity={0.1} />
+      </div>
+      {/* 우상단 코너(더 작게) */}
+      <div style={{ position: "absolute", top: isMobile ? -10 : -14, right: isMobile ? -14 : -14, transform: "rotate(12deg)" }}>
+        <FruitMotif kind={kind} size={isMobile ? 36 : 56} color={accent.accent} opacity={0.09} />
+      </div>
+      {/* 우하단 코너 */}
+      <div style={{ position: "absolute", bottom: isMobile ? -16 : -20, right: isMobile ? -8 : -6, transform: "rotate(8deg)" }}>
+        <FruitMotif kind={kind} size={isMobile ? 60 : 96} color={accent.accent} opacity={0.11} />
+      </div>
+    </div>
+  )
+}
+
 function HeroBlock({
   heroImage,
   copy,
@@ -2692,6 +2800,7 @@ function HeroBlock({
 }) {
   const accent = useAccent()
   const layout = useLayout()
+  const motifKind = useMotifKind() // v4.9-A: 품종 매칭 시 모티프 키(없으면 null → 미노출).
   const name = productName.trim()
   const originText = origin?.trim()
   // v4.6: editorial 은 히어로 텍스트 블록만 좌정렬(킥커·배지 정렬도 함께). 그 외 중앙.
@@ -2705,13 +2814,21 @@ function HeroBlock({
   return (
     <div style={{ background: "#FFFFFF" }}>
       {/* v2.9: 상단 캡션 + 대형 헤드 (수플린 레퍼런스 — 헤드가 이미지 위) */}
+      {/* v4.9-A: position/overflow/isolation 은 soft 흩뿌림(zIndex:-1) 격리용 — 시각적으로
+          무해(정적 콘텐츠만 있어 standard 는 픽셀 동일). 흩뿌림은 soft + 모티프 있을 때만. */}
       <div
         style={{
           padding: isMobile ? "44px 24px 30px" : "72px 44px 40px",
           textAlign: layout.heroAlign,
           background: layout.heroBg(accent),
+          position: "relative",
+          overflow: "hidden",
+          isolation: "isolate",
         }}
       >
+        {layout.variant === "soft" && motifKind && (
+          <HeroMotifScatter kind={motifKind} accent={accent} isMobile={isMobile} />
+        )}
         {/* v5.0 위계: From 배지(상단) → 넉넉한 여백 → 킥커(rule 선 동반) → 좁은 간격 → 헤드라인.
             "킥커 위 여백 > 킥커–헤드라인 간격"으로 킥커+헤드라인을 한 쌍으로 묶는다. */}
         {showOriginBadge && (
@@ -2749,6 +2866,11 @@ function HeroBlock({
             }}
           >
             <span style={{ display: "inline-flex", alignItems: "center", gap: isMobile ? 10 : 14 }}>
+              {/* v4.9-A: 킥커 왼쪽 rule 앞 작은 모티프(킥커 폰트 크기 정도, accent 색).
+                  품종 매칭(motifKind) 있을 때만. FruitMotif 는 미지원 kind 면 null(안전). */}
+              {motifKind && (
+                <FruitMotif kind={motifKind} size={isMobile ? 16 : 24} color={accent.accent} />
+              )}
               {/* 좌측 짧은 rule — 디자이너 킥커 디테일 */}
               <span
                 aria-hidden
@@ -3240,6 +3362,7 @@ function StoryBlock({
   isMobile: boolean
 }) {
   const accent = useAccent()
+  const motifKind = useMotifKind() // v4.9-A: 대표 섹션(스토리) 리본 옆 모티프(품종 매칭 시만).
   const hasStory = !!copy.story
   // 형광펜 강조: story에서 첫 감각 문장을 결정적으로 하나 뽑는다(문단당 1개).
   const storyHi = useMemo(() => splitStoryHighlight(copy.story), [copy.story])
@@ -3266,7 +3389,14 @@ function StoryBlock({
             marginBottom: isMobile ? 30 : 40,
           }}
         >
-          <RibbonLabel text="STORY" accent={accent} isMobile={isMobile} editId="story.ribbon" />
+          {/* v4.9-A: 대표 섹션(스토리) 라벨 옆 초소형 모티프 — 품종 매칭 시만. inline-flex 로
+              리본과 한 줄 중앙 정렬(리본 자체 좌우 tail 여백이 간격 역할). */}
+          <span style={{ display: "inline-flex", alignItems: "center", verticalAlign: "middle" }}>
+            {motifKind && (
+              <FruitMotif kind={motifKind} size={isMobile ? 18 : 28} color={accent.accent} />
+            )}
+            <RibbonLabel text="STORY" accent={accent} isMobile={isMobile} editId="story.ribbon" />
+          </span>
         </div>
       )}
 
@@ -4444,6 +4574,7 @@ function KeyPointsBig({
 }) {
   const accent = useAccent()
   const layout = useLayout()
+  const motifKind = useMotifKind() // v4.9-A: 대표 섹션 오버라인 모티프(품종 매칭 시만).
   return (
     <div style={{ background: "#FFFFFF" }}>
       <div
@@ -4474,8 +4605,13 @@ function KeyPointsBig({
             overline)와 톤을 맞춰 POINT 를 얹는다. 위 한글 문구는 problemArc 서사 브리지라
             별개(오버라인이 아니었음). SectionTitle hero overline 과 동일 스타일(작은 accent,
             자간 2)을 인라인으로 재현 — 이 섹션은 SectionTitle 를 안 쓰므로 직접 렌더. */}
+        {/* v4.9-A: 대표 섹션(keyPoints 헤드) 오버라인 옆 초소형 모티프 — 품종 매칭 시만. */}
         <div
           style={{
+            display: "flex",
+            alignItems: "center",
+            gap: isMobile ? 6 : 9,
+            justifyContent: "center", // 헤더가 textAlign:center → 오버라인 행도 중앙 유지.
             fontSize: isMobile ? 13 : 22,
             color: accent.accent,
             fontWeight: 800,
@@ -4484,6 +4620,9 @@ function KeyPointsBig({
             fontFamily: BODY_FONT,
           }}
         >
+          {motifKind && (
+            <FruitMotif kind={motifKind} size={isMobile ? 15 : 22} color={accent.accent} />
+          )}
           <OverrideText id="keypoints.overline" fallback="POINT" maxLength={24} />
         </div>
         {/* 임무D: 섹션 헤드 — 히어로급 임팩트 (모바일 42 / 데스크톱 76) */}
@@ -6255,6 +6394,7 @@ function ClosingSignature({
   isMobile: boolean
 }) {
   const accent = useAccent()
+  const motifKind = useMotifKind() // v4.9-A: 클로징 서명 옆 모티프(품종 매칭 시만).
   const producer = trust?.producerName?.trim()
   const name = productName.trim()
   // 서명 — 농가명 우선, 없으면 상품명, 둘 다 없으면 서명 줄 생략.
@@ -6278,8 +6418,11 @@ function ClosingSignature({
           margin: isMobile ? "0 auto 22px" : "0 auto 32px",
         }}
       />
-      {/* 잎 라인 아이콘 */}
-      <div style={{ display: "flex", justifyContent: "center", marginBottom: isMobile ? 14 : 20 }}>
+      {/* 잎 라인 아이콘 (+ v4.9-A 클로징 서명 옆 과일 모티프 — 품종 매칭 시만) */}
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: isMobile ? 10 : 16, marginBottom: isMobile ? 14 : 20 }}>
+        {motifKind && (
+          <FruitMotif kind={motifKind} size={isMobile ? 30 : 46} color={accent.accent} />
+        )}
         <LeafIcon color={accent.accent} size={isMobile ? 34 : 52} />
       </div>
       {/* 한 줄 마무리 문구 — 고정 감사 표현(지어내지 않음). */}

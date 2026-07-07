@@ -23,7 +23,7 @@
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages"
 import type { CopyInput, ResearchResult } from "../types"
 import { sanitizeString, sanitizeStringArray } from "../sanitize"
-import { detectFruitFactKey, FRUIT_FACTS } from "@/domain/fruit-facts"
+import { detectFruitFactKey, FRUIT_FACTS, getVisualDNA } from "@/domain/fruit-facts"
 import { safeExpressionsForPrompt } from "../safe-expressions"
 
 export const FRUIT_COPY_SYSTEM_PROMPT = `당신은 한국 산지직송 신선식품 셀러의 상세페이지 카피라이터입니다.
@@ -401,6 +401,18 @@ export const FRUIT_COPY_SYSTEM_PROMPT = `당신은 한국 산지직송 신선식
     - 그 문구 안의 산지·수치는 이 상품 고유 사실이 아니므로 카피 사실값으로 승격 금지(규칙 6·55·56). 사실값은 입력값만.
     - 특히 규칙 54 headlineCandidates 5유형을 만들 때 이 리듬을 참고해 더 시장 친화적인 후보를 뽑되, 유형별 각도는 유지하세요.
 
+[v17 신규 — 품종별 비주얼 DNA (팔리는 비주얼 포인트) 강조]
+
+67. 비주얼 DNA(팔리는 비주얼 포인트) — 위 fact 컨텍스트에 "팔리는 비주얼 포인트"가 주어지면,
+    그 포인트를 keyPoints·감각 묘사(story·highlightBox)의 "우선 강조 각도"로 삼으세요.
+    - 이 포인트는 그 품목이 시각적으로 가장 잘 팔리는 지점입니다.
+      예: 사과 "껍질 광택"·"아삭 단면", 복숭아 "과육 결"·"맺힌 과즙", 참외 "노란 채도",
+      곶감 "쫀득한 결"·"하얀 분", 딸기 "윤기"·"붉은 단면", 포도 "과분(하얀 가루)"·"알 탱탱함".
+    - keyPoints 중 최소 1건, 그리고 story 또는 highlightBox 중 최소 1곳에서 이 각도를 살려 묘사하세요.
+    - 이 포인트를 묘사할 때 감각어는 규칙 42의 그 품목 sensoryWords 풀 안에서만 씁니다
+      (다른 과일 감각어 차용 금지). 포인트 문구를 라벨처럼 그대로 붙이지 말고, 그 각도를 자연스러운 문장으로 풀어내세요.
+    - 비주얼 DNA는 "강조 각도"일 뿐입니다. 이를 근거로 수치·산지·인증 등 사실을 창작하지 마세요(규칙 6·55·56 불변).
+
 참고 출력 예시 1 (sincere · v9 규칙 완전 반영):
 {
   "heroKicker": "한 입 베면 여름이 통째로",
@@ -528,6 +540,13 @@ function buildFactContext(input: CopyInput): string {
     if (!input.origin?.trim()) {
       lines.push(`- 입력에 산지가 없으므로 카피에 특정 시·군 지역명을 만들지 마세요(규칙 56).`)
     }
+  }
+  // v4.4: 품종 비주얼 DNA — 팔리는 비주얼 포인트를 keyPoints·감각 묘사의 우선 강조 각도로 (규칙 67).
+  const dna = getVisualDNA(key)
+  if (dna && dna.points.length > 0) {
+    lines.push(
+      `- 팔리는 비주얼 포인트 (규칙 67 — keyPoints·story·highlightBox의 우선 강조 각도): ${dna.points.join(", ")}. 이 포인트를 묘사할 때 감각어는 위 "사용 가능 감각어" 풀에서만(규칙 42), 이 포인트로 수치·산지·인증을 창작하지 마세요(규칙 6).`,
+    )
   }
   return lines.join("\n")
 }
@@ -663,6 +682,9 @@ keyPoints 3개와 highlightBox, cautions를 빠뜨리지 마세요.
 [v16 신규] 히어로 후킹 캡션 + 시장 후킹 문구:
 - 규칙 65: heroKicker(히어로 최상단 캡션)를 12~24자 완결 후킹 한 줄로 반드시 만드세요. headline과 표현 중복 금지, 입력에 없는 수치·산지·인증 금지(규칙 6·55·56), 이모지 금지, 감각어는 fact 풀에서만(규칙 42), 완결성(규칙 58).
 - 규칙 66: 위 fact 컨텍스트에 "시장 후킹 문구"가 있으면 headline·heroKicker·highlightBox·headlineCandidates(규칙 54)의 표현 리듬·구조·관용구 재료로만 차용하세요. 통문장 표절 금지, 그 안의 산지·수치 승격 금지(사실값은 입력값만).
+
+[v17 신규] 품종 비주얼 DNA:
+- 규칙 67: 위 fact 컨텍스트에 "팔리는 비주얼 포인트"가 있으면 keyPoints 중 최소 1건 + story/highlightBox 중 최소 1곳에서 그 각도를 살려 묘사하세요. 감각어는 그 품목 sensoryWords 풀에서만(규칙 42), 포인트 문구를 라벨처럼 붙이지 말고 자연스러운 문장으로 풀되, 이 포인트로 수치·산지·인증을 창작하지 마세요(규칙 6·55·56).
 
 출력은 시스템 프롬프트에 명시된 JSON 스키마만 그대로 반환하세요.`
 
