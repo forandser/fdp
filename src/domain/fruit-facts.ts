@@ -30,6 +30,13 @@ export interface FruitVariety {
    * 예: 3kg / 250g ≈ 12과. 없으면 환산 행/카드를 생략한다.
    */
   avgWeightG?: number
+  /**
+   * 품종 전용 감각어(품종 정체성) — 3차 카피 패스 신설.
+   * 있으면 그 과일의 sensoryWords 풀에 "더해" 이 품종만의 개성 어휘로 우선 사용한다
+   * (카피 규칙 42). 예: 대극천=딱복·단단한, 설향=청량감. 다른 품종엔 차용 금지.
+   * 물복(백도)과 딱복(대극천)처럼 같은 과일이라도 식감 정체성이 갈릴 때 이 필드로 구분한다.
+   */
+  sensoryWords?: string[]
 }
 
 export interface FruitStorage {
@@ -94,8 +101,8 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
     aliases: ["사과", "홍로", "부사", "감홍", "아오리", "시나노", "시나노골드"],
     varieties: [
       { name: "아오리", brixMin: 13, brixMax: 14, harvestMonths: [7, 8], note: "여름 조생, 새콤" },
-      { name: "홍로", brixMin: 14, brixMax: 15, harvestMonths: [9], note: "추석용 중생종, 약 300g", avgWeightG: 300 },
-      { name: "부사", brixMin: 14, brixMax: 15, harvestMonths: [10, 11], note: "단맛+신맛 균형, 저장성 우수" },
+      { name: "홍로", brixMin: 14, brixMax: 15, harvestMonths: [9], note: "추석용 중생종, 약 300g", avgWeightG: 300, sensoryWords: ["아삭", "사각", "은은한 단맛"] },
+      { name: "부사", brixMin: 14, brixMax: 15, harvestMonths: [10, 11], note: "단맛+신맛 균형, 저장성 우수", sensoryWords: ["아삭", "새콤달콤", "단단한"] },
       { name: "감홍", brixMin: 15, brixMax: 17, harvestMonths: [10, 11], note: "고당도 만생종" },
       { name: "시나노골드", brixMin: 13, brixMax: 15, harvestMonths: [9, 10], note: "노란 사과" },
     ],
@@ -118,7 +125,7 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
     category: "fruit",
     aliases: ["배", "신고", "원황", "추황", "황금배", "만풍"],
     varieties: [
-      { name: "신고", brixMin: 11, brixMax: 12, harvestMonths: [9, 10], note: "국내 배 농사 80%, 큰 사이즈" },
+      { name: "신고", brixMin: 11, brixMax: 12, harvestMonths: [9, 10], note: "국내 배 농사 80%, 큰 사이즈", sensoryWords: ["시원한 과즙", "묵직한", "아삭"] },
       { name: "원황", brixMin: 13, brixMax: 14, harvestMonths: [9], note: "추석용 조생 대과" },
       { name: "추황", brixMin: 13, brixMax: 15, harvestMonths: [10, 11], note: "가장 단 만생종" },
       { name: "황금배", brixMin: 12, brixMax: 14, harvestMonths: [9, 10] },
@@ -142,7 +149,7 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
     category: "fruit",
     aliases: ["감귤", "귤", "노지감귤", "노지귤", "온주"],
     varieties: [
-      { name: "노지감귤", brixMin: 10, brixMax: 12, harvestMonths: [11, 12, 1], note: "제주 노지" },
+      { name: "노지감귤", brixMin: 10, brixMax: 12, harvestMonths: [11, 12, 1], note: "제주 노지", sensoryWords: ["톡 쏘는", "새콤", "상큼", "탱탱한 속살"] },
     ],
     regions: ["제주 서귀포", "제주 남원", "제주 위미", "제주 표선"],
     goodBrix: 11,
@@ -243,9 +250,9 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
     category: "fruit",
     aliases: ["딸기", "설향", "죽향", "금실", "매향", "킹스베리", "비타베리"],
     varieties: [
-      { name: "설향", brixMin: 9, brixMax: 11, harvestMonths: [12, 1, 2, 3, 4, 5], note: "국내 87%, 청량감" },
+      { name: "설향", brixMin: 9, brixMax: 11, harvestMonths: [12, 1, 2, 3, 4, 5], note: "국내 87%, 청량감", sensoryWords: ["청량감", "산뜻한", "촉촉한 과즙"] },
       { name: "매향", brixMin: 11, brixMax: 12, harvestMonths: [12, 1, 2, 3], note: "수출 전용, 저장성" },
-      { name: "죽향", brixMin: 12, brixMax: 13, harvestMonths: [12, 1, 2, 3], note: "단단, 전남" },
+      { name: "죽향", brixMin: 12, brixMax: 13, harvestMonths: [12, 1, 2, 3], note: "단단, 전남", sensoryWords: ["단단한", "또렷한 단맛"] },
       { name: "금실", brixMin: 11, brixMax: 12, harvestMonths: [1, 2, 3, 4], note: "복숭아향, 봄까지" },
       { name: "킹스베리", brixMin: 9, brixMax: 11, harvestMonths: [1, 2, 3], note: "초대형 29g+" },
     ],
@@ -266,8 +273,9 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
   "복숭아": {
     name: "복숭아",
     category: "fruit",
-    aliases: ["복숭아", "신비", "천도", "백도", "썬프레", "선프레", "황도", "백봉"],
+    aliases: ["복숭아", "신비", "천도", "백도", "대극천", "썬프레", "선프레", "황도", "백봉"],
     varieties: [
+      { name: "대극천", brixMin: 11, brixMax: 14, harvestMonths: [7, 8], note: "단단한 딱복 계열 백도, 반납작형", sensoryWords: ["딱복", "단단한", "아삭한 식감"] },
       { name: "백도", brixMin: 11, brixMax: 14, harvestMonths: [7, 8], note: "즙·단맛, 부드러움" },
       { name: "황도", brixMin: 12, brixMax: 14, harvestMonths: [7, 8, 9], note: "단단, 통조림·생식" },
       { name: "천도", brixMin: 10, brixMax: 13, harvestMonths: [6, 7, 8], note: "털 없는 변이, 신맛 강함" },
@@ -311,7 +319,7 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
     category: "fruit",
     aliases: ["포도", "거봉", "캠벨", "MBA"],
     varieties: [
-      { name: "거봉", brixMin: 16, brixMax: 18, harvestMonths: [8, 9, 10] },
+      { name: "거봉", brixMin: 16, brixMax: 18, harvestMonths: [8, 9, 10], sensoryWords: ["알알이", "탱글", "터지는 과즙"] },
       { name: "캠벨", brixMin: 13, brixMax: 15, harvestMonths: [8, 9] },
       { name: "MBA", brixMin: 16, brixMax: 19, harvestMonths: [9, 10] },
     ],
@@ -349,7 +357,7 @@ export const FRUIT_FACTS: Record<string, FruitFact> = {
     category: "fruit",
     aliases: ["단감", "부유", "차랑"],
     varieties: [
-      { name: "부유", brixMin: 17, brixMax: 19, harvestMonths: [10, 11], note: "납작한 모양, 약 250g", avgWeightG: 250 },
+      { name: "부유", brixMin: 17, brixMax: 19, harvestMonths: [10, 11], note: "납작한 모양, 약 250g", avgWeightG: 250, sensoryWords: ["단단한", "농축된 단맛", "매끈한 단면"] },
       { name: "차랑", brixMin: 20, brixMax: 23, harvestMonths: [10, 11], note: "10월 중순, 신맛 적음, 22Brix" },
     ],
     regions: ["상주", "창원", "진영", "함안", "청도", "영암"],
@@ -664,9 +672,36 @@ export function getStorageMode(fruit: string): StorageMode | null {
   return fact?.storage.mode ?? null
 }
 
-/** 감각어 풀 — 카피 생성 시 이 풀에서만 어휘 차용 허용. */
+/** 감각어 풀 — 카피 생성 시 이 풀에서만 어휘 차용 허용(과일 단위). */
 export function getSensoryWords(fruit: string): string[] {
   return getFact(fruit)?.sensoryWords ?? []
+}
+
+/**
+ * 품종 단위 감각어 — 상품명에 특정 품종이 들어 있고 그 품종에 sensoryWords가
+ * 정의돼 있으면 그 어휘들을 반환(중복 제거). 3차 카피 패스 신설.
+ *
+ * 과일 단위 getSensoryWords(물복 기준 등)가 못 살리는 품종 정체성
+ * (대극천=딱복·단단한, 설향=청량감)을 카피가 우선 사용하도록 프롬프트에 노출한다.
+ * 상품명이 품종을 특정하지 않으면 빈 배열(과일 단위 풀만 사용).
+ */
+export function getVarietySensoryWords(productName: string): string[] {
+  const fact = getFact(productName)
+  if (!fact) return []
+  const nameLower = productName.toLowerCase()
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const v of fact.varieties) {
+    if (!v.sensoryWords || v.sensoryWords.length === 0) continue
+    if (!nameLower.includes(v.name.toLowerCase())) continue
+    for (const w of v.sensoryWords) {
+      if (!seen.has(w)) {
+        seen.add(w)
+        out.push(w)
+      }
+    }
+  }
+  return out
 }
 
 /**
