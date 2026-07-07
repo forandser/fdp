@@ -219,6 +219,8 @@ export const ko = {
         caption: "※ 당도는 한 알마다 조금씩 다를 수 있어요",
         // v4.5: 당도 범위 비교 바 — 품종 일반 brixMin~brixMax 밴드 범례.
         varietyRange: "품종 일반 범위",
+        // v5.2-A: 당도 구간 라벨 3단 — 맛 기준선·품종 최대를 경계로 한 위치 서술(창작 수치 아님).
+        zones: { normal: "보통", high: "높음", veryHigh: "매우 높음" },
       },
       /** v4.5: 제철 캘린더 — fruit-facts 품종 harvestMonths 기반 12개월 바. */
       seasonCalendar: {

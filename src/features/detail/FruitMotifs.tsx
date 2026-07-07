@@ -239,3 +239,96 @@ export function FruitMotif({ kind, size, color, opacity }: FruitMotifProps): Rea
     </svg>
   )
 }
+
+/* ============================================================ */
+/* v5.2-B 손그림 낙서 데코 SVG 세트 (인라인 SVG)                 */
+/*                                                              */
+/* [배경] 실물 디자이너 페이지는 사진·수치 주변에 손그림 낙서   */
+/* (반짝·화살표·꽃잎·강조 동그라미)를 얹어 "사람 손맛"을 낸다.   */
+/* FruitMotif 와 완전히 같은 가족: viewBox 0 0 24 24, 단색       */
+/* stroke=color, 둥근 캡/조인, strokeWidth 2.2, fill 없음.       */
+/* → html-to-image(toCanvas) 캡처 100% 호환(JPG 위생 준수):      */
+/*   CSS filter/이모지/CSS 변수/외부 URL 없음, 좌표는 결정적.    */
+/*                                                              */
+/* FruitMotif 과 다른 점은 rotate prop 하나 — 낙서는 사진 옆에  */
+/* 비스듬히 얹히는 게 자연스러워, SVG transform rotate(deg) 로   */
+/* 중심(12 12) 기준 회전을 지원한다. (미지정=회전 없음.)         */
+/* ============================================================ */
+
+/** 손그림 낙서 데코 종류 — 사진·수치 주변에 얹는 오버레이. */
+export const MOTIF_DECOR_KINDS = ["sparkle", "arrow", "petal", "circle"] as const
+
+export type MotifDecorKind = (typeof MOTIF_DECOR_KINDS)[number]
+
+export interface MotifDecorProps {
+  /** 데코 키 — 미지원 키면 null 반환(안전, FruitMotif 과 동일 정책). */
+  kind: string
+  /** 렌더 픽셀 크기(정사각). */
+  size: number
+  /** stroke 색 — export 시 구체 hex/rgba 로 인라인. */
+  color: string
+  /** 은은한 오버레이용 투명도(0~1). 미지정 시 1(불투명). */
+  opacity?: number
+  /** SVG transform rotate 각도(deg). 중심(12 12) 기준. 미지정 시 회전 없음. */
+  rotate?: number
+}
+
+/**
+ * kind 별 낙서 SVG 내부 요소(모두 viewBox 0 0 24 24 기준).
+ * stroke 는 프레임에서 상속(color) — 여기선 좌표만 정의한다.
+ */
+const DECOR_SHAPES: Record<MotifDecorKind, React.ReactNode> = {
+  // 반짝 — 오목한 변의 4각 별(큰) + 톡 튀는 작은 별 하나(트윙클).
+  sparkle: (
+    <>
+      <path d="M12 3 Q12 12 21 12 Q12 12 12 21 Q12 12 3 12 Q12 12 12 3 Z" />
+      <path d="M19.5 2.3 Q19.5 4.5 21.7 4.5 Q19.5 4.5 19.5 6.7 Q19.5 4.5 17.3 4.5 Q19.5 4.5 19.5 2.3 Z" />
+    </>
+  ),
+  // 화살표 — 왼쪽에서 위로 솟았다 오른쪽 아래를 가리키는 곡선 샤프트 + 열린 촉.
+  arrow: (
+    <>
+      <path d="M4.5 8 C8.5 4.5 14 4.8 18.5 9.5" />
+      <path d="M14.2 8.25 L18.5 9.5 L17.4 5.15" />
+    </>
+  ),
+  // 꽃잎/잎 — 대각선으로 흩날리는 잎 한 장(양쪽 활 + 가운데 잎맥).
+  petal: (
+    <>
+      <path d="M7 18 C8 12 12 8 17 6 C15 11 11 15 7 18 Z" />
+      <path d="M7 18 C10.5 13 13.5 9.5 17 6" />
+    </>
+  ),
+  // 강조 동그라미 — 한 바퀴 돌고 시작점을 살짝 지나치는 열린(손그림) 원.
+  circle: (
+    <path d="M15 4.5 C20 5.5 21.5 11 20 15.5 C18.5 20 13 21.5 8 20 C3.5 18.5 2.5 12.5 4.5 8 C6.3 4 12 2.8 16.5 4.2" />
+  ),
+}
+
+function isSupportedDecorKind(kind: string): kind is MotifDecorKind {
+  return Object.prototype.hasOwnProperty.call(DECOR_SHAPES, kind)
+}
+
+/**
+ * 손그림 낙서 데코 — kind 에 맞는 라인 SVG 1개(+회전).
+ * kind 미지원이면 null 반환(안전) — 게이팅이 새어도 빈 렌더.
+ */
+export function MotifDecor({ kind, size, color, opacity, rotate }: MotifDecorProps): React.JSX.Element | null {
+  if (!isSupportedDecorKind(kind)) return null
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke={color}
+      strokeWidth={2.2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      style={{ display: "block", flexShrink: 0, opacity: opacity ?? 1 }}
+    >
+      <g transform={rotate ? `rotate(${rotate} 12 12)` : undefined}>{DECOR_SHAPES[kind]}</g>
+    </svg>
+  )
+}

@@ -60,7 +60,9 @@ import {
   LeafIcon,
   type LineIconProps,
 } from "./LineIcons"
-import { FruitMotif } from "./FruitMotifs"
+// v5.2-A: MotifDecor(장식 데코 — sparkle/arrow/petal/circle)는 타 에이전트가 FruitMotifs.tsx 에
+// 구현 중. 계약 shape 로 import 소비 — 미존재 시 본인 tsc 에서 잡히면 노트만(교차 계약).
+import { FruitMotif, MotifDecor } from "./FruitMotifs"
 
 /**
  * A3(카테고리 명사) — 고정 문구의 "과일" 자리를 카테고리에 맞춰 치환.
@@ -690,6 +692,14 @@ export interface ImagePlan {
    * 히어로 제외·재사용 상한 2회·POINT 카드 인접 회피를 지켜 남는(또는 2회차 재활용) 사진을 고른다.
    */
   breaks: UploadedImage[]
+  /**
+   * v5.2-A: 문제카드(ProblemArcBlock) 좌측 사진 슬롯(키위 레퍼런스). 길이 = 문제 카드 수.
+   * 게이팅: analysis 있고 "모든" 카드를 채울 수 있을 때만 사진 배정(하나라도 부족하면 전부
+   * undefined → 블록이 기존 텍스트 카드로 폴백, 혼재 금지). analysis 없으면 전부 undefined
+   * (기존 렌더 100% 동일, 불변식). 기존 슬롯 배정 결과는 읽기만 — 재사용 상한 2회·인접 중복·
+   * 히어로 제외·blurry/dark 제외 준수(cut/whole/farm 역할 우선).
+   */
+  problemArc: (UploadedImage | undefined)[]
 }
 
 const GALLERY_MAX = 8
@@ -737,6 +747,11 @@ export function planImages(
   opts: {
     keyPointCount: number
     recipeCount: number
+    /**
+     * v5.2-A: 문제카드(ProblemArcBlock) 수 — 좌측 사진 슬롯 개수. 없거나 0이면 problemArc = [].
+     * analysis 없으면(byId undefined) 개수와 무관하게 전부 undefined(불변식).
+     */
+    problemArcCount?: number
     /**
      * v4.4 사진 인텔리전스(선택). 각 사진의 역할·대표컷 점수·품질 플래그.
      * 불변식: 없거나 빈 배열이면 아래 로직은 기존(v3.8)과 100% 동일하게 동작한다 —
@@ -794,6 +809,9 @@ export function planImages(
       punch: undefined,
       gallery: [],
       breaks: [],
+      problemArc: Array<UploadedImage | undefined>(Math.max(0, opts.problemArcCount ?? 0)).fill(
+        undefined,
+      ),
     }
   }
 
@@ -1037,7 +1055,80 @@ export function planImages(
     }
   }
 
-  return { hero, whyBrand, keyPoints, recipe, packaging, sizeRef: undefined, punch, gallery, breaks }
+  /**
+   * v5.2-A 문제카드(ProblemArc) 좌측 사진 배정 — 문제 카드에 사진을 붙인다(키위 레퍼런스).
+   *
+   * 게이팅: analysis(byId) 있을 때만. problemArcCount 개 카드를 "전부" 채울 수 있을 때만 사진을
+   *   준다. 한 장이라도 못 채우면 전부 undefined 로 두어 블록이 기존 텍스트 카드로 폴백(혼재 금지).
+   *   analysis 없으면(byId undefined) 항상 전부 undefined → 기존 렌더 100% 동일(불변식).
+   * 규율(기존 슬롯 배정 결과는 읽기만, 불변):
+   *   - 히어로 제외(규칙 ①). blurry/dark 하드 제외. 재사용 상한 MAX_REUSE(2). problemArc 내 중복 금지.
+   *   - 역할 cut/whole/farm 우선(soft). 직전(WHY 카드)·직전 카드 사진과 인접 중복 회피.
+   *   - 전 슬롯(hero~breaks) 사용횟수를 집계해 useCount 최소 우선으로 재사용을 골고루 분산. 결정적.
+   */
+  const problemArc: (UploadedImage | undefined)[] = Array<UploadedImage | undefined>(
+    Math.max(0, opts.problemArcCount ?? 0),
+  ).fill(undefined)
+  if (byId && problemArc.length > 0) {
+    // 전 슬롯 사용횟수 집계(재사용 상한·분산 판정). 히어로 포함.
+    const paUse = new Map<string, number>()
+    const bumpPa = (img: UploadedImage | undefined) => {
+      if (img) paUse.set(img.id, (paUse.get(img.id) ?? 0) + 1)
+    }
+    bumpPa(hero)
+    bumpPa(whyBrand)
+    for (const kp of keyPoints) bumpPa(kp)
+    for (const rc of recipe) bumpPa(rc)
+    bumpPa(punch)
+    for (const g of gallery) bumpPa(g)
+    for (const bk of breaks) bumpPa(bk)
+    // 문제카드에 어울리는 역할(cut/whole/farm)이면 0, 아니면 1(soft 우선).
+    const PA_ROLES = new Set<PhotoAnalysisItem["role"]>(["cut", "whole", "farm"])
+    const paRoleMiss = (img: UploadedImage): number => {
+      const r = roleOf(img)
+      return r && PA_ROLES.has(r) ? 0 : 1
+    }
+    const chosen: UploadedImage[] = []
+    let paPrev: string | undefined = whyBrand?.id // 직전 페이지 사진(WHY 카드) — 첫 카드가 회피
+    for (let c = 0; c < problemArc.length; c++) {
+      let best: UploadedImage | undefined
+      let bestKey: number[] | undefined
+      images.forEach((img, idx) => {
+        if (img.id === hero.id) return // 히어로 제외(규칙 ①)
+        if (isLowQ(img)) return // blurry/dark 하드 제외
+        if (chosen.some((x) => x.id === img.id)) return // problemArc 내 중복 금지
+        const used = paUse.get(img.id) ?? 0
+        if (used >= MAX_REUSE) return // 재사용 상한(2)
+        const isPrev = img.id === paPrev ? 1 : 0 // 인접(직전 카드·WHY) 회피
+        const key = [used, isPrev, paRoleMiss(img), idx]
+        if (!bestKey || lexLess(key, bestKey)) {
+          bestKey = key
+          best = img
+        }
+      })
+      if (!best) break // 한 장이라도 못 채우면 중단 → 전부 텍스트 폴백(혼재 금지)
+      chosen.push(best)
+      paUse.set(best.id, (paUse.get(best.id) ?? 0) + 1)
+      paPrev = best.id
+    }
+    // 전 카드가 채워졌을 때만 사진 구성(부분 채움 금지 — 혼재 방지).
+    if (chosen.length === problemArc.length) {
+      for (let i = 0; i < chosen.length; i++) problemArc[i] = chosen[i]
+    }
+  }
+
+  return {
+    hero,
+    whyBrand,
+    keyPoints,
+    recipe,
+    packaging,
+    sizeRef: undefined,
+    punch,
+    gallery,
+    breaks,
+    problemArc,
+  }
 }
 
 /** fruit-facts에서 무료로 합류시킬 hookHeadlines 최대 개수 (기획 Should: 2~3개). */
@@ -1874,6 +1965,18 @@ export function ResultView({
   }, [copy.keyPoints])
 
   /**
+   * v5.2-A: 문제카드 수(좌측 사진 슬롯 개수). ProblemArcBlock 과 동일 규칙(최대 3, 문제 있을 때만).
+   * planImages 에 넘겨 problemArc 사진 슬롯을 그만큼 확보한다(analysis 있을 때만 실제 배정).
+   */
+  const problemArcCount = useMemo(
+    () =>
+      copy.problemArc && copy.problemArc.problems.length > 0
+        ? Math.min(3, copy.problemArc.problems.length)
+        : 0,
+    [copy.problemArc],
+  )
+
+  /**
    * v4.9-A 비주얼 DNA — 품종 매칭(detectFruitFactKey) → getVisualDNA. 기존 detectFruitFactKey
    * 사용 지점과 동일한 factKey 를 재사용한다. 매칭 실패(null)면 visualDNA 도 null →
    * 모티프 전 지점 미노출(게이팅)·이미지 가중치 불변(불변식).
@@ -1905,10 +2008,11 @@ export function ResultView({
       planImages(images, {
         keyPointCount: keyPoints.length,
         recipeCount: 0,
+        problemArcCount,
         analysis: photoAnalysis ?? undefined,
         dnaFavorsCut,
       }),
-    [images, keyPoints.length, photoAnalysis, dnaFavorsCut],
+    [images, keyPoints.length, problemArcCount, photoAnalysis, dnaFavorsCut],
   )
   const heroImage = imagePlan.hero
   const galleryImages = imagePlan.gallery
@@ -2331,7 +2435,7 @@ export function ResultView({
               <>
                 {/* v3.4(지시2): 흰 → 틴트 곡선 전환 */}
                 <CurveDivider topColor="#FFFFFF" fillColor={veilTint(accent.soft)} height={isMobile ? 44 : 64} />
-                <ProblemArcBlock arc={copy.problemArc} isMobile={isMobile} />
+                <ProblemArcBlock arc={copy.problemArc} photos={imagePlan.problemArc} isMobile={isMobile} />
                 {/* 틴트 → 흰(STORY) 곡선 전환 (아래로 파인 곡선처럼 보이도록 색 반전) */}
                 <CurveDivider topColor={veilTint(accent.soft)} fillColor="#FFFFFF" height={isMobile ? 44 : 64} />
               </>
@@ -3321,6 +3425,36 @@ function HeroBlock({
             <TiltSticker text={`${brix} Brix`} accent={accent} isMobile={isMobile} />
           </div>
         )}
+        {/* v5.2-A ①: Brix 스티커 주변 반짝(sparkle) — 스티커 아래쪽 결정적 좌표(스티커·텍스트
+            비겹침). 품종 매칭(motifKind)일 때만. MotifDecor 미지원 kind면 null(안전). */}
+        {brix != null && motifKind && (
+          <>
+            <span
+              aria-hidden
+              style={{
+                position: "absolute",
+                top: isMobile ? 66 : 104,
+                right: isMobile ? 16 : 30,
+                zIndex: 2,
+                display: "inline-flex",
+              }}
+            >
+              <MotifDecor kind="sparkle" size={isMobile ? 16 : 22} color={accent.accent} opacity={0.95} />
+            </span>
+            <span
+              aria-hidden
+              style={{
+                position: "absolute",
+                top: isMobile ? 92 : 148,
+                right: isMobile ? 56 : 92,
+                zIndex: 2,
+                display: "inline-flex",
+              }}
+            >
+              <MotifDecor kind="sparkle" size={isMobile ? 15 : 16} color={accent.accent} opacity={0.8} rotate={16} />
+            </span>
+          </>
+        )}
         {heroImage ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -3480,23 +3614,35 @@ function HeroBlock({
  * 구성:
  *  - 공감 질문 (Pretendard 900, 46~54px 중앙)
  *  - "{n}가지 이유" pill 배지 (accent)
- *  - 문제 카드 세로 스택 — 번호 01/02/03 + 문제 한 줄 (34px). 사진 슬롯 없음(텍스트 카드).
+ *  - 문제 카드 세로 스택 — 번호 01/02/03 + 문제 한 줄 (34px).
+ *    v5.2-A: photos 로 모든 카드를 채울 수 있으면 좌측 사진(카드 좌측 1/3, 높이 채움 cover)을
+ *    붙인 [사진 | 번호+텍스트] 가로 구성으로 렌더한다(키위 레퍼런스). 한 장이라도 없으면 전부
+ *    기존 텍스트 카드(혼재 금지). photos 자체가 없으면(분석 없음) 기존과 100% 동일.
  *
  * problemArc가 없으면(구버전 카피) 호출부에서 렌더하지 않는다(게이팅).
  * 지어내는 것 없이 copy.problemArc 원문 그대로 — 스타일만.
  */
 function ProblemArcBlock({
   arc,
+  photos,
   isMobile,
 }: {
   arc: NonNullable<CopyOutput["problemArc"]>
+  /** v5.2-A: 문제 카드별 좌측 사진 슬롯(planImages.problemArc). 전 카드 채워질 때만 사진 구성. */
+  photos?: (UploadedImage | undefined)[]
   isMobile: boolean
 }) {
   const accent = useAccent()
   const layout = useLayout()
+  const crop = useCrop() // v5.2-A: 문제 카드 사진 주체 클로즈업(subjectBox 있을 때만).
   const { copy, onCopyChange } = useEdit()
   const problems = arc.problems.slice(0, 3)
   if (problems.length === 0) return null
+
+  // v5.2-A: 사진 구성 게이트 — 렌더되는 모든 카드가 사진을 가질 때만(혼재 금지).
+  const photoMode = !!photos && problems.every((_, i) => photos[i] != null)
+  // 좌측 사진 슬롯 비율(W/H, 세로로 살짝 긴 컷) — 카드 높이를 사진이 정의(텍스트는 세로 중앙).
+  const CARD_PHOTO_RATIO = 4 / 5
 
   // v3.4(지시3): Q&A 2줄 위계 (chamoe-03 "이게 참외야? 꿀이야? → 아니 꿀참외야!").
   // answer 필드가 없어 사실을 지어내지 않는다 — 원문 재배치만으로 위계를 만든다.
@@ -3662,55 +3808,109 @@ function ProblemArcBlock({
           margin: "0 auto",
         }}
       >
-        {problems.map((_p, i) => (
-          <div
-            key={`pa-${i}`}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: isMobile ? 16 : 26,
-              background: "#FFFFFF",
-              border: `1px solid ${LINE}`,
-              borderRadius: 14,
-              padding: isMobile ? "20px 22px" : "32px 40px",
-            }}
-          >
-            {/* 번호 01/02/03 — accent, Pretendard 900 */}
-            <span
-              aria-hidden
+        {problems.map((_p, i) => {
+          // v5.2-A: 사진 구성일 때만 좌측 사진. subjectBox 있으면 크롭, 없으면 cover.
+          const photo = photoMode ? photos![i] : undefined
+          const box = photo ? crop.boxOf(photo) : undefined
+          return (
+            <div
+              key={`pa-${i}`}
               style={{
-                flexShrink: 0,
-                fontSize: isMobile ? 32 : 54,
-                fontWeight: 900,
-                color: accent.accent,
-                fontFamily: DISPLAY_FONT,
-                lineHeight: 1,
-                letterSpacing: -1.5,
+                display: "flex",
+                // 사진 카드: 좌측 사진이 카드 높이를 채우도록 stretch. 텍스트 카드: 기존 center.
+                alignItems: photo ? "stretch" : "center",
+                gap: photo ? 0 : isMobile ? 16 : 26,
+                background: "#FFFFFF",
+                border: `1px solid ${LINE}`,
+                borderRadius: 14,
+                overflow: "hidden", // 사진 모서리를 카드 라운드에 맞춰 클립
+                padding: photo ? 0 : isMobile ? "20px 22px" : "32px 40px",
               }}
             >
-              {String(i + 1).padStart(2, "0")}
-            </span>
-            {/* 문제 한 줄 */}
-            <span
-              style={{
-                fontSize: isMobile ? 20 : 34,
-                fontWeight: 700,
-                color: INK,
-                lineHeight: 1.4,
-                fontFamily: BODY_FONT,
-                letterSpacing: -0.3,
-                wordBreak: "keep-all",
-              }}
-            >
-              <EditableResultText
-                copy={copy}
-                onChange={onCopyChange}
-                path={["problemArc", "problems", i]}
-                maxLength={40}
-              />
-            </span>
-          </div>
-        ))}
+              {/* 좌측 사진 슬롯 — 카드 좌측 1/3, 높이 채움 cover(키위 레퍼런스). */}
+              {photo && (
+                <div
+                  style={{
+                    flexShrink: 0,
+                    width: isMobile ? "34%" : "32%",
+                    alignSelf: "stretch",
+                    background: accent.soft, // 로드 전/틈 방어
+                  }}
+                >
+                  {box ? (
+                    <CroppedImage image={photo} box={box} slotRatio={CARD_PHOTO_RATIO} />
+                  ) : (
+                    <div
+                      style={{
+                        width: "100%",
+                        aspectRatio: String(CARD_PHOTO_RATIO),
+                        overflow: "hidden",
+                      }}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={photo.url}
+                        alt=""
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                          display: "block",
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* 번호 + 문제 텍스트 — 사진 있으면 우측 컬럼(세로 중앙), 없으면 기존 가로 구성. */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: isMobile ? 16 : 26,
+                  flex: photo ? 1 : undefined,
+                  minWidth: 0,
+                  padding: photo ? (isMobile ? "20px 22px" : "28px 34px") : 0,
+                }}
+              >
+                {/* 번호 01/02/03 — accent, Pretendard 900 */}
+                <span
+                  aria-hidden
+                  style={{
+                    flexShrink: 0,
+                    fontSize: isMobile ? 32 : 54,
+                    fontWeight: 900,
+                    color: accent.accent,
+                    fontFamily: DISPLAY_FONT,
+                    lineHeight: 1,
+                    letterSpacing: -1.5,
+                  }}
+                >
+                  {String(i + 1).padStart(2, "0")}
+                </span>
+                {/* 문제 한 줄 */}
+                <span
+                  style={{
+                    fontSize: isMobile ? 20 : 34,
+                    fontWeight: 700,
+                    color: INK,
+                    lineHeight: 1.4,
+                    fontFamily: BODY_FONT,
+                    letterSpacing: -0.3,
+                    wordBreak: "keep-all",
+                  }}
+                >
+                  <EditableResultText
+                    copy={copy}
+                    onChange={onCopyChange}
+                    path={["problemArc", "problems", i]}
+                    maxLength={40}
+                  />
+                </span>
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -3953,6 +4153,7 @@ function SensoryPunchBlock({
 }) {
   const accent = useAccent()
   const layout = useLayout()
+  const motifKind = useMotifKind() // v5.2-A ③: 임팩트 카피 모서리 반짝(품종 매칭 시만).
   const crop = useCrop() // v5.1-A2: 감각 사진 주체 클로즈업(분석 있을 때만).
   // 틴트 버전: 밝은 배경(veilTint) + INK 헤드 + accent 하이라이트. 검정 버전: 검정 배경 + 밝은 카피.
   const bg = tinted ? veilTint(accent.soft) : PUNCH_BG
@@ -3961,7 +4162,23 @@ function SensoryPunchBlock({
   const punchRatio = isMobile ? 4 / 3 : 16 / 9
   const copyColor = tinted ? accent.dark : accent.soft
   return (
-    <div style={{ background: bg }}>
+    <div style={{ background: bg, position: "relative" }}>
+      {/* v5.2-A ③: 임팩트 카피 상단 모서리 반짝 1개 — 카피 색(copyColor)으로 배경 대비 확보.
+          중앙 카피 위쪽 코너라 텍스트와 비겹침. 품종 매칭 시만. MotifDecor 미지원 kind면 null. */}
+      {motifKind && (
+        <span
+          aria-hidden
+          style={{
+            position: "absolute",
+            top: isMobile ? 20 : 40,
+            right: isMobile ? 20 : 44,
+            zIndex: 2,
+            display: "inline-flex",
+          }}
+        >
+          <MotifDecor kind="sparkle" size={isMobile ? 18 : 26} color={copyColor} opacity={0.9} />
+        </span>
+      )}
       {/* 임팩트 카피 — 다크(검정 위 밝은 카피) 또는 틴트(밝은 배경 위 accent.dark). 편집 가능(highlightBox 경로). */}
       <div
         style={{
@@ -4049,6 +4266,7 @@ function OverlayQuoteBlock({
   isMobile: boolean
 }) {
   const layout = useLayout()
+  const motifKind = useMotifKind() // v5.2-A ③: 오버레이 임팩트 카피 모서리 반짝(품종 매칭 시만).
   // soft 변주만 살짝 둥근 모서리(PhotoBreak 와 동일 톤), standard/editorial 은 각진 풀블리드.
   const radius = layout.variant === "soft" ? layout.cardRadius : 0
   return (
@@ -4087,6 +4305,20 @@ function OverlayQuoteBlock({
           padding: isMobile ? "0 24px 26px" : "0 56px 48px",
         }}
       >
+        {/* v5.2-A ③: 카피 우상단 모서리 반짝 1개(흰색 — 스크림/사진 위 대비). 텍스트 위쪽이라 비겹침. */}
+        {motifKind && (
+          <span
+            aria-hidden
+            style={{
+              position: "absolute",
+              top: isMobile ? -8 : -14,
+              right: isMobile ? 24 : 56,
+              display: "inline-flex",
+            }}
+          >
+            <MotifDecor kind="sparkle" size={isMobile ? 18 : 24} color="#FFFFFF" opacity={0.9} />
+          </span>
+        )}
         <p
           style={{
             margin: 0,
@@ -4460,6 +4692,7 @@ function BrixRangeBlock({
   isMobile: boolean
 }) {
   const accent = useAccent()
+  const motifKind = useMotifKind() // v5.2-A ②: "우리 N" 마커 지시 화살표(품종 매칭 시만).
   const bs = t.detail.result.brixScale
   const range = getBrixRange(productName)
   if (!range) return null // 품종 범위 없으면 미노출
@@ -4495,7 +4728,101 @@ function BrixRangeBlock({
             {bs.ours.replace("{brix}", `${brix}`)}
           </div>
         )}
+        {/* v5.2-A ②: "우리 N" 마커를 가리키는 손그림 곡선 화살표(accent). 품종 매칭 시만.
+            라벨 우측(마커가 우측 끝이면 좌측)에 배치해 텍스트와 비겹침. MotifDecor 미지원 kind면 null. */}
+        {brixPct != null && motifKind && (
+          <span
+            aria-hidden
+            style={{
+              position: "absolute",
+              left: `${brixPct}%`,
+              top: -2,
+              // "우리 N" 라벨(중앙정렬)을 좌/우로 비켜 배치 — 텍스트와 비겹침.
+              transform: `translateX(${brixPct <= 78 ? (isMobile ? 28 : 48) : -(isMobile ? 52 : 76)}px)`,
+              display: "inline-flex",
+            }}
+          >
+            {/* arrow 기본 조준각 ≈46°(우하단). 회전 후 조준=46+rotate.
+                우측 배치(≤78)→좌향 필요: 135→181°(서). 좌측 배치(>78)→우향 필요: -45→1°(동). */}
+            <MotifDecor
+              kind="arrow"
+              size={isMobile ? 22 : 28}
+              color={accent.accent}
+              opacity={0.95}
+              rotate={brixPct <= 78 ? 135 : -45}
+            />
+          </span>
+        )}
       </div>
+
+      {/* v5.2-A 작업2: 당도 구간 라벨 3단 — 맛 기준선(goodPct)·품종 최대(maxPct)를 경계로
+          보통/높음/매우 높음. 옅은 경계 눈금과 함께. 경계가 정상 순서일 때만(창작 수치 없음).
+          각 라벨은 구간 폭이 충분할 때만 노출(좁으면 생략) — 결정적. */}
+      {goodPct < maxPct && (
+        <div style={{ position: "relative", height: isMobile ? 16 : 22, marginBottom: isMobile ? 4 : 6 }}>
+          {/* 경계 눈금(옅은) — goodPct·maxPct */}
+          <span
+            aria-hidden
+            style={{ position: "absolute", left: `${goodPct}%`, top: 0, bottom: 0, width: 1, background: LINE }}
+          />
+          <span
+            aria-hidden
+            style={{ position: "absolute", left: `${maxPct}%`, top: 0, bottom: 0, width: 1, background: LINE }}
+          />
+          {goodPct >= 10 && (
+            <span
+              style={{
+                position: "absolute",
+                left: 0,
+                top: 0,
+                fontSize: isMobile ? 10 : 16,
+                fontWeight: 700,
+                color: MUTE,
+                fontFamily: BODY_FONT,
+                letterSpacing: -0.2,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {bs.zones.normal}
+            </span>
+          )}
+          {maxPct - goodPct >= 14 && (
+            <span
+              style={{
+                position: "absolute",
+                left: `${(goodPct + maxPct) / 2}%`,
+                transform: "translateX(-50%)",
+                top: 0,
+                fontSize: isMobile ? 10 : 16,
+                fontWeight: 800,
+                color: accent.dark,
+                fontFamily: BODY_FONT,
+                letterSpacing: -0.2,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {bs.zones.high}
+            </span>
+          )}
+          {100 - maxPct >= 10 && (
+            <span
+              style={{
+                position: "absolute",
+                right: 0,
+                top: 0,
+                fontSize: isMobile ? 10 : 16,
+                fontWeight: 800,
+                color: accent.accent,
+                fontFamily: BODY_FONT,
+                letterSpacing: -0.2,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {bs.zones.veryHigh}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* 트랙 */}
       <div
