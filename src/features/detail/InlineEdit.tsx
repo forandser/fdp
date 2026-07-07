@@ -208,14 +208,18 @@ export function InlineEdit({
     padding: "4px 6px",
     margin: "-5px -7px",
     outline: "none",
-    background: "var(--color-bg-surface)",
-    // 부모 폰트/컬러 상속
+    // 부모 폰트 상속
     font: "inherit",
-    color: "inherit",
     lineHeight: "inherit",
     textAlign: "inherit",
     resize: multiline ? "vertical" : "none",
     ...style,
+    // 부모 글자색이 흰색인 자리(액센트 배경 위 CTA·배지 등)에서 흰 입력창에
+    // 흰 글씨가 되어 편집 중 텍스트가 안 보이던 실사용 버그(v4.8) —
+    // 편집 중에는 항상 어두운 글자색을 강제한다. 표시 모드 색은 그대로 유지.
+    color: "var(--color-neutral-900)",
+    caretColor: "var(--color-neutral-900)",
+    background: "var(--color-bg-surface)",
   }
 
   if (multiline) {

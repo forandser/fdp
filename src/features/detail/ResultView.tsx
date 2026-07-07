@@ -478,6 +478,12 @@ export interface ImagePlan {
    */
   punch?: UploadedImage
   gallery: UploadedImage[]
+  /**
+   * v4.8-c: 포토 브레이크(텍스트 몰빵 구간을 끊는 풀블리드 사진)용 1~2장.
+   * 총 사진 ≤ 3장이면 여유가 없어 빈 배열(브레이크 섹션이 조용히 사라짐). 4~5장 → 1장, 6장↑ → 2장.
+   * 히어로 제외·재사용 상한 2회·POINT 카드 인접 회피를 지켜 남는(또는 2회차 재활용) 사진을 고른다.
+   */
+  breaks: UploadedImage[]
 }
 
 const GALLERY_MAX = 8
@@ -570,6 +576,7 @@ export function planImages(
       sizeRef: undefined,
       punch: undefined,
       gallery: [],
+      breaks: [],
     }
   }
 
@@ -741,7 +748,68 @@ export function planImages(
     GALLERY_MAX,
   )
 
-  return { hero, whyBrand, keyPoints, recipe, packaging, sizeRef: undefined, punch, gallery }
+  /**
+   * v4.8-c 포토 브레이크 사진 배정 — 텍스트 몰빵 구간(스펙~보관~FAQ)에 끼울 풀블리드 1~2장.
+   *
+   * 게이팅: 총 사진 ≤ 3장이면 여유가 없어 0장(브레이크 섹션이 조용히 사라짐). 4~5장 → 1장,
+   *   6장↑ → 2장(사진이 많을수록 브레이크를 하나 더 허용).
+   * 후보 우선순위 키(작을수록 우선):
+   *   [전체 사용횟수, POINT 카드 중복, 역할 불일치, 품질저하, 원본 순서].
+   *   - 히어로 제외(규칙 ①). 이미 2회 쓴 사진은 후보에서 제외 → 절대 3회째 재사용 금지(규칙 ②·엣지 #6).
+   *   - 삽입 위치가 POINT 카드와 위·아래로 근접하므로, POINT가 쓴 사진은 뒤로 밀어 인접 중복 회피.
+   *   - analysis 있으면 whole/farm/table 역할·비저품질을 우선(b). 없으면 역할·품질 항이 0 →
+   *     "사용횟수 최소 → POINT 비중복 → 원본 순서" 순의 결정적 선택(불변식: 기존 슬롯 배정과 무관).
+   *   - 갤러리·특징 슬롯이 이미 흡수한 사진을 2회차로 재활용하는 게 일반적(사진이 딱 맞을 때)이라
+   *     useCount 최소 우선으로 재사용을 골고루 분산한다. Math.random 없음 — 결정적.
+   * 두 브레이크는 서로 다른 사진(중복 금지). 후보가 소진되면 남은 브레이크는 생략(게이팅).
+   */
+  const PHOTOBREAK_MAX = 2
+  const breaks: UploadedImage[] = []
+  if (images.length >= 4) {
+    const wantBreaks = Math.min(PHOTOBREAK_MAX, images.length >= 6 ? 2 : 1)
+    // 전 슬롯 사용횟수 집계(재사용 상한·분산 판정). 히어로 포함.
+    const globalUse = new Map<string, number>()
+    const bump = (img: UploadedImage | undefined) => {
+      if (img) globalUse.set(img.id, (globalUse.get(img.id) ?? 0) + 1)
+    }
+    bump(hero)
+    bump(whyBrand)
+    for (const kp of keyPoints) bump(kp)
+    for (const rc of recipe) bump(rc)
+    bump(punch)
+    for (const g of gallery) bump(g)
+    // POINT 카드가 쓴 사진 집합 — 인접 중복 회피용.
+    const kpIds = new Set<string>()
+    for (const kp of keyPoints) if (kp) kpIds.add(kp.id)
+    // 브레이크에 어울리는 역할(whole/farm/table)이면 0, 아니면 1. analysis 없으면 항상 0(불변식).
+    const breakRoleMiss = (img: UploadedImage): number => {
+      if (!byId) return 0
+      const r = roleOf(img)
+      return r === "whole" || r === "farm" || r === "table" ? 0 : 1
+    }
+    for (let b = 0; b < wantBreaks; b++) {
+      let best: UploadedImage | undefined
+      let bestKey: number[] | undefined
+      images.forEach((img, idx) => {
+        if (img.id === hero.id) return // 히어로 제외(규칙 ①)
+        if (breaks.some((x) => x.id === img.id)) return // 브레이크끼리 중복 금지
+        const used = globalUse.get(img.id) ?? 0
+        if (used >= MAX_REUSE) return // 규칙 ②·엣지 #6: 3회째 재사용 금지
+        const kpMiss = kpIds.has(img.id) ? 1 : 0
+        const lowq = byId && isLowQ(img) ? 1 : 0
+        const key = [used, kpMiss, breakRoleMiss(img), lowq, idx]
+        if (!bestKey || lexLess(key, bestKey)) {
+          bestKey = key
+          best = img
+        }
+      })
+      if (!best) break // 후보 소진 → 남은 브레이크 생략(게이팅)
+      breaks.push(best)
+      globalUse.set(best.id, (globalUse.get(best.id) ?? 0) + 1) // 다음 브레이크의 3회째 금지 반영
+    }
+  }
+
+  return { hero, whyBrand, keyPoints, recipe, packaging, sizeRef: undefined, punch, gallery, breaks }
 }
 
 /** fruit-facts에서 무료로 합류시킬 hookHeadlines 최대 개수 (기획 Should: 2~3개). */
@@ -2007,6 +2075,22 @@ export function ResultView({
             {/* v4.5: 5-1. 제철 캘린더 — 스펙 부근. fruit-facts 품종 매칭 실패/연중 수확이면 미노출. */}
             <SeasonCalendarBlock productName={productName} isMobile={isMobile} />
 
+            {/* v4.8-c: 포토 브레이크 ① — 스펙·제철 캘린더(데이터 표) 클러스터 직후, 텍스트 연속
+                구간의 첫 숨통. 사진 여유 없으면(breaks[0] 없음) 조용히 미노출(게이팅). */}
+            {imagePlan.breaks[0] && (
+              <>
+                <DotDivider />
+                <PhotoBreakBlock
+                  image={imagePlan.breaks[0]}
+                  isMobile={isMobile}
+                  slot={0}
+                  captionFallback={
+                    photoNoteById.get(imagePlan.breaks[0].id) ?? PHOTOBREAK_SAFE_CAPTIONS[0]
+                  }
+                />
+              </>
+            )}
+
             {/* 5a. 크기·중량 안내 — 크기 전용 슬롯 사진 또는 무게 데이터가 있을 때만.
                 v3.7: sizeImage가 있으면 사진 + 무게카드, 없으면 기존 동작(무게 데이터만). */}
             <SizeDiagramBlock
@@ -2040,6 +2124,22 @@ export function ResultView({
                 <FarmStoryBlock
                   isMobile={isMobile}
                   trust={trust}
+                />
+              </>
+            )}
+
+            {/* v4.8-c: 포토 브레이크 ② — 페이지에서 가장 긴 텍스트 연속(수령 타임라인→보관→
+                레시피→FAQ→배송·교환환불) 진입 직전. 사진 여유 없으면(breaks[1] 없음) 미노출(게이팅). */}
+            {imagePlan.breaks[1] && (
+              <>
+                <DotDivider />
+                <PhotoBreakBlock
+                  image={imagePlan.breaks[1]}
+                  isMobile={isMobile}
+                  slot={1}
+                  captionFallback={
+                    photoNoteById.get(imagePlan.breaks[1].id) ?? PHOTOBREAK_SAFE_CAPTIONS[1]
+                  }
                 />
               </>
             )}
@@ -3640,6 +3740,101 @@ function GalleryBlock({
           </div>
         )
       })}
+    </div>
+  )
+}
+
+/**
+ * v4.8-c 포토 브레이크 캡션용 중립 안전 문구 — GALLERY_SAFE_CAPTIONS와 같은 성격(사실 주장
+ * 금지: 산지·당도·수확·신선도·인증 없음). 갤러리 캡션(idx 0·1)과 겹치지 않게 별도 문구를 쓴다.
+ * 슬롯별 기본값이며, 사진의 visibleNote(관찰 메모, 이미 안전 필터·클램프됨)가 있으면 그쪽이 우선.
+ */
+const PHOTOBREAK_SAFE_CAPTIONS = ["보기 좋게 준비했어요", "정성을 담아 보내드려요"]
+
+/**
+ * v4.8-c 포토 브레이크 — 텍스트가 길게 이어지는 중후반 구간을 끊어 주는 풀블리드 사진 1장.
+ *
+ * 목적(실사용자 피드백): 스펙·제철 캘린더·타임라인·보관·FAQ가 텍스트로 연속되던 구간에 사진을
+ * 적재적소에 끼워 "몰빵" 인상을 완화한다. 사진 여유가 없으면 planImages가 breaks를 안 주므로
+ * 호출부에서 섹션 자체가 렌더되지 않는다(게이팅).
+ *
+ * 레이아웃:
+ *  - 가로 100% 풀블리드. 높이는 사진 원본 비율을 따르되 아트보드 폭 × 0.75(세로/가로 0.75 = 4:3)를
+ *    상한, 폭 × 0.5(2:1)를 하한으로 클램프한다. 상·하한 밖 사진은 objectFit cover로 크롭(레터박스 없음).
+ *    손상 저장본(width/height ≤ 0) 방어: 상한 비율(4:3)로 폴백.
+ *  - 좌하단 반투명 잉크 알약 캡션(갤러리 풀폭 캡션 스타일 재사용, rgba·hex만 → JPG 위생 안전).
+ *  - v4.6 토큰 소비: soft 변주만 살짝 둥근 모서리(포근한 톤), standard/editorial은 각진 풀블리드.
+ *    배경은 accent.soft(이미지 로드 전/틈 방어) — 전 변주에서 자연스럽게 착지.
+ *
+ * JPG 분할: 최상위 원자 블록 1개(갤러리 풀폭 행과 동일) — 슬라이서가 내부를 자르지 않으므로
+ *   data-slice-glue 불필요(html-to-jpg.ts E20 컨벤션). 상한(폭×0.75)이 목표 슬라이스(3000px)보다
+ *   훨씬 작아 경계 반토막 위험 없음.
+ */
+function PhotoBreakBlock({
+  image,
+  isMobile,
+  slot,
+  captionFallback,
+}: {
+  image: UploadedImage
+  isMobile: boolean
+  /** 캡션 편집 슬롯 번호 — id는 photobreak.caption.{slot}. 페이지 등장 순서와 일치(위=0, 아래=1). */
+  slot: 0 | 1
+  captionFallback: string
+}) {
+  const accent = useAccent()
+  const layout = useLayout()
+  // 원본 비율(세로/가로). 손상 저장본(0·음수) 방어 → 상한 0.75.
+  const ratioHW =
+    image.width > 0 && image.height > 0 ? image.height / image.width : 0.75
+  // 상한 0.75(4:3)·하한 0.5(2:1)로 클램프 → 이 밖의 사진은 cover 크롭.
+  const boxRatioHW = Math.min(0.75, Math.max(0.5, ratioHW))
+  const radius = layout.variant === "soft" ? layout.cardRadius : 0
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: "100%",
+        aspectRatio: 1 / boxRatioHW, // W/H
+        overflow: "hidden",
+        background: accent.soft,
+        borderRadius: radius,
+      }}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={image.url}
+        alt=""
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          display: "block",
+        }}
+      />
+      {/* 좌하단 반투명 알약 캡션 — 갤러리 풀폭 캡션과 동일 스타일. */}
+      <div
+        style={{
+          position: "absolute",
+          left: 16,
+          bottom: 16,
+          background: "rgba(33,37,41,0.62)",
+          color: "#FFFFFF",
+          padding: isMobile ? "9px 20px" : "12px 26px",
+          fontSize: isMobile ? 16 : 26,
+          fontWeight: 700,
+          fontFamily: BODY_FONT,
+          letterSpacing: -0.3,
+          borderRadius: 999,
+          wordBreak: "keep-all",
+        }}
+      >
+        <OverrideText
+          id={`photobreak.caption.${slot}`}
+          fallback={captionFallback}
+          maxLength={24}
+        />
+      </div>
     </div>
   )
 }

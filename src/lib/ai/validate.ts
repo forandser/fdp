@@ -102,10 +102,27 @@ const SEO_ABUSE_WORDS = [
   "강추",
 ]
 
-/** 문자열 길이를 상한으로 자른다. 한글/영문 모두 1자 단위. */
+/**
+ * 문자열 길이를 상한으로 자른다. 한글/영문 모두 1자 단위.
+ * v4.8: 하드컷이 단어 중간을 싹둑 잘라 "3kg 선" 같은 쓰다 만 꼬리를 만들던
+ * 실사용 버그 — 상한 초과 시 마지막 공백/구두점 경계까지 되돌려 자연스럽게 끝낸다.
+ * 경계가 너무 앞(상한의 60% 미만)이면 정보 손실이 커서 하드컷을 유지한다.
+ */
 function trimTo(s: string, max: number): string {
   if (!s) return s
-  return s.length > max ? s.slice(0, max) : s
+  if (s.length <= max) return s
+  const hard = s.slice(0, max)
+  let cut = -1
+  for (let i = hard.length - 1; i >= 0; i--) {
+    const ch = hard[i]
+    if (ch === " " || ch === "," || ch === "·" || ch === "." || ch === "!" || ch === "?") {
+      cut = i
+      break
+    }
+  }
+  const out = cut >= Math.floor(max * 0.6) ? hard.slice(0, cut) : hard
+  // 꼬리에 남은 쉼표·가운뎃점·공백 찌꺼기 정리
+  return out.replace(/[,·.\s]+$/, "")
 }
 
 /** 카피 텍스트(어떤 필드든)에서 진부어 등장 총 횟수. */
