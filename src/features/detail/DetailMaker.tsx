@@ -37,6 +37,14 @@ import { t } from "@/lib/i18n"
 import { validateProductNameSeo } from "@/lib/ai/validate"
 import { detectFruitFactKey, FRUIT_FACTS } from "@/domain/fruit-facts"
 import { DEMO_COPY } from "./demo-copy"
+import { BrandKitPanel } from "./BrandKitPanel"
+import {
+  listBrands,
+  getDefaultBrandId,
+  toSnapshot,
+  type BrandProfile,
+  type BrandSnapshot,
+} from "@/lib/storage/brand-db"
 
 type Stage = "restoring" | "input" | "generating" | "result" | "error"
 
@@ -272,6 +280,27 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
    * 저장·복원. 결과 화면에서 즉시 전환되며 섹션 순서·게이팅·카피는 불변, 디자인 토큰만 달라진다.
    */
   const [layoutVariant, setLayoutVariant] = useState<LayoutVariant>("standard")
+  /**
+   * v5.0-B: "우리 가게" 브랜드 배선.
+   * - brands/defaultBrandId: 패널 표시용 목록·기본 지정(부모가 소유·재로딩).
+   * - selectedBrandId: 현재 선택 프로필(신규 스냅샷의 원천).
+   * - brandSnapshot: ResultView 로 넘어가고 Work 에 박제되는 값(단일 진실).
+   * 복원 시 work.brandSnapshot 이 있으면 그것을 우선(스냅샷 불변 — 프로필 목록과 무관).
+   */
+  const [brands, setBrands] = useState<BrandProfile[]>([])
+  const [defaultBrandId, setDefaultBrandId] = useState<string | null>(null)
+  const [selectedBrandId, setSelectedBrandId] = useState<string | null>(null)
+  const [brandSnapshot, setBrandSnapshot] = useState<BrandSnapshot | null>(null)
+  /**
+   * 복원된 작업이 자체 박제 스냅샷을 실었는지. true 면 초기 기본-프로필 자동선택이
+   * 그 스냅샷을 덮어쓰지 않는다(불변). 사용자가 프로필을 직접 고르면 해제된다.
+   */
+  const brandFromWorkRef = useRef(false)
+  /**
+   * 복원 결정(스냅샷 유무)이 끝났는지 — 기본 프로필 자동선택이 복원보다 앞질러
+   * 스냅샷을 덮어쓰지 않도록 게이트. initialWorkId 없으면 즉시 resolved.
+   */
+  const [brandRestoreResolved, setBrandRestoreResolved] = useState(() => !initialWorkId)
   const tone: CopyTone = "sincere"
   /** v2.7: 게이트 UI 삭제. 내부 상수 true 유지 (API 안전망 / 규칙 5 준수) */
   const isOrdinaryProduce = true
@@ -477,6 +506,12 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         setPhotoAnalysis(work.photoAnalysis ?? null)
         // v4.6: 레이아웃 변주 복원 — 구버전 저장본엔 없음(undefined → "standard", 하위호환).
         setLayoutVariant(work.layoutVariant ?? "standard")
+        // v5.0-B: 작업에 박제된 브랜드 스냅샷 복원(있으면 우선 — 불변, 프로필 목록과 무관).
+        //   구버전 저장본엔 없음(옵셔널 — 하위호환). ref 를 세워 기본-프로필 자동선택이 덮지 않게 한다.
+        if (work.brandSnapshot) {
+          setBrandSnapshot(work.brandSnapshot)
+          brandFromWorkRef.current = true
+        }
         setCategory(input.category)
         setProductName(input.productType)
         setVariety(input.variety ?? "")
@@ -518,6 +553,9 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       } catch (e) {
         console.error("[restoreWork]", e)
         if (!cancelled) setStage("input")
+      } finally {
+        // v5.0-B: 복원 결정 완료 통지 — 기본 프로필 자동선택 게이트 해제(브랜드 초기화 effect 실행).
+        if (!cancelled) setBrandRestoreResolved(true)
       }
     })()
     return () => {
@@ -532,6 +570,34 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
       ref.current = []
     }
   }, [])
+
+  /**
+   * v5.0-B: 브랜드 초기화 — 복원 결정(brandRestoreResolved) 후 1회.
+   * 목록·기본값을 로드하고, 복원 스냅샷이 없을 때만 기본 프로필을 자동 선택해 스냅샷을 만든다.
+   * 복원 스냅샷이 있으면(brandFromWorkRef) 목록만 로드하고 선택/스냅샷은 건드리지 않는다(불변).
+   */
+  useEffect(() => {
+    if (!brandRestoreResolved) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const [list, defId] = await Promise.all([listBrands(), getDefaultBrandId()])
+        if (cancelled) return
+        setBrands(list)
+        setDefaultBrandId(defId)
+        if (brandFromWorkRef.current) return // 작업 박제 스냅샷 우선 — 자동선택 스킵
+        const def = list.find((b) => b.id === defId) ?? null
+        setSelectedBrandId(def?.id ?? null)
+        const snap = def ? await toSnapshot(def) : null
+        if (!cancelled) setBrandSnapshot(snap)
+      } catch (e) {
+        console.error("[brand-init]", e)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [brandRestoreResolved])
 
   /**
    * 사진 자동 보정 동기화 — images(추가/복원)·enhanceImages(토글) 변화에 맞춰 각 이미지의 url을 스왑.
@@ -797,6 +863,8 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
           photoAnalysis: analysisItems ?? undefined,
           // v4.6: 레이아웃 변주 저장(현재 선택값 — 기본 standard).
           layoutVariant,
+          // v5.0-B: 선택 브랜드 스냅샷 박제(없으면 undefined). 이후 브랜드 편집/삭제와 무관하게 고정.
+          brandSnapshot: brandSnapshot ?? undefined,
         }
         void saveWork(work)
       } catch (saveErr) {
@@ -838,6 +906,8 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
             photoAnalysis: photoAnalysis ?? undefined,
             // v4.6: 레이아웃 변주 유지(인라인 편집 저장 시에도 현재 선택값 보존).
             layoutVariant,
+            // v5.0-B: 브랜드 스냅샷 유지(인라인 편집 저장 시에도 유실 방지).
+            brandSnapshot: brandSnapshot ?? undefined,
           }
           await saveWork(work)
         } catch (e) {
@@ -873,12 +943,100 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
             photoAnalysisEnabled,
             photoAnalysis: photoAnalysis ?? undefined,
             layoutVariant: next,
+            // v5.0-B: 브랜드 스냅샷 유지(레이아웃 변주 저장 시에도 유실 방지).
+            brandSnapshot: brandSnapshot ?? undefined,
           }
           await saveWork(work)
         } catch (e) {
           console.error("[saveWork-layout]", e)
         }
       })()
+    }
+  }
+
+  /** v5.0-B: 브랜드 목록·기본값 재로딩(패널 DB 변경 후). 최신 리스트를 반환. */
+  const reloadBrands = async (): Promise<BrandProfile[]> => {
+    const [list, defId] = await Promise.all([listBrands(), getDefaultBrandId()])
+    setBrands(list)
+    setDefaultBrandId(defId)
+    return list
+  }
+
+  /**
+   * v5.0-B: 결과 화면에서 브랜드가 바뀌면 현재 작업에 즉시 저장.
+   * workId·currentInput·resultMeta·result 가 모두 있어야(결과 단계) 저장 — 그 외엔 no-op(가드).
+   * handleLayoutVariantChange 와 동일한 Work 구성에 brandSnapshot 만 교체한다.
+   */
+  const persistBrandToWork = (snap: BrandSnapshot | null) => {
+    if (!(workId && currentInput && resultMeta && result)) return
+    void (async () => {
+      try {
+        const work: Work = {
+          id: workId,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          productName: resultMeta.productName,
+          thumbDataUrl: images[0] ? await makeThumbDataUrl(images[0].file) : null,
+          input: currentInput,
+          copy: result,
+          imageBlobs: images.map((i) => i.file),
+          imageIds: images.map((i) => i.id),
+          packagingBlob: packagingImage?.file ?? null,
+          sizeBlob: sizeImage?.file ?? null,
+          enhanceImages,
+          photoAnalysisEnabled,
+          photoAnalysis: photoAnalysis ?? undefined,
+          layoutVariant,
+          brandSnapshot: snap ?? undefined,
+        }
+        await saveWork(work)
+      } catch (e) {
+        console.error("[saveWork-brand]", e)
+      }
+    })()
+  }
+
+  /**
+   * v5.0-B: 사용자가 드롭다운에서 프로필 선택. 스냅샷을 그 프로필로 갱신(불변 해제) +
+   * 결과 단계면 즉시 저장. 신규 추가 직후처럼 목록에 아직 없을 수 있어 항상 재로딩해 해석한다.
+   */
+  const handleBrandSelect = async (brandId: string | null) => {
+    brandFromWorkRef.current = false
+    setSelectedBrandId(brandId)
+    if (!brandId) {
+      setBrandSnapshot(null)
+      persistBrandToWork(null)
+      return
+    }
+    const list = await reloadBrands()
+    const brand = list.find((b) => b.id === brandId) ?? null
+    const snap = brand ? await toSnapshot(brand) : null
+    setBrandSnapshot(snap)
+    persistBrandToWork(snap)
+  }
+
+  /**
+   * v5.0-B: 패널이 DB 를 바꾼 뒤(추가/편집/삭제/기본지정/불러오기) 부모 목록 재로딩.
+   * 선택 프로필이 사라졌으면 해제하고, 남아 있고 작업 박제가 아니면 최신 프로필로 스냅샷 재계산.
+   */
+  const handleBrandsChanged = async () => {
+    const list = await reloadBrands()
+    if (!selectedBrandId) return
+    if (!list.some((b) => b.id === selectedBrandId)) {
+      // 선택 중이던 프로필이 삭제됨 — 해제(작업 박제 중이면 스냅샷은 유지).
+      setSelectedBrandId(null)
+      if (!brandFromWorkRef.current) {
+        setBrandSnapshot(null)
+        persistBrandToWork(null)
+      }
+      return
+    }
+    if (!brandFromWorkRef.current) {
+      // 선택 프로필 내용이 편집됐을 수 있으니 스냅샷 최신화(로고/색 반영).
+      const brand = list.find((b) => b.id === selectedBrandId) ?? null
+      const snap = brand ? await toSnapshot(brand) : null
+      setBrandSnapshot(snap)
+      persistBrandToWork(snap)
     }
   }
 
@@ -1344,6 +1502,17 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         />
       </Step>
 
+      {/* v5.0-B: "우리 가게" 브랜드 키트 — 로고·대표색·서명·문의를 상세페이지에 자동 반영. */}
+      <BrandKitPanel
+        brands={brands}
+        selectedBrandId={selectedBrandId}
+        defaultBrandId={defaultBrandId}
+        appliedSnapshotName={selectedBrandId === null && brandSnapshot ? brandSnapshot.name : null}
+        onSelect={handleBrandSelect}
+        onBrandsChanged={handleBrandsChanged}
+        disabled={isGenerating}
+      />
+
       {/* v3.5: AI 리서치 모드 토글 — 기본 ON. 생성 시 web_search로 품종 일반 참고 정보 조사. */}
       <div
         style={{
@@ -1694,6 +1863,7 @@ export function DetailMaker({ initialWorkId }: { initialWorkId?: string }) {
         onSectionRegenerate={result ? handleSectionRegenerate : undefined}
         busySection={busySection}
         layoutVariant={layoutVariant}
+        brandSnapshot={brandSnapshot}
         onRetry={handleRetry}
       />
 

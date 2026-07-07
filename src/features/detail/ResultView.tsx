@@ -4,6 +4,9 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { t } from "@/lib/i18n"
 import type { CopyOutput, CopyKeyPoint, TrustInfo, SellerReview, ProductCategory, PhotoAnalysisItem } from "@/lib/ai/types"
 import type { SectionId } from "@/lib/ai/section-regenerate"
+// v5.0-C: 브랜드 스냅샷 타입. brand-db 는 타 에이전트가 작성 중 —
+// 미존재 시 본인 tsc 에서 "Cannot find module" 로 잡히면 노트만(교차 계약).
+import type { BrandSnapshot } from "@/lib/storage/brand-db"
 import type { UploadedImage } from "./ImageUploader"
 import { ExportPanel } from "./ExportPanel"
 import { EditableResultText } from "./EditableResultText"
@@ -248,6 +251,12 @@ interface ResultViewProps {
    * 미지정(구버전 저장본/미전달)이면 "standard" — 기존 렌더와 픽셀 동일(하위호환).
    */
   layoutVariant?: LayoutVariant
+  /**
+   * v5.0-C: 브랜드 스냅샷(스토어명·로고 dataURL·대표색·서명·문의). 타 에이전트가 전달.
+   * 없으면(null/undefined) 브랜드 상단 라벨·클로징 브랜드 블록 모두 미노출 —
+   * 기존 렌더와 100% 동일(게이팅 불변식). 로고는 dataURL img 로만 렌더(JPG 위생 안전).
+   */
+  brandSnapshot?: BrandSnapshot | null
 }
 
 const RED = "#E03131" // 사이드바 편집 컨트롤용 브랜드 색 (내보내는 페이지엔 accent 사용)
@@ -1632,6 +1641,7 @@ export function ResultView({
   onSectionRegenerate,
   busySection,
   layoutVariant,
+  brandSnapshot,
 }: ResultViewProps) {
   const [enhance, setEnhance] = useState(true)
   /** v4.6: 레이아웃 토큰 — undefined면 standard(불변식). Provider로 각 블록에 주입. */
@@ -1967,6 +1977,10 @@ export function ResultView({
 
             {/* v2.4-b: 슬라이더로 오해되던 굵은 바+중앙 점 장식 삭제 (사용자 지적) */}
 
+            {/* v5.0-C: 상단 브랜드 라벨 — From 배지 위, 흰 바탕 얇은 서명(로고+스토어명).
+                brandSnapshot 없으면 렌더 안 됨(게이팅 불변식 — 기존 렌더와 100% 동일). */}
+            {brandSnapshot && <BrandTopLabel brand={brandSnapshot} isMobile={isMobile} />}
+
             {/* v2.9: HERO를 최상단으로 (수플린 레퍼런스 — 헤드/이미지/CTA가 먼저) */}
             <HeroBlock
               heroImage={heroImage}
@@ -2294,8 +2308,14 @@ export function ResultView({
             <DotDivider />
             <CautionsBlock cautions={copy.cautions ?? []} copy={copy} isMobile={isMobile} />
 
-            {/* v3.8(지시6): 클로징 브랜드 서명 — 잎 라인 아이콘 + 한 줄 + 가는 구분선. */}
-            <ClosingSignature productName={productName} trust={trust} isMobile={isMobile} />
+            {/* v3.8(지시6): 클로징 브랜드 서명 — 잎 라인 아이콘 + 한 줄 + 가는 구분선.
+                v5.0-C: brandSnapshot 있으면 로고·스토어명·서명·문의 브랜드 블록 확장. */}
+            <ClosingSignature
+              productName={productName}
+              trust={trust}
+              isMobile={isMobile}
+              brand={brandSnapshot}
+            />
           </div>
             </div>
           </div>
@@ -2761,6 +2781,71 @@ function HeroMotifScatter({
       <div style={{ position: "absolute", bottom: isMobile ? -16 : -20, right: isMobile ? -8 : -6, transform: "rotate(8deg)" }}>
         <FruitMotif kind={kind} size={isMobile ? 60 : 96} color={accent.accent} opacity={0.11} />
       </div>
+    </div>
+  )
+}
+
+/**
+ * v5.0-C 상단 브랜드 라벨 — 아트보드 최상단(히어로 From 배지 위)의 얇은 스토어 서명.
+ * 흰 바탕에 중앙 정렬로 소형 로고(원형 클립) + 스토어명(MUTE 톤)만 조용히 얹는다.
+ * From 배지(틴트 히어로 안)와는 흰 여백으로 분리돼 시각 충돌이 없다.
+ *
+ * 게이팅: 로고·스토어명 둘 다 비면 null(아무것도 렌더 안 함). 호출부도 brandSnapshot
+ * 존재를 먼저 확인하므로, brandSnapshot 없으면 이 라벨은 DOM 에 아예 나타나지 않는다.
+ * 로고는 dataURL img 로만 렌더 — CSS filter/외부 URL 없이 toCanvas 캡처 안전.
+ */
+function BrandTopLabel({ brand, isMobile }: { brand: BrandSnapshot; isMobile: boolean }) {
+  const name = brand.name?.trim()
+  const logo = brand.logoDataUrl
+  if (!name && !logo) return null
+  const dim = isMobile ? 22 : 28
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: isMobile ? 8 : 11,
+        padding: isMobile ? "16px 24px 6px" : "24px 44px 8px",
+        background: "#FFFFFF",
+      }}
+    >
+      {logo && (
+        <span
+          aria-hidden
+          style={{
+            width: dim,
+            height: dim,
+            borderRadius: "50%",
+            overflow: "hidden",
+            flexShrink: 0,
+            display: "inline-flex",
+            background: "#FFFFFF",
+          }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={logo}
+            alt=""
+            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+          />
+        </span>
+      )}
+      {name && (
+        <span
+          style={{
+            fontFamily: BODY_FONT,
+            fontWeight: 700,
+            fontSize: isMobile ? 14 : 20,
+            color: MUTE,
+            letterSpacing: 0.2,
+            lineHeight: 1.2,
+            wordBreak: "keep-all",
+          }}
+        >
+          {name}
+        </span>
+      )}
     </div>
   )
 }
@@ -6383,15 +6468,23 @@ function CautionsBlock({
  * 지어내지 않는다 — 마무리 문구는 고정 감사 표현, 서명은 trust.producerName(있으면)
  * 또는 상품명으로만. producer가 없으면 "{상품명} 드림" 형태로 폴백.
  * captureRef 내부라 인라인 style + hex 상수 + 인라인 SVG(LeafIcon)만 사용 — filter/CSS 변수 없음.
+ *
+ * v5.0-C: brand(BrandSnapshot) 가 있으면 기존 마무리 아래에 브랜드 푸터를 확장한다 —
+ * 로고(dataURL img) · 스토어명(대표색 뱃지) · 서명 문구(사람 말투 그대로) · 문의 안내.
+ * 대표색(brand.color)은 이 블록의 포인트 라인/스토어명 뱃지에만 쓰고 accent 팔레트는
+ * 건드리지 않는다(기획 원칙). color 없거나 형식 부적합이면 accent 사용. brand 없으면
+ * 아래 확장은 렌더되지 않아 기존 클로징과 100% 동일(게이팅 불변식).
  */
 function ClosingSignature({
   productName,
   trust,
   isMobile,
+  brand,
 }: {
   productName: string
   trust?: TrustInfo
   isMobile: boolean
+  brand?: BrandSnapshot | null
 }) {
   const accent = useAccent()
   const motifKind = useMotifKind() // v4.9-A: 클로징 서명 옆 모티프(품종 매칭 시만).
@@ -6399,6 +6492,18 @@ function ClosingSignature({
   const name = productName.trim()
   // 서명 — 농가명 우선, 없으면 상품명, 둘 다 없으면 서명 줄 생략.
   const signature = producer ? `${producer} 농가 드림` : name ? `${name} 드림` : null
+  // v5.0-C 브랜드 확장 값(전부 옵셔널). brand 없으면 아래 블록 자체가 안 그려진다.
+  const brandName = brand?.name?.trim()
+  const brandLogo = brand?.logoDataUrl
+  const brandSig = brand?.signature?.trim()
+  const brandContact = brand?.contact?.trim()
+  // 대표색은 6자리 hex 일 때만 채택(알파 합성 안전) — 아니면 accent 로 폴백. 팔레트는 불변.
+  const rawBrandColor = brand?.color?.trim()
+  const brandColor =
+    rawBrandColor && /^#[0-9a-fA-F]{6}$/.test(rawBrandColor) ? rawBrandColor : null
+  const pointColor = brandColor ?? accent.accent
+  const hasBrandBlock = !!(brandName || brandLogo || brandSig || brandContact)
+  const brandLogoDim = isMobile ? 44 : 56
   return (
     <div
       style={{
@@ -6458,6 +6563,106 @@ function ClosingSignature({
         >
           {signature}
         </p>
+      )}
+      {/* v5.0-C 브랜드 푸터 확장 — brand 있을 때만. 대표색은 포인트 라인·스토어명 뱃지에만. */}
+      {hasBrandBlock && (
+        <div style={{ marginTop: isMobile ? 30 : 44 }}>
+          {/* 포인트 라인 — 대표색(없으면 accent). 이 블록에서 대표색을 쓰는 유일한 라인. */}
+          <div
+            aria-hidden
+            style={{
+              width: isMobile ? 30 : 44,
+              height: 2,
+              background: pointColor,
+              borderRadius: 2,
+              margin: isMobile ? "0 auto 18px" : "0 auto 24px",
+            }}
+          />
+          {brandLogo && (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                marginBottom: isMobile ? 12 : 16,
+              }}
+            >
+              <span
+                aria-hidden
+                style={{
+                  width: brandLogoDim,
+                  height: brandLogoDim,
+                  borderRadius: "50%",
+                  overflow: "hidden",
+                  display: "inline-flex",
+                  flexShrink: 0,
+                  background: "#FFFFFF",
+                }}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={brandLogo}
+                  alt=""
+                  style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                />
+              </span>
+            </div>
+          )}
+          {brandName && (
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              {/* 스토어명 뱃지 — 대표색 옅은 틴트 배경(8% 알파) + 진한 잉크 글씨(대비 안전). */}
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  padding: isMobile ? "6px 16px" : "9px 22px",
+                  borderRadius: 999,
+                  background: `${pointColor}14`,
+                  color: accent.dark,
+                  fontFamily: BODY_FONT,
+                  fontWeight: 800,
+                  fontSize: isMobile ? 16 : 24,
+                  letterSpacing: 0.2,
+                  lineHeight: 1.3,
+                  wordBreak: "keep-all",
+                }}
+              >
+                {brandName}
+              </span>
+            </div>
+          )}
+          {brandSig && (
+            <p
+              style={{
+                fontSize: isMobile ? 15 : 22,
+                color: SUB,
+                fontWeight: 500,
+                fontFamily: BODY_FONT,
+                lineHeight: 1.6,
+                margin: isMobile ? "12px 0 0" : "16px 0 0",
+                letterSpacing: -0.2,
+                wordBreak: "keep-all",
+                ...WRAP_PRETTY,
+              }}
+            >
+              {brandSig}
+            </p>
+          )}
+          {brandContact && (
+            <p
+              style={{
+                fontSize: isMobile ? 12 : 16,
+                color: MUTE,
+                fontWeight: 500,
+                fontFamily: BODY_FONT,
+                lineHeight: 1.5,
+                margin: isMobile ? "10px 0 0" : "12px 0 0",
+                wordBreak: "keep-all",
+              }}
+            >
+              {brandContact}
+            </p>
+          )}
+        </div>
       )}
     </div>
   )

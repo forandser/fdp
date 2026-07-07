@@ -12,6 +12,7 @@ import { get, set } from "idb-keyval"
 import { STORAGE_KEYS } from "./keys"
 import type { CopyInput, CopyOutput, PhotoAnalysisItem } from "@/lib/ai/types"
 import { validatePhotoAnalysis } from "@/lib/ai/validate"
+import type { BrandSnapshot } from "./brand-db"
 
 export interface Work {
   id: string
@@ -63,6 +64,13 @@ export interface Work {
    * 픽셀 동일, 하위호환). 저장/복원/백업 모두 이 값을 라운드트립한다.
    */
   layoutVariant?: "standard" | "soft" | "editorial"
+  /**
+   * v5.0: 이 작업물을 만들 때 적용한 브랜드의 박제 스냅샷(로고 dataURL·색·서명 등).
+   * 브랜드 저장소(brand-db)의 프로필을 toSnapshot 으로 고정한 값 — 이후 브랜드가
+   * 편집·삭제돼도 이 작업물은 만들 때 본 브랜딩으로 재현된다. ResultView 로 그대로 넘어간다.
+   * 구버전 저장본엔 없음(옵셔널 — 하위호환). 없으면 브랜드 요소 미노출.
+   */
+  brandSnapshot?: BrandSnapshot
 }
 
 export interface WorkSummary {
@@ -164,6 +172,8 @@ export interface WorkBackupItem {
   photoAnalysisEnabled?: boolean
   /** v4.6: 레이아웃 변주. 없으면 생략(하위호환 — 로드 시 standard). */
   layoutVariant?: "standard" | "soft" | "editorial"
+  /** v5.0: 브랜드 박제 스냅샷. 없으면 생략(하위호환). */
+  brandSnapshot?: BrandSnapshot
 }
 export interface WorkBackup {
   format: "fdp-backup"
@@ -189,6 +199,31 @@ async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
   // 일부 환경의 fetch가 data URL을 지원 → 가장 간단
   const res = await fetch(dataUrl)
   return await res.blob()
+}
+
+/**
+ * v5.0: 백업 복원 시 브랜드 스냅샷 형태 검증(신뢰 없는 외부 입력) — 비문자열 필드는 드롭.
+ * - name 이 문자열이 아니거나 공백뿐이면 스냅샷 자체를 undefined(브랜드 미노출).
+ * - logoDataUrl 은 data: URL 만 통과(외부 URL 차단 — 아트보드 canvas 오염/외부요청 방지).
+ * - color 는 #hex 만, signature/contact 는 문자열만 각각 80/60자로 절삭.
+ * 필드 상한은 brand-db 정규화와 동일하게 유지(30/80/60자).
+ */
+function sanitizeBrandSnapshot(v: unknown): BrandSnapshot | undefined {
+  if (!v || typeof v !== "object") return undefined
+  const r = v as Record<string, unknown>
+  if (typeof r.name !== "string") return undefined
+  const name = r.name.trim().slice(0, 30)
+  if (name.length === 0) return undefined
+  const snap: BrandSnapshot = { name }
+  if (typeof r.logoDataUrl === "string" && r.logoDataUrl.startsWith("data:")) {
+    snap.logoDataUrl = r.logoDataUrl
+  }
+  if (typeof r.color === "string" && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(r.color)) {
+    snap.color = r.color
+  }
+  if (typeof r.signature === "string") snap.signature = r.signature.slice(0, 80)
+  if (typeof r.contact === "string") snap.contact = r.contact.slice(0, 60)
+  return snap
 }
 
 export async function exportAllWorksToJson(): Promise<WorkBackup> {
@@ -239,6 +274,8 @@ export async function exportAllWorksToJson(): Promise<WorkBackup> {
       photoAnalysisEnabled: w.photoAnalysisEnabled,
       // v4.6: 레이아웃 변주도 백업(undefined면 JSON에서 생략 → 로드 시 standard).
       layoutVariant: w.layoutVariant,
+      // v5.0: 브랜드 스냅샷도 백업(undefined면 JSON에서 생략).
+      brandSnapshot: w.brandSnapshot,
     })
   }
   return {
@@ -302,6 +339,8 @@ export async function importBackupJson(
         item.layoutVariant === "standard"
           ? item.layoutVariant
           : undefined
+      // v5.0: 브랜드 스냅샷 형태 검증(비문자열 드롭·외부 URL 차단). 없으면 undefined.
+      const brandSnapshot = sanitizeBrandSnapshot(item.brandSnapshot)
       map[item.id] = {
         id: item.id,
         createdAt: item.createdAt ?? Date.now(),
@@ -320,6 +359,8 @@ export async function importBackupJson(
         photoAnalysisEnabled: item.photoAnalysisEnabled,
         // v4.6: 검증 통과한 레이아웃 변주만 저장(없으면 undefined → standard).
         layoutVariant,
+        // v5.0: 검증 통과한 브랜드 스냅샷만 저장(없으면 undefined → 브랜드 미노출).
+        brandSnapshot,
       }
       imported++
     } catch {

@@ -8,6 +8,9 @@ export const STORAGE_KEYS = {
   WORKS_DB: "fdp:works",
   DIRECTORY_HANDLE: "fdp:dir-handle",
   EXPORT_PRESETS: "fdp:export-presets",
+  // v5.0-A: 브랜드 프로필 저장소({ [brandId]: BrandProfile } 맵) + 기본 브랜드 id.
+  BRANDS_DB: "fdp:brands",
+  BRAND_DEFAULT: "fdp:brand-default",
   // localStorage
   USAGE_TOTAL: "fdp:usage-total",
   LOCALE: "fdp:locale",
