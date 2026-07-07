@@ -145,3 +145,17 @@ html, body {
 * {
   box-sizing: border-box;
 }
+
+/*
+ * 앱 셸 폼 입력 포커스 링 (UI감사 A3).
+ * .fdp-form(좌측 폼 컬럼)에만 스코프 — 우측 ResultView(아트보드 인라인 편집)는 건드리지 않는다.
+ * 브라우저 기본 검정 아웃라인 대신 과일 코랄 보더 + 연한 링.
+ * 색 hex(#F0654A)는 shell-theme.ts SHELL_COLOR.primary 를 미러링한다(인라인 스타일은 :focus 불가).
+ * !important 는 인라인 border-color 를 포커스 시에만 덮기 위함(평상시 인라인 보더 유지).
+ */
+.fdp-form input:not([type="checkbox"]):not([type="radio"]):focus,
+.fdp-form textarea:focus {
+  outline: none;
+  border-color: #F0654A !important;
+  box-shadow: 0 0 0 3px rgba(240, 101, 74, 0.18);
+}

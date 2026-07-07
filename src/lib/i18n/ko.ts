@@ -83,12 +83,17 @@ export const ko = {
       previouslyOn: "지난번 켬",
     },
     step2Basic: "2. 기본 정보",
+    // A4: 최소 입력 범위 안내 — 필수/선택 뱃지와 짝을 이룬다.
+    step2BasicHint: "상품명만 필수예요 — 나머지는 채울수록 카피가 정확해져요.",
+    // A4: 선택 필드에 붙는 미니 칩 문구(필수는 라벨 옆 빨간 별표로 표시).
+    optionalBadge: "선택",
+    // A2: "처음이신가요?" 예시 채우기 헬퍼(웜 톤 1줄 강등).
+    fillDemoHelper: "처음이신가요? 빈 칸을 이 과일 표준값으로 채워드려요 — 확인 후 수정하세요.",
+    fillDemoButton: "예시 채우기",
     field: {
       productName: "상품명",
-      productNameRequired: "상품명 (필수)",
       productNamePh: "예) 신비복숭아",
       price: "판매가",
-      priceRequired: "판매가 (필수)",
       pricePh: "예) 29000",
       weight: "중량/단위",
       weightPh: "예) 4kg 한 박스",
@@ -121,7 +126,7 @@ export const ko = {
     step4Extra: "4. 상품 추가 설명 (선택)",
     step4ExtraHint: "강조하고 싶은 소구점이 있다면 자유롭게 적어주세요. 구체적일수록 좋아요.",
     step4ExtraPh: "예) 1. 당일 수확 직배송\n2. 11Brix 이상만 선별\n3. 무료 반품 7일",
-    farmIntroLabel: "농가/대표 한 줄 소개 (선택)",
+    farmIntroLabel: "농가/대표 한 줄 소개",
     farmIntroPh: "예) 30년째 청송에서 사과 농사를 이어온 김농부입니다. 매일 아침 직접 따서 보내드립니다.",
     farmIntroHint: "비워두면 AI가 정중한 기본 문구로 채워요.",
     /** 운영 방식 체크 — 실제로 지키는 약속만 페이지에 표시되도록 게이팅. */
@@ -536,10 +541,12 @@ export const ko = {
     backupImport: "복원",
   },
   season: {
-    title: "🗓 {month}월 제철",
-    inSeason: "✅ 지금이 제철입니다!",
-    offSeason: "⚠️ 지금은 시즌이 아니에요 (제철: {range})",
-    unknown: "💡 제철 데이터에 없는 품목이에요. 직접 강조 포인트를 적어주세요.",
+    // A2: 원시 상태 이모지(✅⚠️💡) 제거 — 표시 쪽에서 색 점(dot)으로 상태를 나타낸다.
+    // (이모지를 문자열에 넣으면 SeasonHint 의 아이콘과 이중 렌더되던 버그의 원인이었다.)
+    title: "{month}월 제철",
+    inSeason: "지금이 제철이에요",
+    offSeason: "지금은 제철이 아니에요 · 제철 {range}",
+    unknown: "제철 데이터에 없는 품목이에요",
   },
 } as const
 

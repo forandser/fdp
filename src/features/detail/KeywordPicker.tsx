@@ -9,6 +9,22 @@ import type {
   SuggestPointsInput,
 } from "@/lib/ai/types"
 import { t } from "@/lib/i18n"
+import { SHELL_COLOR, RADIUS } from "./shell-theme"
+
+/** A5: 선택된 칩(프리셋·AI 추천 공통) — 코랄 틴트 채움 + 체크. */
+const selectedChipStyle: React.CSSProperties = {
+  border: `1px solid ${SHELL_COLOR.tintBorder}`,
+  background: SHELL_COLOR.tint,
+  color: SHELL_COLOR.tintText,
+  fontWeight: 700,
+}
+/** A5: 미선택 칩 — 흰 배경 아웃라인. */
+const outlineChipStyle: React.CSSProperties = {
+  border: "1px solid var(--color-neutral-300)",
+  background: "var(--color-bg-surface)",
+  color: "var(--color-neutral-900)",
+  fontWeight: 400,
+}
 
 interface KeywordPickerProps {
   selected: string[]
@@ -137,15 +153,35 @@ export function KeywordPicker({
 
   return (
     <div>
-      <p
+      {/* A5: "n/6 선택" 카운터를 미니 필로 승격 — 한도 도달 시 코랄 틴트로 채워 강조. */}
+      <div
         style={{
-          fontSize: "var(--font-size-sm)",
-          color: "var(--color-neutral-500)",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
           marginBottom: 10,
         }}
       >
-        {t.detail.step3Hint} · {totalCount}/{max}
-      </p>
+        <span
+          style={{
+            flexShrink: 0,
+            padding: "3px 10px",
+            borderRadius: RADIUS.chip,
+            fontSize: "var(--font-size-xs)",
+            fontWeight: 700,
+            border: isFull
+              ? `1px solid ${SHELL_COLOR.tintBorder}`
+              : "1px solid var(--color-neutral-300)",
+            background: isFull ? SHELL_COLOR.tint : "var(--color-bg-surface)",
+            color: isFull ? SHELL_COLOR.tintText : "var(--color-neutral-700)",
+          }}
+        >
+          {totalCount}/{max} 선택
+        </span>
+        <span style={{ fontSize: "var(--font-size-sm)", color: "var(--color-neutral-500)" }}>
+          {t.detail.step3Hint}
+        </span>
+      </div>
 
       <div
         style={{
@@ -157,22 +193,22 @@ export function KeywordPicker({
       >
         {PRESET_KEYWORDS.map((k) => {
           const on = isPresetSelected(k.label)
+          // A5: 한도 도달 + 미선택 칩은 감쇠 + 클릭 무시(togglePreset 도 이미 가드).
+          const dimmed = isFull && !on
           return (
             <button
               key={k.id}
               type="button"
               onClick={() => togglePreset(k.label)}
+              disabled={dimmed}
               style={{
                 padding: "6px 12px",
-                borderRadius: 999,
-                border: on
-                  ? "1px solid var(--color-primary-600)"
-                  : "1px solid var(--color-neutral-300)",
-                background: on ? "var(--color-primary-600)" : "var(--color-bg-surface)",
-                color: on ? "var(--color-text-on-primary)" : "var(--color-neutral-900)",
+                borderRadius: RADIUS.chip,
                 fontSize: "var(--font-size-sm)",
-                cursor: "pointer",
+                cursor: dimmed ? "not-allowed" : "pointer",
+                opacity: dimmed ? 0.45 : 1,
                 transition: "all 0.1s",
+                ...(on ? selectedChipStyle : outlineChipStyle),
               }}
             >
               {on ? "✓ " : ""}
@@ -199,13 +235,15 @@ export function KeywordPicker({
                 alignItems: "center",
                 gap: 4,
                 padding: "6px 12px",
-                borderRadius: 999,
-                background: "var(--color-primary-100)",
-                color: "var(--color-primary-700)",
+                borderRadius: RADIUS.chip,
+                border: `1px solid ${SHELL_COLOR.tintBorder}`,
+                background: SHELL_COLOR.tint,
+                color: SHELL_COLOR.tintText,
+                fontWeight: 700,
                 fontSize: "var(--font-size-sm)",
               }}
             >
-              {k}
+              ✓ {k}
               <button
                 type="button"
                 onClick={() => removeCustom(k)}
@@ -213,7 +251,7 @@ export function KeywordPicker({
                 style={{
                   border: "none",
                   background: "transparent",
-                  color: "var(--color-primary-700)",
+                  color: SHELL_COLOR.tintText,
                   cursor: "pointer",
                   fontSize: 14,
                   padding: 0,
@@ -243,8 +281,8 @@ export function KeywordPicker({
           style={{
             flex: 1,
             padding: "8px 12px",
-            border: "1px solid var(--color-neutral-100)",
-            borderRadius: "var(--radius-xs)",
+            border: "1px solid var(--color-neutral-300)",
+            borderRadius: RADIUS.control,
             fontSize: "var(--font-size-sm)",
             background: "var(--color-bg-surface)",
             color: "var(--color-neutral-900)",
@@ -257,7 +295,7 @@ export function KeywordPicker({
           style={{
             padding: "8px 14px",
             border: "1px solid var(--color-neutral-300)",
-            borderRadius: "var(--radius-xs)",
+            borderRadius: RADIUS.control,
             background: "var(--color-bg-surface)",
             color: "var(--color-neutral-900)",
             fontSize: "var(--font-size-sm)",
@@ -316,16 +354,13 @@ export function KeywordPicker({
             style={{
               flexShrink: 0,
               padding: "8px 14px",
-              border: "1px solid var(--color-primary-600)",
-              borderRadius: "var(--radius-xs)",
-              background: loading
-                ? "var(--color-neutral-100)"
-                : "var(--color-primary-600)",
-              color: loading
-                ? "var(--color-neutral-700)"
-                : "var(--color-text-on-primary)",
+              // A5/A1: 보조 액션 — 흰 배경 + 코랄 보더 아웃라인(남색 채움 제거).
+              border: `1px solid ${loading ? "var(--color-neutral-300)" : SHELL_COLOR.primary}`,
+              borderRadius: RADIUS.control,
+              background: "var(--color-bg-surface)",
+              color: loading ? "var(--color-neutral-500)" : SHELL_COLOR.primary,
               fontSize: "var(--font-size-sm)",
-              fontWeight: 600,
+              fontWeight: 700,
               cursor: loading || !canSuggest ? "not-allowed" : "pointer",
               opacity: !canSuggest ? 0.5 : 1,
               whiteSpace: "nowrap",
@@ -374,21 +409,13 @@ export function KeywordPicker({
                   aria-label={`${kw} ${on ? t.detail.keywordSuggest.added : t.detail.keywordSuggest.addLabel}`}
                   style={{
                     padding: "6px 12px",
-                    borderRadius: 999,
-                    border: on
-                      ? "1px solid var(--color-primary-600)"
-                      : "1px solid var(--color-neutral-300)",
-                    background: on
-                      ? "var(--color-primary-600)"
-                      : "var(--color-bg-surface)",
-                    color: on
-                      ? "var(--color-text-on-primary)"
-                      : "var(--color-neutral-900)",
+                    borderRadius: RADIUS.chip,
                     fontSize: "var(--font-size-sm)",
                     cursor: disabled ? "not-allowed" : "pointer",
-                    opacity: disabled ? 0.5 : 1,
+                    opacity: disabled ? 0.45 : 1,
                     transition: "all 0.1s",
                     textAlign: "left",
+                    ...(on ? selectedChipStyle : outlineChipStyle),
                   }}
                 >
                   {on ? "✓ " : "+ "}

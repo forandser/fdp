@@ -22,6 +22,15 @@ import type {
 import { filterForbiddenPoints, type CertHeld } from "@/lib/ai/forbidden-words"
 import { detectFruitFactKey, FRUIT_FACTS } from "@/domain/fruit-facts"
 import { t } from "@/lib/i18n"
+import { SHELL_COLOR, RADIUS } from "./shell-theme"
+
+/** A5: 선택된 소구점 칩 — 코랄 틴트 채움 + 체크(키워드 칩과 동일 언어). */
+const selectedPointChip: React.CSSProperties = {
+  border: `1px solid ${SHELL_COLOR.tintBorder}`,
+  background: SHELL_COLOR.tint,
+  color: SHELL_COLOR.tintText,
+  fontWeight: 700,
+}
 
 interface Props {
   category: ProductCategory
@@ -163,12 +172,13 @@ export function SellingPointsSuggester({
           style={{
             flexShrink: 0,
             padding: "8px 14px",
-            border: "1px solid var(--color-primary-600)",
-            borderRadius: "var(--radius-xs)",
-            background: loading ? "var(--color-neutral-100)" : "var(--color-primary-600)",
-            color: loading ? "var(--color-neutral-700)" : "var(--color-text-on-primary)",
+            // A5/A1: 보조 액션 — 흰 배경 + 코랄 보더 아웃라인(남색 채움 제거).
+            border: `1px solid ${loading ? "var(--color-neutral-300)" : SHELL_COLOR.primary}`,
+            borderRadius: RADIUS.control,
+            background: "var(--color-bg-surface)",
+            color: loading ? "var(--color-neutral-500)" : SHELL_COLOR.primary,
             fontSize: "var(--font-size-sm)",
-            fontWeight: 600,
+            fontWeight: 700,
             cursor: loading || !canSuggest ? "not-allowed" : "pointer",
             opacity: !canSuggest ? 0.5 : 1,
             whiteSpace: "nowrap",
@@ -221,20 +231,18 @@ export function SellingPointsSuggester({
                   aria-label={`${p} ${on ? t.detail.suggest.added : t.detail.suggest.addLabel}`}
                   style={{
                     padding: "5px 11px",
-                    borderRadius: 999,
-                    border: on
-                      ? "1px solid var(--color-primary-600)"
-                      : "1px solid #FFB186",
-                    background: on
-                      ? "var(--color-primary-600)"
-                      : "#FFF8F1",
-                    color: on
-                      ? "var(--color-text-on-primary)"
-                      : "#7A2E12",
+                    borderRadius: RADIUS.chip,
                     fontSize: 12.5,
                     cursor: "pointer",
                     transition: "all 0.1s",
                     textAlign: "left",
+                    ...(on
+                      ? selectedPointChip
+                      : {
+                          border: "1px solid #FFB186",
+                          background: "#FFF8F1",
+                          color: "#7A2E12",
+                        }),
                   }}
                 >
                   {on ? "✓ " : "+ "}
@@ -277,18 +285,18 @@ export function SellingPointsSuggester({
                   aria-label={`${p} ${on ? t.detail.suggest.added : t.detail.suggest.addLabel}`}
                   style={{
                     padding: "6px 12px",
-                    borderRadius: 999,
-                    border: on
-                      ? "1px solid var(--color-primary-600)"
-                      : "1px solid var(--color-neutral-300)",
-                    background: on ? "var(--color-primary-600)" : "var(--color-bg-surface)",
-                    color: on
-                      ? "var(--color-text-on-primary)"
-                      : "var(--color-neutral-900)",
+                    borderRadius: RADIUS.chip,
                     fontSize: "var(--font-size-sm)",
                     cursor: "pointer",
                     transition: "all 0.1s",
                     textAlign: "left",
+                    ...(on
+                      ? selectedPointChip
+                      : {
+                          border: "1px solid var(--color-neutral-300)",
+                          background: "var(--color-bg-surface)",
+                          color: "var(--color-neutral-900)",
+                        }),
                   }}
                 >
                   {on ? "✓ " : "+ "}

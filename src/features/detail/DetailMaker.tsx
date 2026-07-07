@@ -6,6 +6,7 @@ import { KeywordPicker } from "./KeywordPicker"
 import { ResultView, emptyCopy, type LayoutVariant } from "./ResultView"
 import { SeasonHint } from "./SeasonHint"
 import { SellingPointsSuggester } from "./SellingPointsSuggester"
+import { SHELL_COLOR, RADIUS } from "./shell-theme"
 import { SelfReviewPanel } from "./SelfReviewPanel"
 import { getAIProvider, classifyError, type DiagnosticStatus } from "@/lib/ai/provider"
 import { ApiKeyGate } from "@/features/api-key/ApiKeyGate"
@@ -1597,6 +1598,7 @@ export function DetailMaker({
   // ---------- 좌측 폼 ----------
   const formColumn = (
     <div
+      className="fdp-form"
       style={{
         maxWidth: 540,
         width: "100%",
@@ -1700,57 +1702,54 @@ export function DetailMaker({
         </p>
       </Step>
 
-      <Step number={2} title={t.detail.step2Basic}>
+      <Step number={2} title={t.detail.step2Basic} hint={t.detail.step2BasicHint}>
         <SeasonHint productName={productName} category={category} />
 
-        {/* v2.0: 예시 채우기 한 클릭 — 신규 셀러 학습용 */}
+        {/*
+          v2.0 → A2: 예시 채우기 헬퍼. 빨간 점선(경고 오독) → 웜 앰버 소프트 카드(보더 없음),
+          1줄 헬퍼로 강등해 첫 입력이 위로 올라오게 한다. 버튼은 주 액션 코랄.
+        */}
         {canFillDemo && (
           <div
             style={{
-              padding: "10px 12px",
+              padding: "8px 12px",
               marginBottom: 12,
-              background: "linear-gradient(90deg, #FFF5F5 0%, #FFF8E7 100%)",
-              border: "1px dashed #E03131",
-              borderRadius: 6,
+              background: SHELL_COLOR.helperBg,
+              borderRadius: RADIUS.control,
               display: "flex",
               alignItems: "center",
               gap: 10,
               justifyContent: "space-between",
             }}
           >
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div
-                style={{
-                  fontSize: 12.5,
-                  fontWeight: 700,
-                  color: "#212529",
-                  marginBottom: 2,
-                }}
-              >
-                ✨ 처음이신가요? 예시로 자동 채워드릴게요
-              </div>
-              <div style={{ fontSize: 11, color: "#495057", lineHeight: 1.4 }}>
-                산지·품종·중량·가격 등 빈 칸을 그 과일 표준값으로 채웁니다. 눈으로 확인하고 수정하세요.
-              </div>
-            </div>
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                fontSize: 12.5,
+                color: "var(--color-neutral-700)",
+                lineHeight: 1.4,
+              }}
+            >
+              {t.detail.fillDemoHelper}
+            </span>
             <button
               type="button"
               onClick={handleFillDemo}
               style={{
                 flexShrink: 0,
-                padding: "8px 14px",
-                background: "#E03131",
-                color: "#FFFFFF",
+                padding: "7px 14px",
+                background: SHELL_COLOR.primary,
+                color: SHELL_COLOR.onPrimary,
                 border: "none",
-                borderRadius: 6,
+                borderRadius: RADIUS.control,
                 fontSize: 12.5,
                 fontWeight: 700,
                 cursor: "pointer",
-                boxShadow: "0 2px 6px rgba(224,49,49,0.25)",
                 whiteSpace: "nowrap",
               }}
             >
-              ✨ 예시 채우기
+              {t.detail.fillDemoButton}
             </button>
           </div>
         )}
@@ -1765,16 +1764,15 @@ export function DetailMaker({
               style={{
                 flex: 1,
                 padding: "10px 12px",
+                // A1: 선택 상태를 코랄 틴트 배경 + 코랄 보더로 통일(파랑 제거).
                 border:
                   category === c.value
-                    ? "2px solid var(--color-primary-600)"
+                    ? `2px solid ${SHELL_COLOR.primary}`
                     : "1px solid var(--color-neutral-300)",
-                borderRadius: "var(--radius-xs)",
-                background:
-                  category === c.value
-                    ? "var(--color-primary-50)"
-                    : "var(--color-bg-surface)",
+                borderRadius: RADIUS.control,
+                background: category === c.value ? SHELL_COLOR.tint : "var(--color-bg-surface)",
                 color: "var(--color-neutral-900)",
+                fontWeight: category === c.value ? 700 : 400,
                 fontSize: "var(--font-size-sm)",
                 cursor: "pointer",
               }}
@@ -1785,7 +1783,7 @@ export function DetailMaker({
         </div>
 
         <FormGrid>
-          <Field label={t.detail.field.productNameRequired}>
+          <Field label={t.detail.field.productName} required>
             <input
               type="text"
               value={productName}
@@ -1802,12 +1800,20 @@ export function DetailMaker({
                   gap: 6,
                   marginTop: 4,
                   fontSize: 11,
-                  color: seoCheck.ok
-                    ? "var(--color-success, #047857)"
-                    : "var(--color-danger)",
+                  color: "var(--color-neutral-700)",
                 }}
               >
-                <span aria-hidden>{seoCheck.ok ? "✅" : "⚠️"}</span>
+                {/* A2: ✅/⚠️ 원시 이모지 → 상태 색 점(성공 그린 / 경고 앰버). */}
+                <span
+                  aria-hidden
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: "50%",
+                    background: seoCheck.ok ? SHELL_COLOR.success : SHELL_COLOR.warn,
+                    flexShrink: 0,
+                  }}
+                />
                 <span>{seoCheck.length}자 / 49자</span>
                 {seoCheck.warnings.length > 0 && (
                   <span style={{ color: "var(--color-neutral-500)" }}>
@@ -1836,9 +1842,23 @@ export function DetailMaker({
                     fontWeight: 700,
                     color: "var(--color-neutral-900)",
                     userSelect: "none",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
                   }}
                 >
-                  💡 {factHint.name} 사전 매칭 — 산지·품종·Brix 참고
+                  {/* A2: 💡 원시 이모지 → 정보 뉴트럴 점. */}
+                  <span
+                    aria-hidden
+                    style={{
+                      width: 7,
+                      height: 7,
+                      borderRadius: "50%",
+                      background: SHELL_COLOR.neutral,
+                      flexShrink: 0,
+                    }}
+                  />
+                  {factHint.name} 사전 매칭 — 산지·품종·Brix 참고
                 </summary>
                 <div style={{ marginTop: 4 }}>
                   · 추천 산지: {factHint.regions}
@@ -1895,7 +1915,7 @@ export function DetailMaker({
               style={inputStyle}
             />
           </Field>
-          <Field label="등급 표기 (선택)">
+          <Field label="등급 표기">
             <input
               type="text"
               value={sizeGrade}
@@ -2111,9 +2131,7 @@ export function DetailMaker({
               inset: 0,
               borderRadius: 999,
               transition: "background 0.15s",
-              background: researchEnabled
-                ? "var(--color-primary-600)"
-                : "var(--color-neutral-300)",
+              background: researchEnabled ? SHELL_COLOR.primary : "var(--color-neutral-300)",
             }}
           />
           <span
@@ -2193,9 +2211,7 @@ export function DetailMaker({
               inset: 0,
               borderRadius: 999,
               transition: "background 0.15s",
-              background: photoAnalysisEnabled
-                ? "var(--color-primary-600)"
-                : "var(--color-neutral-300)",
+              background: photoAnalysisEnabled ? SHELL_COLOR.primary : "var(--color-neutral-300)",
             }}
           />
           <span
@@ -2275,9 +2291,7 @@ export function DetailMaker({
               inset: 0,
               borderRadius: 999,
               transition: "background 0.15s",
-              background: enhanceImages
-                ? "var(--color-primary-600)"
-                : "var(--color-neutral-300)",
+              background: enhanceImages ? SHELL_COLOR.primary : "var(--color-neutral-300)",
             }}
           />
           <span
@@ -2318,13 +2332,11 @@ export function DetailMaker({
         style={{
           width: "100%",
           padding: "16px 18px",
-          background:
-            hasMin && !isGenerating
-              ? "var(--color-primary-600)"
-              : "var(--color-neutral-300)",
-          color: "var(--color-text-on-primary)",
+          // A1: 주 CTA — 과일 코랄 채움(화면당 유일한 채움 버튼).
+          background: hasMin && !isGenerating ? SHELL_COLOR.primary : "var(--color-neutral-300)",
+          color: SHELL_COLOR.onPrimary,
           border: "none",
-          borderRadius: "var(--radius-xs)",
+          borderRadius: RADIUS.control,
           fontSize: 18,
           fontWeight: 700,
           cursor: hasMin && !isGenerating ? "pointer" : "not-allowed",
@@ -2344,16 +2356,16 @@ export function DetailMaker({
           style={{
             padding: "10px 14px",
             marginBottom: 12,
-            background: "linear-gradient(90deg, #FFF5F5 0%, #FFF8E7 100%)",
-            border: "1px dashed #E03131",
-            borderRadius: 8,
-            color: "#212529",
+            // A2: 빨간 점선(경고 오독) → 웜 앰버 소프트 카드.
+            background: SHELL_COLOR.helperBg,
+            borderRadius: RADIUS.control,
+            color: "var(--color-neutral-700)",
             fontSize: 13,
             textAlign: "center",
             lineHeight: 1.5,
           }}
         >
-          📌 <strong>예시 미리보기</strong> (청송 홍로 사과) — 왼쪽에 상품명을 입력하면 실제 미리보기로 바뀝니다
+          <strong style={{ color: "var(--color-neutral-900)" }}>예시 미리보기</strong> (청송 홍로 사과) — 왼쪽에 상품명을 입력하면 실제 미리보기로 바뀝니다
         </div>
       )}
 
@@ -2362,15 +2374,15 @@ export function DetailMaker({
           style={{
             padding: "10px 14px",
             marginBottom: 12,
-            background: "var(--color-primary-50)",
-            border: "1px dashed var(--color-primary-600)",
-            borderRadius: "var(--radius-xs)",
+            // A1/A2: 파랑 점선 → 코랄 틴트 소프트 카드.
+            background: SHELL_COLOR.tint,
+            borderRadius: RADIUS.control,
             color: "var(--color-neutral-900)",
             fontSize: "var(--font-size-sm)",
             textAlign: "center",
           }}
         >
-          👆 위 폼에서 입력하면 여기에 반영됩니다
+          위 폼에서 입력하면 여기에 반영됩니다
         </div>
       )}
 
@@ -2437,17 +2449,14 @@ export function DetailMaker({
             style={{
               alignSelf: "flex-end",
               padding: "9px 16px",
+              // A1: 보조 액션 — 흰 배경 + 코랄 보더 아웃라인(파랑 제거).
               background: "var(--color-bg-surface)",
               color:
-                isGenerating || reviewing
-                  ? "var(--color-neutral-400)"
-                  : "var(--color-primary-600)",
+                isGenerating || reviewing ? "var(--color-neutral-400)" : SHELL_COLOR.primary,
               border: `1px solid ${
-                isGenerating || reviewing
-                  ? "var(--color-neutral-300)"
-                  : "var(--color-primary-600)"
+                isGenerating || reviewing ? "var(--color-neutral-300)" : SHELL_COLOR.primary
               }`,
-              borderRadius: "var(--radius-xs)",
+              borderRadius: RADIUS.control,
               fontSize: 13,
               fontWeight: 700,
               cursor: isGenerating || reviewing ? "not-allowed" : "pointer",
@@ -2581,8 +2590,8 @@ function GeneratingOverlay({ step, totalSteps }: { step: number; totalSteps: num
           width: 52,
           height: 52,
           borderRadius: "50%",
-          border: "4px solid var(--color-primary-100)",
-          borderTopColor: "var(--color-primary-600)",
+          border: `4px solid ${SHELL_COLOR.tint}`,
+          borderTopColor: SHELL_COLOR.primary,
           animation: "spin 1s linear infinite",
         }}
       />
@@ -2869,14 +2878,15 @@ function DraftResumeBanner({
       style={{
         padding: 14,
         marginBottom: 16,
-        background: "var(--color-primary-50)",
-        border: "1px solid var(--color-primary-600)",
-        borderRadius: "var(--radius-xs)",
+        // A1: 파랑 배너 → 코랄 틴트 카드(주 액션 코랄과 일관).
+        background: SHELL_COLOR.tint,
+        border: `1px solid ${SHELL_COLOR.tintBorder}`,
+        borderRadius: RADIUS.control,
         color: "var(--color-neutral-900)",
       }}
     >
       <div style={{ fontWeight: 700, fontSize: "var(--font-size-md)", marginBottom: 4 }}>
-        📝 {c.bannerTitle}
+        {c.bannerTitle}
       </div>
       <div style={{ fontSize: "var(--font-size-sm)", color: "var(--color-neutral-700)", lineHeight: 1.5 }}>
         {c.bannerBody}
@@ -2885,15 +2895,28 @@ function DraftResumeBanner({
         )}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-        <BannerActionButton primary onClick={onRestore}>
+        <button
+          type="button"
+          onClick={onRestore}
+          style={{
+            padding: "8px 14px",
+            borderRadius: RADIUS.control,
+            border: "none",
+            background: SHELL_COLOR.primary,
+            color: SHELL_COLOR.onPrimary,
+            fontSize: "var(--font-size-sm)",
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
           {c.restore}
-        </BannerActionButton>
+        </button>
         <button
           type="button"
           onClick={onDiscard}
           style={{
             padding: "8px 14px",
-            borderRadius: "var(--radius-xs)",
+            borderRadius: RADIUS.control,
             border: "1px solid var(--color-neutral-300)",
             background: "var(--color-bg-surface)",
             color: "var(--color-neutral-700)",
@@ -2944,10 +2967,11 @@ function CarryOverBanner({
           onClick={onApply}
           style={{
             padding: "8px 14px",
-            borderRadius: "var(--radius-xs)",
+            borderRadius: RADIUS.control,
             border: "none",
-            background: "var(--color-primary-600)",
-            color: "var(--color-text-on-primary)",
+            // A1: 파랑 채움 → 코랄 채움.
+            background: SHELL_COLOR.primary,
+            color: SHELL_COLOR.onPrimary,
             fontSize: "var(--font-size-sm)",
             fontWeight: 700,
             cursor: "pointer",
@@ -2960,7 +2984,7 @@ function CarryOverBanner({
           onClick={onDismiss}
           style={{
             padding: "8px 14px",
-            borderRadius: "var(--radius-xs)",
+            borderRadius: RADIUS.control,
             border: "1px solid var(--color-neutral-300)",
             background: "var(--color-bg-surface)",
             color: "var(--color-neutral-700)",
@@ -3153,7 +3177,7 @@ function TrustPromiseChecks({
               type="checkbox"
               checked={row.on}
               onChange={(e) => row.onChange(e.target.checked)}
-              style={{ accentColor: "#E03131", width: 18, height: 18, flexShrink: 0 }}
+              style={{ accentColor: SHELL_COLOR.primary, width: 18, height: 18, flexShrink: 0 }}
             />
             {row.label}
             {row.wasOn && !row.on && (
@@ -3518,11 +3542,12 @@ function LayoutVariantSwitcher({
                 alignItems: "center",
                 gap: 10,
                 padding: "8px 12px",
+                // A1: 선택 상태 코랄 틴트로 통일(파랑 제거).
                 border: active
-                  ? "2px solid var(--color-primary-600)"
+                  ? `2px solid ${SHELL_COLOR.primary}`
                   : "1px solid var(--color-neutral-300)",
-                borderRadius: "var(--radius-xs)",
-                background: active ? "var(--color-primary-50)" : "var(--color-bg-surface)",
+                borderRadius: RADIUS.control,
+                background: active ? SHELL_COLOR.tint : "var(--color-bg-surface)",
                 cursor: "pointer",
               }}
             >
@@ -3532,7 +3557,7 @@ function LayoutVariantSwitcher({
                 value={opt.value}
                 checked={active}
                 onChange={() => onChange(opt.value)}
-                style={{ accentColor: "#E03131", flexShrink: 0 }}
+                style={{ accentColor: SHELL_COLOR.primary, flexShrink: 0 }}
               />
               <span style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
                 <span
@@ -3554,7 +3579,19 @@ function LayoutVariantSwitcher({
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+/**
+ * A4: 라벨 + 필수/선택 뱃지. required 면 빨간 별표, 그 외엔 연회색 "선택" 미니 칩.
+ * 라벨 문자열에는 "(필수)/(선택)"을 넣지 않고 여기 prop 으로 표시를 일원화한다.
+ */
+function Field({
+  label,
+  required,
+  children,
+}: {
+  label: string
+  required?: boolean
+  children: React.ReactNode
+}) {
   return (
     <label
       style={{
@@ -3565,23 +3602,47 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     >
       <span
         style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
           fontSize: "var(--font-size-sm)",
           fontWeight: 600,
           color: "var(--color-neutral-900)",
         }}
       >
         {label}
+        {required ? (
+          <span aria-label="필수" style={{ color: "var(--color-danger)", fontWeight: 700 }}>
+            *
+          </span>
+        ) : (
+          <span
+            style={{
+              padding: "1px 7px",
+              borderRadius: RADIUS.chip,
+              background: "var(--color-bg-subtle)",
+              border: "1px solid var(--color-neutral-200)",
+              color: "var(--color-neutral-500)",
+              fontSize: 10,
+              fontWeight: 700,
+            }}
+          >
+            {t.detail.optionalBadge}
+          </span>
+        )}
       </span>
       {children}
     </label>
   )
 }
 
+// A3: 보더 neutral-300(안 보이던 100 → 300)·컨트롤 라운드(8) 통일. 포커스 링은
+//     globals.css `.fdp-form ...:focus`(코랄 보더 + 연한 링)로 처리(인라인은 :focus 불가).
 const inputStyle: React.CSSProperties = {
   width: "100%",
   padding: "10px 12px",
-  border: "1px solid var(--color-neutral-100)",
-  borderRadius: "var(--radius-xs)",
+  border: "1px solid var(--color-neutral-300)",
+  borderRadius: RADIUS.control,
   fontSize: "var(--font-size-md)",
   background: "var(--color-bg-surface)",
   color: "var(--color-neutral-900)",
