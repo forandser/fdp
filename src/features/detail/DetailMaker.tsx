@@ -1290,8 +1290,10 @@ export function DetailMaker({
 
     try {
       // generateCopy는 실패 시 throw(→ 아래 catch로 에러 화면). analysisPromise는 절대 reject 안 함.
+      // v6.0(작업R⑤): 같은 analysisPromise를 generateCopy에도 넘겨 draft에 "사진에 보이는 것" 요약을 주입.
+      // 두 번 await 해도 안전(동일 Promise). 분석은 여전히 병렬로 진행되고, draft 직전에만 수확된다.
       const [res, analysisRes] = await Promise.all([
-        getAIProvider().generateCopy(input),
+        getAIProvider().generateCopy(input, analysisPromise),
         analysisPromise,
       ])
       const analysisItems = analysisRes?.items ?? null

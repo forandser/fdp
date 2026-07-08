@@ -6,6 +6,7 @@
  */
 
 import type {
+  CompositionHints,
   CopyOutput,
   CopySpec,
   CopyFAQ,
@@ -324,6 +325,69 @@ export function pickProblemArc(v: unknown): CopyProblemArc | undefined {
   return { question, problems }
 }
 
+/** v6.0(작업C): 동적 구성 힌트 상한·화이트리스트. */
+const COMPOSITION_LIMITS = {
+  sellingAngle: 60,
+  heroImageId: 120,
+  heroReason: 80,
+  emphasisItems: 4,
+  emphasisItemLen: 24,
+  /** calloutTargetIndex 상한(POINT 최대 3개지만 여유롭게 — 실제 범위는 ResultView가 재검증). */
+  maxCalloutIndex: 9,
+} as const
+
+/** photobreakStyle 화이트리스트 — 이 외의 값은 드롭(현행 auto와 동일 = 억제 없음). */
+const PHOTOBREAK_STYLES = new Set(["collage", "cutseq", "fullbleed", "auto"])
+
+/**
+ * v6.0(작업C): 동적 구성 힌트 검증 — 값 화이트리스트·범위 검증(허위·범위 밖 차단).
+ * - 각 필드는 형태/범위가 맞을 때만 채택, 아니면 그 필드만 드롭(부분 채택).
+ * - heroImageId 실재성(images 대조)은 이 시점에 images가 없어 확인 불가 → 문자열만 통과시키고,
+ *   실재하지 않는 id면 ResultView 소비 지점이 현행 폴백(검증 책임 분산 — 결정적·회귀 0).
+ * - calloutTargetIndex 는 0~maxCalloutIndex 정수만, 실제 POINT 범위는 ResultView가 재검증.
+ * - 유효 필드가 하나도 없으면 undefined 반환 → 키 생략(구버전 저장본과 동일 형태 = 회귀 0).
+ */
+export function pickCompositionHints(v: unknown): CompositionHints | undefined {
+  if (!isObject(v)) return undefined
+  if (Object.keys(v).some((k) => FORBIDDEN_KEYS.has(k))) return undefined
+
+  const out: CompositionHints = {}
+
+  const sellingAngle = trimTo(safeString(v.sellingAngle), COMPOSITION_LIMITS.sellingAngle)
+  if (sellingAngle) out.sellingAngle = sellingAngle
+
+  const heroImageId = safeString(v.heroImageId).slice(0, COMPOSITION_LIMITS.heroImageId)
+  if (heroImageId) out.heroImageId = heroImageId
+
+  const heroReason = trimTo(safeString(v.heroReason), COMPOSITION_LIMITS.heroReason)
+  if (heroReason) out.heroReason = heroReason
+
+  // 정수·범위 검증 — 비수치/음수/범위 밖이면 드롭(현행 자동 선택으로 폴백).
+  const rawIdx = typeof v.calloutTargetIndex === "number" ? v.calloutTargetIndex : Number(v.calloutTargetIndex)
+  if (
+    Number.isInteger(rawIdx) &&
+    rawIdx >= 0 &&
+    rawIdx <= COMPOSITION_LIMITS.maxCalloutIndex
+  ) {
+    out.calloutTargetIndex = rawIdx
+  }
+
+  const style = safeString(v.photobreakStyle).toLowerCase()
+  // "auto"는 억제 없음(현행)과 동일하므로 저장은 하되 소비 측에서 무시됨.
+  if (PHOTOBREAK_STYLES.has(style)) {
+    out.photobreakStyle = style as CompositionHints["photobreakStyle"]
+  }
+
+  const emphasisOrder = pickResearchList(
+    v.emphasisOrder,
+    COMPOSITION_LIMITS.emphasisItems,
+    COMPOSITION_LIMITS.emphasisItemLen,
+  )
+  if (emphasisOrder.length > 0) out.emphasisOrder = emphasisOrder
+
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
 /** v3.5: 리서치 결과 각 배열 항목 최대 개수 / 길이 상한. */
 const RESEARCH_LIMITS = {
   listItems: 6,
@@ -340,6 +404,8 @@ const RESEARCH_LIMITS = {
   // v4.3: 시장 후킹 문구 — 개수 6개, 각 60자로 관대하게 절삭(하위호환).
   hookPhrases: 6,
   hookPhraseLen: 60,
+  // v6.0(작업R①): 확실도 게이트 — certain/tentative 각 5개, 각 80자.
+  certaintyItems: 5,
 } as const
 
 /** 안전한 출처 URL만 통과 (http/https + 파싱 가능). 그 외(javascript: 등)는 버린다. */
@@ -385,6 +451,18 @@ function pickResearchList(
 }
 
 /**
+ * v6.0(작업R①): 확실도 게이트 파서. certain/tentative 두 배열만 통과.
+ * 둘 다 비면 undefined 반환 → 게이트 미적용(현행 동작 = 회귀 0).
+ */
+function pickCertainty(v: unknown): { certain: string[]; tentative: string[] } | undefined {
+  if (!isObject(v)) return undefined
+  const certain = pickResearchList(v.certain, RESEARCH_LIMITS.certaintyItems)
+  const tentative = pickResearchList(v.tentative, RESEARCH_LIMITS.certaintyItems)
+  if (certain.length === 0 && tentative.length === 0) return undefined
+  return { certain, tentative }
+}
+
+/**
  * v3.5: 리서치 결과 화이트리스트 검증.
  * 유의미한 내용(리스트 항목 또는 season/storage 문자열)이 하나도 없으면 null 반환
  * → 요약 패널 미노출 + draft 주입 생략(빈 리서치 블록 방지).
@@ -402,6 +480,8 @@ export function validateResearchResult(raw: unknown): ResearchResult | null {
     RESEARCH_LIMITS.hookPhrases,
     RESEARCH_LIMITS.hookPhraseLen,
   )
+  // v6.0(작업R①): 확실도 게이트 — 비면 키 생략(하위호환).
+  const certainty = pickCertainty(raw.certainty)
 
   const result: ResearchResult = {
     varietyNotes: pickResearchList(raw.varietyNotes),
@@ -414,6 +494,7 @@ export function validateResearchResult(raw: unknown): ResearchResult | null {
     ...(commonComplaints.length > 0 ? { commonComplaints } : {}),
     ...(namingNotes ? { namingNotes } : {}),
     ...(hookPhrases.length > 0 ? { hookPhrases } : {}),
+    ...(certainty ? { certainty } : {}),
     sources: pickResearchSources(raw.sources),
   }
 
@@ -652,6 +733,8 @@ export function validateCopyOutput(raw: unknown): CopyOutput {
 
   const headlineCandidates = pickHeadlineCandidates(raw.headlineCandidates)
   const problemArc = pickProblemArc(raw.problemArc)
+  // v6.0(작업C): 동적 구성 힌트 — 비면 키 생략(구버전 저장본과 동일 형태 = 회귀 0).
+  const compositionHints = pickCompositionHints(raw.compositionHints)
   // v4.3: 히어로 후킹 캡션 — 40자로 관대하게 절삭. 비면 키 생략(구버전 저장본과 동일 형태,
   // A 렌더가 기본 캡션으로 폴백). 필드명 정확히 "heroKicker" — A 에이전트 소비 계약.
   const heroKicker = trimTo(safeString(raw.heroKicker), LIMITS.heroKicker)
@@ -664,6 +747,8 @@ export function validateCopyOutput(raw: unknown): CopyOutput {
     ...(heroKicker ? { heroKicker } : {}),
     // 옵셔널 — 서사 아크 없으면(구버전/생성 실패) 키 생략 → 블록 미노출.
     ...(problemArc ? { problemArc } : {}),
+    // 옵셔널 — 구성 힌트 없으면(구버전/근거 없음) 키 생략 → 렌더 현행 폴백(회귀 0).
+    ...(compositionHints ? { compositionHints } : {}),
     subheadline: trimTo(safeString(raw.subheadline), LIMITS.subheadline),
     story: safeString(raw.story),
     spec: pickSpec(raw.spec),

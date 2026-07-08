@@ -21,7 +21,7 @@
  */
 
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages"
-import type { CopyInput, ResearchResult } from "../types"
+import type { CopyInput, PhotoAnalysisItem, ResearchResult } from "../types"
 import { sanitizeString, sanitizeStringArray } from "../sanitize"
 import {
   detectFruitFactKey,
@@ -91,8 +91,17 @@ export const FRUIT_COPY_SYSTEM_PROMPT = `당신은 한국 산지직송 신선식
     "사무실·가정에서 손쉽게 즐기고 싶은 분",
     "단골 산지를 정해 두고 받고 싶은 분"
   ],
-  "farmStory": "40~80자 한 줄 — 입력 farmIntro 톤을 살려 정제. 없으면 일반화 신뢰 멘트."
+  "farmStory": "40~80자 한 줄 — 입력 farmIntro 톤을 살려 정제. 없으면 일반화 신뢰 멘트.",
+  "compositionHints": {
+    "sellingAngle": "(선택) 이 상품에 가장 맞는 포지셔닝 각도 1개(리서치 시장 소구점 근거). 근거 없으면 이 필드 생략.",
+    "heroImageId": "(선택) 히어로로 가장 좋은 사진의 id — 위 '업로드 사진 분석'에 나온 id 중 하나만. 사진 분석이 없거나 판단 근거가 없으면 생략.",
+    "heroReason": "(선택) 그 사진을 고른 근거 한 줄(보이는 것 기반).",
+    "calloutTargetIndex": "(선택) 콜아웃 칩을 얹기 가장 좋은 keyPoints 인덱스(0/1/2 중 하나, 숫자). 근거 없으면 생략.",
+    "photobreakStyle": "(선택) collage | cutseq | fullbleed | auto 중 하나. 확신이 없으면 auto 또는 생략.",
+    "emphasisOrder": ["(선택) 이 상품에서 강조할 우선순위 축 2~4개(예: 당도, 산지, 선별)"]
+  }
 }
+compositionHints는 통째로 선택입니다 — 근거가 없으면 객체 전체를 생략하세요(규칙 72).
 
 엄격한 규칙
 1. 마크다운 코드펜스(\`\`\`)나 설명/인사 텍스트 금지. JSON 한 개만.
@@ -464,6 +473,24 @@ export const FRUIT_COPY_SYSTEM_PROMPT = `당신은 한국 산지직송 신선식
       제3자 체험담 어투를 캡션·콜라주에 넣지 마세요(체험담 기만 — 규칙 5·49, forbidden-words Tier 5).
     - 사진 속 사실만 담백하게. 사진에 없는 정황(새벽 시각·전수 검사 등)을 캡션으로 지어내지 마세요(최우선 원칙 ④).
 
+[v19 신규 — 동적 구성 힌트(compositionHints): 이 상품·이 사진·이 리서치에 맞는 배치 판단]
+
+72. compositionHints — "이 상품·이 사진·이 리서치"에 실제 근거가 있을 때만, 어떻게 배치하면 가장 잘 팔릴지 배치 판단을 냅니다.
+    이것은 카피 텍스트가 아니라 렌더링(사진·콜아웃·포토브레이크)에 주는 "판단 신호"입니다. 없는 사실을 만들지 않습니다.
+    ⚠️ 대원칙: 다양성 자체가 목표가 아닙니다. "매번 달라 보이려고" 힌트를 내지 마세요.
+      근거가 없으면 그 필드를(또는 compositionHints 객체 전체를) 생략하세요 — 생략하면 앱이 기본(auto) 배치로 안전하게 렌더합니다.
+      억지로 힌트를 내는 것보다 생략이 항상 낫습니다(최우선 원칙과 동일 정신).
+    - sellingAngle: 위 "시장 소구점 각도"(리서치)나 입력 근거로, 이 상품에서 가장 강한 포지셔닝 각도 1개. 근거 없으면 생략.
+    - heroImageId: 위 "업로드 사진 분석"에 사진별 id가 주어졌을 때만, 대표컷으로 가장 좋은 사진의 id 하나를 그대로 적으세요.
+      선명하고 원물이 꽉 차며 밝은 컷이 좋습니다. 사진 분석이 없거나(=id 목록이 없음) 딱히 더 나은 컷이 없으면 생략(앱이 자동 선택).
+      분석에 없는 id를 지어내지 마세요 — 목록에 있는 id만.
+    - heroReason: heroImageId를 고른 근거 한 줄(보이는 것 기반 관찰). heroImageId를 낼 때만.
+    - calloutTargetIndex: keyPoints(0/1/2) 중 짧은 강조 칩(highlightBadges)을 얹어 가장 돋보일 POINT의 인덱스. 확신 없으면 생략.
+    - photobreakStyle: 사진 연출 취향 — collage(여러 컷 콜라주)·cutseq(절단면 시퀀스)·fullbleed(큰 한 장)·auto.
+      단면·과육 컷이 여럿이면 cutseq, 다양한 컷이 많으면 collage, 강렬한 대표컷 하나면 fullbleed가 어울립니다.
+      확신 없으면 auto(또는 생략) — 앱이 사진 수에 맞춰 자동 결정합니다. 이 값은 "사진 수가 충분한" 연출만 고를 수 있고, 없는 사진을 만들지 않습니다.
+    - emphasisOrder: 이 상품에서 강조할 축의 우선순위 2~4개(예: ["당도","산지","선별"]). 근거 없으면 생략.
+
 [가정 입력카드 1] category:"fruit" · productType:"청송 홍로 사과" · origin:"경북 청송" · weight:"5kg" · brix:13 · trust:{sameDayHarvest:true, coldChain:true, refundGuarantee:true} · farmIntro:"청송에서 사과 농사 짓습니다"
 ※ 카드에 없는 값(농부 연차·이름·새벽 시각·박스 수·포장 사양·해발·보관 기간 숫자)은 이 예시에도 없습니다(최우선원칙⑥ 규칙>예시).
 참고 출력 예시 1 (표준형 · sincere · 최신 규칙 단위테스트):
@@ -649,7 +676,7 @@ function buildFactContext(input: CopyInput): string {
  * fruit-facts와 동일한 안전 프레이밍 — 이 블록의 산지·수치를 이 상품 고유 사실로
  * 승격하는 것을 명시적으로 금지한다.
  */
-function buildResearchContext(research: ResearchResult): string {
+function buildResearchContext(research: ResearchResult, isUnregistered: boolean): string {
   const lines: string[] = [
     "[ 품종 일반 참고 정보 (실시간 리서치 — 이 상품의 고유 사실 아님) ]",
     "아래는 web 검색으로 모은 이 품종의 '일반적인' 참고 정보입니다. 이 상품(이 셀러)의 고유 사실이 아닙니다.",
@@ -658,7 +685,37 @@ function buildResearchContext(research: ResearchResult): string {
     "- 아래 정보에 나온 지역명·수치를 이 상품의 산지/당도로 쓰지 마세요.",
     "- 특정 판매자 문구를 베끼지 말고, 품종 일반 지식으로만 활용하세요(표절 금지).",
     "- 활용 범위: 품종 일반 특성 이해, storage 보관법 분기, faq·problemArc의 소비자 공감 포인트 참고.",
+    "- 시즌·수확기 일반론의 '출하 위치' 승격 금지(v6.0 블라인드 심사 실측): 제철·수확기 정보(예: '2~3주만 나오는 조생종')는 품종 일반론으로만 쓰세요. 셀러가 수확일을 입력하지 않았다면 이 상품을 '첫물/끝물/이번 주 수확분'처럼 출하 시점 위에 올려놓는 표현은 창작입니다. 허용 범위: '짧은 여름에만 나오는 품종', '이맘때만 만나는 ○○'(현재가 리서치 확인 제철일 때) 같은 품종·계절 서술까지 — 이 계열 훅은 강력하니 제철이 확실하면 적극 활용하세요(승격만 금지).",
   ]
+  // v6.0(작업R①): 확실도 게이트 — certain은 단정 서술 허용, tentative는 완곡 또는 생략.
+  if (
+    research.certainty &&
+    (research.certainty.certain.length > 0 || research.certainty.tentative.length > 0)
+  ) {
+    const c = research.certainty
+    lines.push("[확실도 게이트 — 무엇을 단정하고 무엇을 완곡하게 쓸지 (작업R①)]")
+    if (c.certain.length > 0) {
+      lines.push(
+        `- [확실] 복수 출처 일치 품종 일반 사실: ${c.certain.join(" / ")}`,
+        `  → 이 사실들은 "이 품종은 보통 ~하다" 톤의 품종 일반론으로 단정 서술해도 됩니다(감각어는 fact 풀에서만 — 규칙 42). 단 이 상품(이 셀러)의 고유 사실로 승격하지는 마세요(규칙 6·55·56).`,
+      )
+    }
+    if (c.tentative.length > 0) {
+      lines.push(
+        `- [추정] 단일·불명·엇갈림 사실: ${c.tentative.join(" / ")}`,
+        `  → 이 사실들은 단정하지 마세요. 완곡하게("~로 알려져 있어요 / ~인 편이라고 해요") 쓰거나, 확신이 없으면 생략하세요. 창작으로 메우지 말고 생략을 택하세요(규칙 6·58).`,
+      )
+    }
+    // v6.0(작업R④): 미등재 품목이라도 [확실]+복수 출처로 확인된 감각·특성은 침묵(전면 생략)하지 않고 서술 가능(정직한 풍부함).
+    // 스코핑을 코드로 강제: (a) 미등재 품목(fruit-facts 미매칭)에만 주입 — 등록 품목에는 규칙 42(fact 풀) 그대로라
+    //   이 완화 문구가 붙지 않는다(등록 품목 오독 표면 제거). (b) certain 정의(복수 출처 일치)에 맞춰 sources 2개 이상만 —
+    //   단일·약한 근거 하나로 감자 사가류 감각어(포슬/분질)가 재개되는 self-report 뚫림을 좁힌다.
+    if (isUnregistered && c.certain.length > 0 && research.sources.length >= 2) {
+      lines.push(
+        `- 미등재 완화(작업R④, 오직 미등재 품목에 한해): 위 fact 컨텍스트가 '감각·조리 서술 전면 생략'을 지시한 미등재 품목이라도, 방금 [확실] 태그와 복수 출처로 확인된 품종 일반 감각·특성에 한해 "이 품종은 보통 ~" 톤으로 서술해도 됩니다(침묵보다 나은 정직한 서술). 여전히 ①이 상품 고유 사실 승격 금지(규칙 6) ②출처 없거나 [추정]인 감각은 서술 금지 ③입력에 없는 수치·산지·인증 창작 금지 를 지키세요.`,
+      )
+    }
+  }
   if (research.namingNotes) {
     // 품종 명칭 메모 — 품종 오표기·오용 방지(규칙 55와 연동). 산지·수치 승격 아님.
     lines.push(
@@ -676,25 +733,25 @@ function buildResearchContext(research: ResearchResult): string {
   if (research.faqSeeds.length > 0) {
     lines.push(`- 자주 묻는 질문(씨앗): ${research.faqSeeds.join(" / ")}`)
   }
-  // v4.2: 구매자 실제 불만 — problemArc(규칙 57·63) 문제 제기의 우선 재료.
+  // v4.2·v6.0(작업R⑥): 구매자 실제 불만 — problemArc(규칙 57·63) 문제 제기의 우선 재료. 수집만 하고 버리지 말 것.
   if (research.commonComplaints && research.commonComplaints.length > 0) {
     lines.push(
-      `- 구매자 실제 불만(problemArc 우선 재료): ${research.commonComplaints.join(" / ")}`,
-      `  → problemArc.question·problems(규칙 57·63)를 쓸 때 이 불만을 우선 참고해 실제 구매 실패 공감을 만드세요. 단, 이 상품 고유 결함으로 단정하지 말고 품종 일반의 "흔한 아쉬움"으로 다루고(승격 금지), 완결형 문장(규칙 58)으로 다듬으세요.`,
+      `- 구매자 실제 불만(problemArc 우선 재료 — 있으면 반드시 활용): ${research.commonComplaints.join(" / ")}`,
+      `  → problemArc.question·problems(규칙 57·63)를 쓸 때 이 불만을 1순위 재료로 반드시 활용해 실제 구매 실패 공감을 만드세요(수집만 하고 안 쓰지 마세요). 단, 이 상품 고유 결함으로 단정하지 말고 품종 일반의 "흔한 아쉬움"으로 다루고(승격 금지), 완결형 문장(규칙 58)으로 다듬으세요.`,
     )
   }
-  // v4.2: 시장 소구점 각도 — keyPoints 각도(규칙 12·47)의 우선 재료.
+  // v4.2·v6.0(작업R⑥): 시장 소구점 각도 — keyPoints 각도(규칙 12·47)의 우선 재료.
   if (research.sellingAngles && research.sellingAngles.length > 0) {
     lines.push(
-      `- 시장 소구점 각도(keyPoints 우선 재료): ${research.sellingAngles.join(" / ")}`,
-      `  → keyPoints·highlightBox의 "각도"를 잡을 때 이 소구점을 우선 참고하세요. 단 슬로건을 그대로 베끼지 말고(표절 금지) 각도만 빌리며, 여기 담긴 수치·산지는 이 상품 고유 사실이 아니므로 카피 사실값은 입력값만 씁니다(규칙 6·55·56).`,
+      `- 시장 소구점 각도(keyPoints 우선 재료 — 있으면 반드시 활용): ${research.sellingAngles.join(" / ")}`,
+      `  → keyPoints·highlightBox의 "각도"를 잡을 때 이 소구점 중 최소 1개를 반드시 반영하세요(수집만 하고 안 쓰지 마세요). 단 슬로건을 그대로 베끼지 말고(표절 금지) 각도만 빌리며, 여기 담긴 수치·산지는 이 상품 고유 사실이 아니므로 카피 사실값은 입력값만 씁니다(규칙 6·55·56).`,
     )
   }
-  // v4.3: 시장 후킹 문구 — headline/heroKicker/highlightBox/headlineCandidates의 리듬 재료(규칙 54·65·66).
+  // v4.3·v6.0(작업R⑥): 시장 후킹 문구 — headline/heroKicker/highlightBox/headlineCandidates의 리듬 재료(규칙 54·65·66).
   if (research.hookPhrases && research.hookPhrases.length > 0) {
     lines.push(
-      `- 시장 후킹 문구(headline·heroKicker·highlightBox·headlineCandidates 리듬 재료): ${research.hookPhrases.join(" / ")}`,
-      `  → headline·heroKicker(규칙 65)·highlightBox와 headlineCandidates 5유형(규칙 54)을 만들 때 이 문구의 "표현 리듬·구조·관용구"만 1순위로 차용하세요(규칙 66). 문장을 그대로 복사하지 말고(표절 금지, 관용구는 허용), 이 문구 안의 산지·수치는 이 상품 고유 사실이 아니므로 승격 금지 — 사실값은 입력값만 씁니다(규칙 6·55·56).`,
+      `- 시장 후킹 문구(headline·heroKicker·highlightBox·headlineCandidates 리듬 재료 — 있으면 반드시 활용): ${research.hookPhrases.join(" / ")}`,
+      `  → headline·heroKicker(규칙 65)·highlightBox와 headlineCandidates 5유형(규칙 54)을 만들 때 이 문구의 "표현 리듬·구조·관용구"를 1순위로 차용하세요(규칙 66, 수집만 하고 안 쓰지 마세요). 문장을 그대로 복사하지 말고(표절 금지, 관용구는 허용), 이 문구 안의 산지·수치는 이 상품 고유 사실이 아니므로 승격 금지 — 사실값은 입력값만 씁니다(규칙 6·55·56).`,
     )
   }
   return lines.join("\n")
@@ -736,9 +793,78 @@ function buildPriceHint(input: CopyInput): string {
   return lines.join("\n")
 }
 
+/**
+ * v6.0(작업R⑤): 업로드 사진 분석 요약을 draft 컨텍스트로 변환.
+ * "사진에 실제로 보이는 것"만 카피 강조 각도로 연결 — 없는 컷을 있는 것처럼 쓰지 않게 한다.
+ * 관찰 메모지, 사실값이 아니다(산지·당도·품종 승격 금지). 유효 항목이 없으면 빈 문자열(주입 없음 = 회귀 0).
+ */
+function buildPhotoContext(items: PhotoAnalysisItem[]): string {
+  if (items.length === 0) return ""
+  const roles = new Set(items.map((it) => it.role))
+  const lines: string[] = [
+    "[ 업로드 사진 분석 (관찰 메모 — 사실값 아님, 작업R⑤) ]",
+    "아래는 셀러가 올린 사진에서 '실제로 보이는 것'의 관찰 요약입니다. 카피의 강조 각도를 사진에 있는 것에 맞추세요.",
+    "- 사진에 없는 컷·요소(단면·농장·포장 등)를 있는 것처럼 카피에 쓰지 마세요.",
+    "- 이 관찰은 산지·당도·품종·수확일 같은 사실값으로 승격 금지(규칙 6). 감각어는 fact 풀에서만(규칙 42).",
+  ]
+  const present: string[] = []
+  if (roles.has("cut")) present.push("단면·과육 클로즈업")
+  if (roles.has("whole")) present.push("원물 통째")
+  if (roles.has("farm")) present.push("농장·수확 현장")
+  if (roles.has("box")) present.push("포장·구성")
+  if (roles.has("size")) present.push("크기 비교")
+  if (roles.has("table")) present.push("상차림·연출")
+  if (roles.has("hero")) present.push("선명한 대표컷")
+  if (present.length > 0) lines.push(`- 보유 컷: ${present.join(", ")}.`)
+
+  if (roles.has("cut")) {
+    lines.push("  → 단면·과육 컷이 있으니 story·keyPoints에서 속살·과즙 감각을 살릴 수 있습니다(감각어는 fact 풀에서만).")
+  }
+  if (roles.has("farm")) {
+    lines.push("  → 농장·수확 현장 컷이 있으니 산지직송·농가 진정성 각도를 쓸 수 있습니다.")
+  }
+  if (roles.has("box")) {
+    lines.push("  → 포장·구성 컷이 있으니 배송·선물 포장·구성 신뢰 각도를 쓸 수 있습니다.")
+  }
+  if (roles.has("size")) {
+    lines.push("  → 크기 비교 컷이 있으니 크기·중량 각도를 살릴 수 있습니다(수치는 입력값만).")
+  }
+
+  const missing: string[] = []
+  if (!roles.has("cut")) missing.push("단면·과육")
+  if (!roles.has("farm")) missing.push("농장·수확 현장")
+  if (!roles.has("box")) missing.push("포장·구성")
+  if (missing.length > 0) {
+    lines.push(`- 없는 컷: ${missing.join(", ")} 컷이 없으니 그 요소를 카피에서 강조하지 마세요(사진 근거 없음).`)
+  }
+
+  const notes = items
+    .filter((it) => !it.blurry && it.visibleNote.trim())
+    .map((it) => it.visibleNote.trim())
+    .slice(0, 5)
+  if (notes.length > 0) lines.push(`- 관찰 메모(보이는 것만): ${notes.join(" / ")}`)
+
+  // v6.0(작업C): 사진 id 목록 — compositionHints.heroImageId(규칙 72) 추천용.
+  // 각 사진의 id·역할·대표컷 점수·품질을 보여줘 모델이 "목록에 있는 id"로만 히어로를 고르게 한다.
+  const idLines = items
+    .slice(0, 12)
+    .map((it) => {
+      const flags = [it.blurry ? "흐림" : "", it.dark ? "어두움" : ""].filter(Boolean).join("·")
+      return `  · ${it.imageId}: ${it.role}, 대표컷점수 ${it.heroScore}/10${flags ? ` (${flags})` : ""}`
+    })
+  if (idLines.length > 0) {
+    lines.push(
+      "- 사진 id 목록(compositionHints.heroImageId 추천용 — 규칙 72, 아래 id만 사용):",
+      ...idLines,
+    )
+  }
+  return lines.join("\n")
+}
+
 export function buildFruitCopyMessages(
   input: CopyInput,
   research?: ResearchResult,
+  photoItems?: PhotoAnalysisItem[],
 ): MessageParam[] {
   // 셀러 자유 입력은 sanitize → 프롬프트 인젝션 차단
   const sanitized: CopyInput = {
@@ -755,13 +881,18 @@ export function buildFruitCopyMessages(
   const factContext = buildFactContext(sanitized)
   const priceHint = buildPriceHint(sanitized)
   const safePool = safeExpressionsForPrompt()
-  const researchContext = research ? `\n\n${buildResearchContext(research)}` : ""
+  const researchContext = research
+    ? `\n\n${buildResearchContext(research, detectFruitFactKey(sanitized.productType) == null)}`
+    : ""
+  // v6.0(작업R⑤): 사진 분석 요약 주입 — 없거나 유효 항목 0이면 빈 문자열(주입 없음 = 회귀 0).
+  const photoBlock = photoItems && photoItems.length > 0 ? buildPhotoContext(photoItems) : ""
+  const photoContext = photoBlock ? `\n\n${photoBlock}` : ""
 
   const userContent = `입력 데이터 (JSON):
 ${JSON.stringify(sanitized, null, 2)}
 
 [ fact 컨텍스트 — 환각 방지 ]
-${factContext}${priceHint ? `\n${priceHint}` : ""}${researchContext}
+${factContext}${priceHint ? `\n${priceHint}` : ""}${researchContext}${photoContext}
 
 [ ${safePool} ]
 
@@ -825,6 +956,9 @@ keyPoints 3개와 highlightBox, cautions를 빠뜨리지 마세요.
 - 규칙 69: 히어로 후킹(heroKicker·headline·subheadline·highlightBox)은 숫자 1개 이상 + 이득 1가지만. 이득 2개 이상 나열 금지(나머지는 spec·keyPoints로 분산).
 - 규칙 70: 위 "가격 환산"이 주어졌을 때만 spec에 "100g당/개당 약 ○○원(반올림)" 1줄 허용. 값을 재계산·변경하지 말고 그대로 옮기고, 없으면 넣지 마세요(price·weight 미입력 시 생략).
 - 규칙 71: 사진 캡션·콜라주 문구는 셀러 1인칭 관찰 시점("농장에서 직접 찍은")으로. 별점·"재구매/후기/리뷰/먹어보니" 같은 제3자 체험담 어투 금지(체험담 기만).
+
+[v19 신규] 동적 구성 힌트:
+- 규칙 72: compositionHints는 "이 상품·이 사진·이 리서치"에 실제 근거가 있을 때만 내세요(다양성 자체가 목표 아님 — 근거 없으면 필드/객체 전체 생략 = 앱이 auto 배치). heroImageId는 위 "업로드 사진 분석"의 사진 id 목록에 있는 id만(없으면 생략), calloutTargetIndex는 keyPoints 0/1/2, photobreakStyle은 collage/cutseq/fullbleed/auto. 힌트로 없는 사실을 만들지 마세요(규칙 6).
 
 출력은 시스템 프롬프트에 명시된 JSON 스키마만 그대로 반환하세요.`
 

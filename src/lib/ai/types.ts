@@ -119,6 +119,17 @@ export interface ResearchResult {
    * 아니므로 승격 금지. 못 찾았으면 undefined(하위호환 — 요약 패널 섹션 미노출).
    */
   hookPhrases?: string[]
+  /**
+   * v6.0(작업R①): 확실도 게이트 재료 (옵셔널·하위호환).
+   * 리서치가 모은 품종 일반 사실을 복수 출처 일치 여부로 나눈 것.
+   * - certain: 복수 출처 일치 → draft가 "이 품종은 보통 ~" 톤으로 단정 서술 가능.
+   * - tentative: 단일·불명·엇갈림 → draft가 완곡("~로 알려져 있어요") 또는 생략.
+   * 어느 쪽도 이 상품 고유 사실이 아니다(승격 금지). 못 채웠으면 undefined(하위호환 — 게이트 미적용 = 현행).
+   */
+  certainty?: {
+    certain: string[]
+    tentative: string[]
+  }
   /** 인용 출처 목록 (제목+URL). */
   sources: ResearchSource[]
 }
@@ -233,6 +244,42 @@ export interface CopyProblemArc {
   problems: string[]
 }
 
+/**
+ * v6.0(작업C): 동적 구성 힌트 (전부 옵셔널 — 구버전 회귀 0).
+ * 생성 시 AI가 "이 상품·이 사진·이 리서치"에 근거가 있을 때만 내는 배치 판단.
+ * 근거가 없으면 통째로 생략(auto) — 다양성 자체가 목표가 아니다.
+ *
+ * 렌더 소비 계약(결정적·검증 후):
+ * - heroImageId: ResultView 히어로 선택 우선순위에 반영. 실재하지 않는 id면 현행 폴백.
+ * - calloutTargetIndex: ResultView calloutIndex 오버라이드(범위·미숨김·사진 배정 유효할 때만).
+ * - photobreakStyle: photoVariants 게이트에서 "이미 조건 충족된" 연출을 억제만 함(사진 수 조건 불변).
+ * - sellingAngle/heroReason/emphasisOrder: AI 구성 판단의 근거 기록(렌더 비소비, 저장·추적용).
+ *
+ * 하위호환: 구버전 저장본/힌트 없음 시 undefined — 렌더 100% 현행 동일(회귀 0 불변식).
+ * 저장: CopyOutput의 일부라 copy와 함께 Work에 저장돼 재렌더 결정성을 유지한다.
+ */
+export interface CompositionHints {
+  /** 포지셔닝 각도 1개 — 리서치 sellingAngles 기반, AI가 이 상품에 고른 핵심 소구 각도. 기록용. */
+  sellingAngle?: string
+  /** 히어로 추천 사진의 imageId(사진 분석 id 중 하나). 근거 없으면 생략. 실재성은 렌더에서 검증. */
+  heroImageId?: string
+  /** 히어로 추천 근거 한 줄(관찰 기반 기록용). */
+  heroReason?: string
+  /** 콜아웃 칩을 얹을 POINT 인덱스(0~2). 근거 없으면 생략. 유효 범위는 렌더에서 검증. */
+  calloutTargetIndex?: number
+  /**
+   * 포토브레이크 연출 선택.
+   * - collage: 콜라주 강조(가능 시 컷 시퀀스 억제)
+   * - cutseq: 절단면 시퀀스 강조(가능 시 콜라주 억제)
+   * - fullbleed: 풀블리드 포토브레이크만(콜라주·컷 둘 다 억제)
+   * - auto: 자동(현행 로직 그대로 — 억제 없음)
+   * 힌트는 "이미 사진 수 조건을 충족한" 연출을 끌 수만 있고, 없는 조건을 켜지는 못한다(사진 수 불변).
+   */
+  photobreakStyle?: "collage" | "cutseq" | "fullbleed" | "auto"
+  /** 강조 우선순위 축 2~4개(예: 당도, 산지, 선별). 기록용(렌더 비소비). */
+  emphasisOrder?: string[]
+}
+
 export interface CopyOutput {
   /** 1차 헤드라인 — 가운데 큰 한글 (예: "썬프레 천도 복숭아") */
   headline: string
@@ -287,6 +334,12 @@ export interface CopyOutput {
    * 하위호환: 구버전 저장본엔 없음(undefined) — 블록 미노출.
    */
   problemArc?: CopyProblemArc
+  /**
+   * v6.0(작업C): 동적 구성 힌트 (선택). AI가 근거 있을 때만 내는 히어로·콜아웃·포토브레이크 배치 판단.
+   * ResultView가 결정적으로 소비(힌트 없으면 현행 100% 동일). copy와 함께 저장돼 재렌더 결정성 유지.
+   * 하위호환: 구버전 저장본엔 없음(undefined) — 전 렌더 현행 폴백.
+   */
+  compositionHints?: CompositionHints
   /**
    * v4.0: 고정 문구(섹션 제목·오버라인·아이콘 트리오 라벨·4단계 스텝·배송/교환/주의
    * 보일러플레이트·사진 캡션·CTA·클로징 서명 등) 인라인 편집 오버라이드 저장소.
@@ -491,8 +544,15 @@ export interface AIProvider {
   /** 키 등록 직후 셀프 진단 (200/401/403/네트워크 확인) */
   diagnose(): Promise<DiagnosticResult>
 
-  /** 과일/야채 카피 생성 */
-  generateCopy(input: CopyInput): Promise<CopyResult>
+  /**
+   * 과일/야채 카피 생성.
+   * v6.0(작업R⑤): photoAnalysisPromise(선택) — 병렬로 시작한 사진 분석 Promise를 넘기면
+   *   draft 프롬프트에 "사진에 보이는 것" 요약을 주입한다. 미전달·null·실패 시 주입 없음(회귀 0).
+   */
+  generateCopy(
+    input: CopyInput,
+    photoAnalysisPromise?: Promise<PhotoAnalysisResult | null>,
+  ): Promise<CopyResult>
 
   /** 입력 폼 기본 정보로 소구점(체크박스 추천 후보) 자동 생성 */
   suggestSellingPoints(input: SuggestPointsInput): Promise<SuggestPointsResult>

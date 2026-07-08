@@ -17,6 +17,7 @@ import {
   type DiagnosticResult,
   type DiagnosticStatus,
   type ModelId,
+  type PhotoAnalysisItem,
   type PhotoAnalysisResult,
   type ResearchResult,
   type SelfReviewResult,
@@ -28,9 +29,9 @@ import { getKeySource } from "./key-source"
 import { buildFruitCopyMessages, FRUIT_COPY_SYSTEM_PROMPT } from "./prompts/fruit-copy"
 import {
   buildResearchMessages,
+  researchSearchBudget,
   RESEARCH_SYSTEM_PROMPT,
   RESEARCH_MAX_TOKENS,
-  RESEARCH_MAX_WEB_SEARCHES,
 } from "./prompts/research"
 import {
   buildRefineCopyMessages,
@@ -66,6 +67,9 @@ import {
   validateResearchResult,
   validateSelfReview,
 } from "./validate"
+// v6.0(작업Q): 품질 보장 루프 — draft를 결정적 린터로 검사해 위반을 refine에 되먹인다.
+// AI 호출 0회(비용 불변). refine 콜에 위반 목록을 합류시켜 자동 수정을 유도한다.
+import { lintCopyOutput, type CopyLintFinding } from "./copy-lint"
 import { t } from "@/lib/i18n"
 
 const DIAGNOSTIC_MAX_TOKENS = 8
@@ -188,17 +192,19 @@ export class AnthropicAdapter implements AIProvider {
     webSearchRequests: number
   } | null> {
     try {
+      // v6.0(작업R③): 미등재·저입력이면 검색 상한을 7로 상향(그 외 5). 프롬프트 문구와 max_uses가 같은 값을 쓰도록 단일 산출.
+      const budget = researchSearchBudget(input)
       const res = await client.messages.create({
         model: this.modelId,
         system: RESEARCH_SYSTEM_PROMPT,
         max_tokens: RESEARCH_MAX_TOKENS,
-        messages: buildResearchMessages(input),
+        messages: buildResearchMessages(input, budget),
         // 무료 운영 원칙: 새 서버/서비스 없이 Anthropic 서버측 web_search만 사용.
         tools: [
           {
             type: "web_search_20250305",
             name: "web_search",
-            max_uses: RESEARCH_MAX_WEB_SEARCHES,
+            max_uses: budget,
           },
         ],
       })
@@ -241,8 +247,15 @@ export class AnthropicAdapter implements AIProvider {
    * Step 2 (refine): draft를 스마트스토어 판매 관점 rubric 5개로 자체 심사 → 리라이트.
    *
    * refine이 실패하면 draft를 그대로 반환 (양보). 비용은 research+draft+refine 합산.
+   *
+   * v6.0(작업R⑤): photoAnalysisPromise(선택) — 호출부에서 사진 분석과 병렬로 시작한 Promise를
+   *   넘기면, research(느린 단계) 이후 draft 직전에 await 해서 "사진에 보이는 것" 요약을 draft에
+   *   주입한다. 병렬성은 유지(분석은 research와 동시에 진행). 미전달·null·실패 시 주입 없음(회귀 0).
    */
-  async generateCopy(input: CopyInput): Promise<CopyResult> {
+  async generateCopy(
+    input: CopyInput,
+    photoAnalysisPromise?: Promise<PhotoAnalysisResult | null>,
+  ): Promise<CopyResult> {
     const client = await this.createClient()
 
     const inputCharCount = JSON.stringify(input).length
@@ -266,12 +279,25 @@ export class AnthropicAdapter implements AIProvider {
       }
     }
 
-    // Step 1: draft 생성 (research 있으면 참고 블록 주입)
+    // v6.0(작업R⑤): 사진 분석 요약을 draft 직전에 수확(병렬로 진행된 Promise를 여기서 await).
+    // research가 느린 단계라 대개 이 시점엔 분석이 이미 끝나 있어 추가 지연이 거의 없다.
+    // 실패·null·빈 결과면 photoItems undefined → 주입 없음(회귀 0).
+    let photoItems: PhotoAnalysisItem[] | undefined
+    if (photoAnalysisPromise) {
+      try {
+        const analysis = await photoAnalysisPromise
+        if (analysis && analysis.items.length > 0) photoItems = analysis.items
+      } catch (err) {
+        console.warn("[generateCopy] photo analysis await failed, skipping photo context:", err)
+      }
+    }
+
+    // Step 1: draft 생성 (research 있으면 참고 블록, 사진 분석 있으면 관찰 요약 주입)
     const draftRes = await client.messages.create({
       model: this.modelId,
       system: FRUIT_COPY_SYSTEM_PROMPT,
       max_tokens: dynamicMaxTokens,
-      messages: buildFruitCopyMessages(input, research),
+      messages: buildFruitCopyMessages(input, research, photoItems),
     })
 
     const draftBlock = draftRes.content.find((c) => c.type === "text")
@@ -289,13 +315,23 @@ export class AnthropicAdapter implements AIProvider {
     let refineInputTokens = 0
     let refineOutputTokens = 0
 
+    // v6.0(작업Q): draft를 결정적 린터로 검사(AI 호출 0회) → 위반이 있으면 refine에 되먹여
+    // "이 필드의 이 위반을 고쳐라"를 명시 지시한다. 린터 예외는 삼켜 refine을 막지 않는다(회귀 0).
+    let draftFindings: CopyLintFinding[] = []
+    try {
+      draftFindings = lintCopyOutput(draftOutput, input)
+    } catch (lintErr) {
+      console.warn("[generateCopy] draft lint failed, skipping lint feedback:", lintErr)
+    }
+
     if (!draftTruncated) {
       try {
         const refineRes = await client.messages.create({
           model: this.modelId,
           system: REFINE_COPY_SYSTEM_PROMPT,
           max_tokens: dynamicMaxTokens,
-          messages: buildRefineCopyMessages(input, draftOutput),
+          // 린터 위반 목록을 refine 콜에 합류 — 별도 AI 호출 없이(비용 불변) 자동 수정 유도.
+          messages: buildRefineCopyMessages(input, draftOutput, draftFindings),
         })
         const refineBlock = refineRes.content.find((c) => c.type === "text")
         if (refineBlock && refineBlock.type === "text") {
@@ -305,6 +341,11 @@ export class AnthropicAdapter implements AIProvider {
           // draft의 후보를 보존해 셀러의 선택지를 잃지 않는다.
           if (!refined.headlineCandidates?.length && draftOutput.headlineCandidates?.length) {
             refined.headlineCandidates = draftOutput.headlineCandidates
+          }
+          // v6.0(작업C): 구성 힌트 패스스루 — refine 프롬프트는 힌트를 모르므로 대개 드롭한다.
+          // draft가 리서치·사진 근거로 낸 힌트를 보존해 생성 시점 변주(결정성)를 잃지 않는다.
+          if (!refined.compositionHints && draftOutput.compositionHints) {
+            refined.compositionHints = draftOutput.compositionHints
           }
           finalOutput = refined
           refineInputTokens = refineRes.usage?.input_tokens ?? 0

@@ -843,6 +843,13 @@ export function planImages(
      *   (플래그 미전달·false) 동일. 켜질 때만 cut 우선순위를 useCount 위로 끌어올린다.
      */
     dnaFavorsCut?: boolean
+    /**
+     * v6.0(작업C): compositionHints.heroImageId — AI가 사진 분석 근거로 추천한 대표컷 id.
+     * 실재하는(images에 존재하는) id면 heroScore 로직보다 우선해 히어로로 채택한다.
+     * ★ 불변식: 미전달·빈 문자열·실재하지 않는 id면 아래 로직은 현행(heroScore/images[0])과 100% 동일 —
+     *   힌트가 실제 사진을 가리킬 때만 hero가 바뀐다(회귀 0).
+     */
+    heroImageId?: string
   },
 ): ImagePlan {
   const keyPointCount = Math.max(0, opts.keyPointCount)
@@ -908,8 +915,18 @@ export function planImages(
     }
     if (best) hero = best
   }
-  // hero를 뺀 전체 후보 풀. analysis 없으면 images.slice(1)과 동일(hero===images[0]).
-  const restAll = byId ? images.filter((img) => img.id !== hero.id) : images.slice(1)
+  // v6.0(작업C): compositionHints.heroImageId 오버라이드 — 힌트가 실재 사진을 가리키면 최우선 채택.
+  // 실재하지 않으면(또는 미전달) hero 불변 → 현행 로직 그대로(회귀 0).
+  if (opts.heroImageId) {
+    const picked = images.find((img) => img.id === opts.heroImageId)
+    if (picked) hero = picked
+  }
+  // hero를 뺀 전체 후보 풀. analysis 없고 hero가 images[0]이면 slice(1)과 동일(현행 불변).
+  // 히어로가 이동한 경우(analysis 있음 또는 heroImageId 오버라이드)만 filter로 hero를 정확히 제외.
+  const restAll =
+    byId || hero.id !== images[0]?.id
+      ? images.filter((img) => img.id !== hero.id)
+      : images.slice(1)
 
   /**
    * v3.8 fix(진단 #1): 갤러리 모자이크가 아예 안 뜨던 사고 교정.
@@ -2167,8 +2184,10 @@ export function ResultView({
         problemArcCount,
         analysis: photoAnalysis ?? undefined,
         dnaFavorsCut,
+        // v6.0(작업C): 히어로 추천 힌트 — 실재하지 않으면 planImages가 현행 폴백.
+        heroImageId: copy.compositionHints?.heroImageId,
       }),
-    [images, keyPoints.length, problemArcCount, photoAnalysis, dnaFavorsCut],
+    [images, keyPoints.length, problemArcCount, photoAnalysis, dnaFavorsCut, copy.compositionHints],
   )
   const heroImage = imagePlan.hero
   const galleryImages = imagePlan.gallery
@@ -2272,19 +2291,42 @@ export function ResultView({
       }
     }
     const collageActive = collage.length >= 4
-    const collageIds = new Set((collageActive ? collage : []).map((i) => i.id))
 
+    // v6.0(작업C): 포토브레이크 연출 힌트 — "이미 사진 수 조건을 충족한" 연출을 억제만 한다.
+    // 힌트는 없는 조건을 켜지 못하므로(사진 수 조건 불변), cutActive/collageActive 가 이미 true일 때만 작동.
+    // - fullbleed: 컷·콜라주 둘 다 억제.  - cutseq: 컷 강조 → 콜라주 억제.  - collage: 콜라주 강조 → 컷 억제.
+    // 억제된 사진은 갤러리(컴팩트)로 흐른다. 억제가 압축 블록을 더 큰 풀블리드 포토브레이크로 되살리는 일은
+    // 없다(아래 fullbleed0/1Allowed 게이트가 raw 활성 기준으로 차단 — 길이 순증 금지 불변식).
+    // - auto/미지정/미지값: 억제 없음 → cutOn===cutActive, collageOn===collageActive (현행 100% 동일 = 회귀 0).
+    const style = copy.compositionHints?.photobreakStyle
+    const cutOn = cutActive && style !== "fullbleed" && style !== "collage"
+    const collageOn = collageActive && style !== "fullbleed" && style !== "cutseq"
+
+    // 억제된 연출의 사진은 렌더되지 않으므로 id-set 에서 빼 자연히 갤러리로 복귀시킨다(중복 0 유지).
+    const cutIdsFinal = new Set((cutOn ? cutSeq : []).map((i) => i.id))
+    const collageIdsFinal = new Set((collageOn ? collage : []).map((i) => i.id))
     const galleryFinal = galleryImages.filter(
-      (img) => !cutIds.has(img.id) && !collageIds.has(img.id),
+      (img) => !cutIdsFinal.has(img.id) && !collageIdsFinal.has(img.id),
     )
+    // v6.0(작업C): 힌트 억제가 "압축 블록(컷 스트립·콜라주)"을 더 큰 풀블리드 포토브레이크로 되살려
+    // 세로 길이를 늘리는 것을 원천 차단(길이 순증 금지 불변식). 풀블리드 포토브레이크는 "힌트가 없는
+    // auto 모드에서 그 슬롯에 이미 떠 있었을 때"만 허용한다 — 즉 raw(억제 전) 활성값 기준으로 판정한다.
+    //   auto 모드 슬롯0 풀블리드 조건: !cutActive(raw) && !collageActive(raw)
+    //   auto 모드 슬롯1 풀블리드 조건: !collageActive(raw)
+    // 억제로 raw 활성 블록을 끄더라도 이 게이트가 false 라 슬롯은 null 로 남고 사진은 갤러리(컴팩트)로만 흐른다.
+    // 힌트가 없으면 cutOn===cutActive·collageOn===collageActive 이므로 아래 게이트는 기존 렌더와 100% 동일(회귀 0).
+    const fullbleed0Allowed = !cutActive && !collageActive
+    const fullbleed1Allowed = !collageActive
     return {
-      cutSeq: cutActive ? cutSeq : [],
-      cutActive,
-      collage: collageActive ? collage : [],
-      collageActive,
+      cutSeq: cutOn ? cutSeq : [],
+      cutActive: cutOn,
+      collage: collageOn ? collage : [],
+      collageActive: collageOn,
+      fullbleed0Allowed,
+      fullbleed1Allowed,
       galleryFinal,
     }
-  }, [images, photoAnalysis, analysisById, imagePlan, galleryImages])
+  }, [images, photoAnalysis, analysisById, imagePlan, galleryImages, copy.compositionHints])
 
   /** v5.8(작업③D): 의성어 — 품종 매칭 시 1개. 페이지에서 단 1곳만 오버레이(아래 target으로 상한 강제). */
   const onomatopoeia = useMemo(() => getOnomatopoeia(productName), [productName])
@@ -2322,12 +2364,24 @@ export function ResultView({
    */
   const calloutIndex = useMemo(() => {
     if (calloutChips.length < 3) return -1
+    // v6.0(작업C): compositionHints.calloutTargetIndex 오버라이드 — 유효(범위·미숨김·사진 배정)할 때만.
+    // 무효(범위 밖·숨겨진 POINT·사진 없음)면 아래 현행 "첫 노출 POINT" 로직으로 폴백(회귀 0).
+    const hintIdx = copy.compositionHints?.calloutTargetIndex
+    if (
+      typeof hintIdx === "number" &&
+      hintIdx >= 0 &&
+      hintIdx < keyPoints.length &&
+      !shipmentHideIndices.has(hintIdx) &&
+      imagePlan.keyPoints[hintIdx]
+    ) {
+      return hintIdx
+    }
     for (let i = 0; i < keyPoints.length; i++) {
       if (shipmentHideIndices.has(i)) continue
       return imagePlan.keyPoints[i] ? i : -1 // 첫 노출 POINT에 사진 없으면 미발동(결정적·단순).
     }
     return -1
-  }, [calloutChips.length, keyPoints, shipmentHideIndices, imagePlan.keyPoints])
+  }, [calloutChips.length, keyPoints, shipmentHideIndices, imagePlan.keyPoints, copy.compositionHints])
 
   /**
    * 노출할 고객 후기 — 본문이 있는 것만(최대 5개, v5.8). 0건이면 ReviewsBlock 미노출.
@@ -2829,7 +2883,7 @@ export function ResultView({
                   showOnomatopoeia={onomatopoeiaTarget === "cut"}
                 />
               </>
-            ) : !photoVariants.collageActive && imagePlan.breaks[0] ? (
+            ) : photoVariants.fullbleed0Allowed && imagePlan.breaks[0] ? (
               <>
                 <DotDivider />
                 <PhotoBreakBlock
@@ -2897,7 +2951,7 @@ export function ResultView({
                   showOnomatopoeia={onomatopoeiaTarget === "collage"}
                 />
               </>
-            ) : imagePlan.breaks[1] ? (
+            ) : photoVariants.fullbleed1Allowed && imagePlan.breaks[1] ? (
               <>
                 <DotDivider />
                 <PhotoBreakBlock
