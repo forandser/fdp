@@ -304,6 +304,28 @@ const LINE = "#E9ECEF"
 const PLACEHOLDER = "#ADB5BD"
 
 /**
+ * v5.9(작업D⑦): 중립 그림자 3단 토큰 — 컬러 글로우(accent 파생 alpha 헤일로) 금지.
+ * 프로는 코랄 blur 헤일로 대신 은은한 중립 그림자로 깊이를 만든다.
+ * sm=칩·필(흰 채움), md=카드·배지, lg=떠있는 강조 이미지. 결정적 상수(JPG 위생).
+ * ⚠️ 컬러 섀도우 금지 — 새 그림자는 반드시 이 토큰에서만 고른다.
+ */
+const SHADOW = {
+  sm: "0 1px 3px rgba(0,0,0,0.10)",
+  md: "0 2px 8px rgba(0,0,0,0.12)",
+  lg: "0 8px 24px rgba(0,0,0,0.14)",
+} as const
+
+/**
+ * v5.9(작업D③): 3단 톤 위계 헬퍼 — 풀채도 accent는 섹션당 최대 2곳으로 예약하고,
+ * eyebrow·체크·메타·소면적 장식(물결 밑줄·불릿·타임라인 링·스파클)은 muted로 강등한다.
+ * color-mix(in srgb, accent 45%, #8A8A90) 등가 = mixHex(accent, 웜그레이, 0.55).
+ * (면 채움 tint 는 기존 accent.soft 를 그대로 쓴다.)
+ */
+function mutedAccent(accent: AccentPalette): string {
+  return mixHex(accent.accent, "#8A8A90", 0.55)
+}
+
+/**
  * v5.0 폰트 계층 — 실사용자(과일 셀러) 피드백 반영. 기존 무료 검은고딕(단일 400 굵기,
  * 응축형)이 대형 사이즈에서 뭉개져 "깨진" 인상을 줘서 전면 퇴출하고,
  * 이미 임베드된 Pretendard Black(900)로 통일한다(상위 커머스 페이지의 실제 관행).
@@ -1483,15 +1505,40 @@ function RibbonLabel({
 }
 
 /**
+ * v5.9(작업D④): Brix 표기 단일 락업 — 숫자(tabular-nums, 800, 대)와 단위(Brix, 700, 소)의
+ * 크기·표기 위계를 한 곳에서 고정. 표기는 항상 "숫자 + 얇은 공백 + Brix". 히어로 당도 스티커와
+ * 당도 밴드 마커가 서로 다른 락업(‘13 Brix’ vs ‘우리 13’)을 쓰던 것을 이 컴포넌트로 통일한다.
+ * 값(사실 데이터)은 호출부가 검증해 넘긴다. 크기는 부모 fontSize 기준 em 상대라 스티커/인라인 공용.
+ */
+function BrixLockup({ value }: { value: number }) {
+  return (
+    <span
+      style={{
+        fontVariantNumeric: "tabular-nums",
+        display: "inline-flex",
+        alignItems: "baseline",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span style={{ fontWeight: 800, letterSpacing: "-0.01em" }}>{value}</span>
+      <span style={{ fontSize: "0.62em", fontWeight: 700, marginLeft: "0.14em" }}>Brix</span>
+    </span>
+  )
+}
+
+/**
  * 기울어진 스티커 배지 — accent 배경 원형/알약을 -3deg 회전 (chamoe-03 · 지시 3).
  * 사실 데이터(brix 등)만 넣는다. 호출부가 검증한 문구만 전달.
+ * brixValue 가 있으면 통일된 BrixLockup(작업D④)으로 렌더, 없으면 text 그대로(하위호환).
  */
 function TiltSticker({
   text,
+  brixValue,
   accent,
   isMobile,
 }: {
   text: string
+  brixValue?: number
   accent: AccentPalette
   isMobile: boolean
 }) {
@@ -1510,10 +1557,11 @@ function TiltSticker({
         fontFamily: DISPLAY_FONT,
         letterSpacing: -1,
         lineHeight: 1.1,
-        boxShadow: `0 4px 12px ${accent.accent}55`,
+        // v5.9(작업D⑦): 컬러 글로우(accent 헤일로) 제거 → 중립 그림자로 깊이.
+        boxShadow: SHADOW.md,
       }}
     >
-      {text}
+      {brixValue != null ? <BrixLockup value={brixValue} /> : text}
     </span>
   )
 }
@@ -1768,7 +1816,8 @@ function ValuePropStrip({ isMobile, trust }: { isMobile: boolean; trust?: TrustI
           background: "#FFFFFF",
           borderRadius: layout.cardRadius,
           border: `1px solid ${accent.soft}`,
-          boxShadow: `0 6px 24px ${accent.accent}14`,
+          // v5.9(작업D⑦): 컬러 글로우 제거 → 중립 카드 그림자.
+          boxShadow: SHADOW.md,
           padding: isMobile ? "28px 12px" : "52px 28px",
           display: "grid",
           gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))`,
@@ -1827,8 +1876,9 @@ function CtaPill({ text, isMobile, editId }: { text: string; isMobile: boolean; 
           style={{
             color: accent.dark,
             textDecoration: "underline wavy",
-            // v5.3 듀오톤: 물결 밑줄만 보조 그린(잎 톤)으로 — 소면적 장식 한정.
-            textDecorationColor: accent.secondary,
+            // v5.9(작업D①): 초록 이탈 제거 — 물결 밑줄을 코랄 muted(더스티 로즈)로 단일화.
+            //   (소면적 장식이라 풀채도 대신 muted: 작업D③ 톤 위계.)
+            textDecorationColor: mutedAccent(accent),
             textDecorationThickness: isMobile ? 2 : 3,
             textUnderlineOffset: isMobile ? 5 : 8,
           }}
@@ -1856,8 +1906,9 @@ function CtaPill({ text, isMobile, editId }: { text: string; isMobile: boolean; 
         textAlign: "center",
       }}
     >
-      {/* 좌측 잎사귀형 점 — 버튼이 아니라 캡션임을 시각적으로 알린다.
-          v5.3 듀오톤: 잎사귀 은유에 맞춰 보조 그린으로(소면적 장식). */}
+      {/* 좌측 점 — 버튼이 아니라 캡션임을 시각적으로 알린다.
+          v5.9(작업D①): UI 불릿의 보조 그린 제거(사진 속 자연물이 아닌 UI 장식이므로 코랄 통일).
+          소면적 장식이라 muted 코랄(작업D③). */}
       <span
         aria-hidden
         style={{
@@ -1865,7 +1916,7 @@ function CtaPill({ text, isMobile, editId }: { text: string; isMobile: boolean; 
           width: isMobile ? 10 : 16,
           height: isMobile ? 10 : 16,
           borderRadius: "50%",
-          background: accent.secondary,
+          background: mutedAccent(accent),
         }}
       />
       <span>
@@ -1880,78 +1931,10 @@ function CtaPill({ text, isMobile, editId }: { text: string; isMobile: boolean; 
 }
 
 /**
- * Hero 직후 배송 약속 밴드 (리서치: 배송 약속 1줄 상단 배치 +27.1%).
- * 허위광고 방지 — 강한 약속은 trust.sameDayHarvest 체크 시에만, 미체크 시 안전 문구.
- * 톤은 ValuePropStrip과 통일(검정 배경 + accent 체크).
- */
-function DeliveryPromiseBand({ isMobile, trust }: { isMobile: boolean; trust?: TrustInfo }) {
-  const accent = useAccent()
-  const dp = t.detail.result.deliveryPromise
-  const text = trust?.sameDayHarvest ? dp.strong : dp.safe
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: isMobile ? 8 : 12,
-        // v3.1-b: 검정 → accent.soft 밝은 톤. CTA(검정 pill)·ValuePropStrip(검정)과
-        // 연달아 검은 덩어리 3개가 쌓여 무겁던 문제 완화 (설향 실측에서 확인).
-        background: accent.soft,
-        color: INK,
-        padding: isMobile ? "16px 20px" : "26px 44px",
-        textAlign: "center",
-      }}
-    >
-      <span aria-hidden style={{ color: accent.accent, fontSize: isMobile ? 18 : 30, fontWeight: 900 }}>
-        ✓
-      </span>
-      <span
-        style={{
-          fontSize: isMobile ? 18 : 32,
-          fontWeight: 800,
-          fontFamily: BODY_FONT,
-          letterSpacing: -0.3,
-          lineHeight: 1.4,
-          wordBreak: "keep-all",
-        }}
-      >
-        {/* 부분 밑줄 형광펜 — 배송 약속 문장 앞 핵심 구를 accent 물결 밑줄로 강조.
-            v4.0: OverrideText로 인라인 편집 가능(강조는 편집된 문구에도 동일 적용). */}
-        <OverrideText
-          id="deliveryPromise.text"
-          fallback={text}
-          maxLength={80}
-          renderDisplay={(value) => {
-            const { lead, mark, tail } = splitPhraseEmphasis(value)
-            if (!mark) return value
-            return (
-              <>
-                {lead}
-                <span
-                  style={{
-                    fontWeight: 900,
-                    color: accent.dark,
-                    textDecoration: "underline wavy",
-                    // v5.3 듀오톤: 물결 밑줄만 보조 그린(잎 톤).
-                    textDecorationColor: accent.secondary,
-                    textDecorationThickness: 2,
-                    textUnderlineOffset: isMobile ? 4 : 6,
-                  }}
-                >
-                  {mark}
-                </span>
-                {tail}
-              </>
-            )
-          }}
-        />
-      </span>
-    </div>
-  )
-}
-
-/**
+ * v5.9(작업D⑥): DeliveryPromiseBand 삭제 — "당일 수확" 신뢰요소가 히어로 highlightBadges +
+ * ValuePropStrip 아이콘 트리오와 3중 중복이라, 한 줄 밴드를 제거해 세로 예산을 순감으로 회수한다.
+ * (정보 손실 없음: sameDayHarvest 는 나머지 2곳에서 그대로 노출, trust 게이팅 유지.)
+ *
  * v5.4(작업6): 결과 화면 외곽 2열([아트보드|340px])을 세로 스택으로 접는 폭 임계값.
  * DetailMaker.SPLIT_BREAKPOINT(1280)와 별개 — 이건 결과 화면 자체 컨테이너 폭 기준.
  * 340px 패널 + 최소한의 아트보드 폭 확보가 안 되는 좁은 뷰에서 패널을 아래로 내린다.
@@ -2644,18 +2627,22 @@ export function ResultView({
                 하나도 없으면 내부에서 null 반환 → 렌더 안 됨(기존 렌더와 동일). */}
             <ReviewStatsStrip stats={reviewStats} isMobile={isMobile} />
 
-            {/* 배송 약속 밴드 — Hero CTA 직후 (리서치: 배송 약속 상단 +27.1%) */}
-            <DeliveryPromiseBand isMobile={isMobile} trust={trust} />
+            {/* v5.9(작업D⑥): 배송 약속 밴드 삭제 — 당일수확 3중 중복 정리(세로 순감).
+                신뢰요소는 히어로 highlightBadges + ValuePropStrip 아이콘 트리오 2곳으로만. */}
 
             {/* v2.5: 가치 제안 스트립 — 강한 주장은 trust 체크 시에만, 미체크는 안전 문구 */}
             <ValuePropStrip isMobile={isMobile} trust={trust} />
 
-            {/* 2a. FreshnessTimeline — 수확일 + fruit-facts 보관 일수 (v1.8) */}
+            {/* 2a. FreshnessTimeline — 수확일 + fruit-facts 보관 일수 (v1.8)
+                v5.9(작업X·리뷰): 이 위젯은 now=new Date() 시점 의존이라 JPG 캡처 결정성 위반이었다
+                (동일 입력을 다른 날 재캡처하면 진행바·경과일·상태색이 달라짐 + 정적 이미지엔 굳은 시계라 오해 소지).
+                fdp-no-print 로 아트보드/JPG 캡처에서 제외 — 인터랙티브 미리보기에만 노출한다. */}
             {freshnessProps && (
-              <div style={{ padding: isMobile ? "20px 24px" : "28px 44px" }}>
+              <div className="fdp-no-print" style={{ padding: isMobile ? "20px 24px" : "28px 44px" }}>
                 <FreshnessTimeline
                   harvestDate={freshnessProps.harvestDate}
                   daysGood={freshnessProps.daysGood}
+                  accentColor={accent.accent}
                 />
               </div>
             )}
@@ -3860,7 +3847,7 @@ function HeroBlock({
               zIndex: 2,
             }}
           >
-            <TiltSticker text={`${brix} Brix`} accent={accent} isMobile={isMobile} />
+            <TiltSticker text={`${brix} Brix`} brixValue={brix} accent={accent} isMobile={isMobile} />
           </div>
         )}
         {/* v5.2-A ①: Brix 스티커 주변 반짝(sparkle) — 스티커 아래쪽 결정적 좌표(스티커·텍스트
@@ -3877,8 +3864,8 @@ function HeroBlock({
                 display: "inline-flex",
               }}
             >
-              {/* v5.3 듀오톤: 히어로 반짝 데코는 보조 그린(잎 톤) — 소면적 장식. */}
-              <MotifDecor kind="sparkle" size={isMobile ? 16 : 22} color={accent.secondary} opacity={0.95} />
+              {/* v5.9(작업D①): 히어로 반짝의 보조 그린 제거 → 코랄 muted 로 단일화(소면적 장식). */}
+              <MotifDecor kind="sparkle" size={isMobile ? 16 : 22} color={mutedAccent(accent)} opacity={0.95} />
             </span>
             <span
               aria-hidden
@@ -3890,7 +3877,7 @@ function HeroBlock({
                 display: "inline-flex",
               }}
             >
-              <MotifDecor kind="sparkle" size={isMobile ? 15 : 16} color={accent.secondary} opacity={0.8} rotate={16} />
+              <MotifDecor kind="sparkle" size={isMobile ? 15 : 16} color={mutedAccent(accent)} opacity={0.8} rotate={16} />
             </span>
           </>
         )}
@@ -4016,7 +4003,8 @@ function HeroBlock({
                   fontSize: isMobile ? 14 : 24,
                   fontWeight: 700,
                   fontFamily: BODY_FONT,
-                  boxShadow: `0 2px 6px ${accent.accent}40`,
+                  // v5.9(작업D⑦): 컬러 글로우 제거 → 솔리드 채움 배지 + 중립 sm 그림자.
+                  boxShadow: SHADOW.sm,
                 }}
               >
                 <span
@@ -5393,6 +5381,9 @@ function BrixRangeBlock({
               whiteSpace: "nowrap",
               fontSize: isMobile ? 15 : 26,
               fontWeight: 800,
+              // v5.9(작업D④): 게이지 마커 숫자도 tabular-nums 로 — 페이지 Brix 표기 자릿수 정렬 통일.
+              // (마커는 축에 단위가 함의돼 "우리 13"으로 단위어를 안 붙임 → 전체 BrixLockup 대신 숫자정렬만.)
+              fontVariantNumeric: "tabular-nums",
               color: accent.accent,
               fontFamily: BODY_FONT,
             }}
@@ -6403,7 +6394,8 @@ function KeyPointsBig({
               marginBottom: isMobile ? 14 : 20,
               fontSize: isMobile ? 17 : 26,
               fontWeight: 800,
-              color: accent.accent,
+              // v5.9(작업D③): 서사 브리지 캡션은 메타성 → muted 로 강등(POINT 배지에 풀채도 예약).
+              color: mutedAccent(accent),
               letterSpacing: -0.3,
               fontFamily: BODY_FONT,
               lineHeight: 1.4,
@@ -6425,7 +6417,8 @@ function KeyPointsBig({
             gap: isMobile ? 6 : 9,
             justifyContent: "center", // 헤더가 textAlign:center → 오버라인 행도 중앙 유지.
             fontSize: isMobile ? 13 : 22,
-            color: accent.accent,
+            // v5.9(작업D③): 섹션 오버라인(eyebrow)은 전부 muted — 풀채도는 POINT 배지에 예약.
+            color: mutedAccent(accent),
             fontWeight: 800,
             letterSpacing: 2,
             marginBottom: isMobile ? 8 : 12,
@@ -6433,7 +6426,7 @@ function KeyPointsBig({
           }}
         >
           {motifKind && (
-            <FruitMotif kind={motifKind} size={isMobile ? 15 : 22} color={accent.accent} />
+            <FruitMotif kind={motifKind} size={isMobile ? 15 : 22} color={mutedAccent(accent)} />
           )}
           <OverrideText id="keypoints.overline" fallback="POINT" maxLength={24} />
         </div>
@@ -6487,23 +6480,24 @@ function KeyPointsBig({
               <div
                 style={{
                   // v5.8(작업③A fix): 데스크톱은 이미지-텍스트 가로 2열(지그재그와 동일 골격)로 렌더해
-                  //  세로 순증 방지(길이 순증 금지). 세로 스택(이미지 520 위 + 텍스트)은 대체 대상
-                  //  지그재그 행보다 훨씬 길었다. 모바일은 기존 세로 스택 유지(모바일 콜아웃 이미지가
-                  //  스택 POINT 카드 이미지보다 작아 순증 없음).
+                  //  세로 순증 방지(길이 순증 금지). 모바일은 기존 세로 스택 유지.
+                  // v5.9(작업D②): 겹침 없는 2컬럼 그리드 — minmax(0,42%) 1fr + gap 44 + alignItems:start.
+                  //  텍스트/이미지 열 모두 minWidth:0(오버플로 클립 방지). 칩 오버행은 이미지 열 안으로만.
                   display: isMobile ? "flex" : "grid",
                   flexDirection: isMobile ? "column" : undefined,
-                  gridTemplateColumns: isMobile ? undefined : "4fr 6fr",
+                  gridTemplateColumns: isMobile ? undefined : "minmax(0, 42%) 1fr",
                   columnGap: isMobile ? undefined : 44,
-                  alignItems: "center",
+                  alignItems: isMobile ? undefined : "start",
                   gap: isMobile ? 22 : undefined,
                 }}
               >
-                <div style={{ position: "relative", width: "100%", maxWidth: isMobile ? 360 : "100%" }}>
+                <div style={{ position: "relative", width: "100%", maxWidth: isMobile ? 360 : "100%", minWidth: 0 }}>
                   <div
                     style={{
                       borderRadius: 12,
                       overflow: "hidden",
-                      boxShadow: "0 6px 24px rgba(0,0,0,0.13)",
+                      // v5.9(작업D⑦): 중립 lg 그림자 토큰.
+                      boxShadow: SHADOW.lg,
                     }}
                   >
                     {cbox ? (
@@ -6527,9 +6521,10 @@ function KeyPointsBig({
                     {chips.map((_, ci) => {
                       const [x1, y1, x2, y2] = CALLOUT_SLOTS[ci].line
                       return (
+                        // v5.9(작업D③): 지시선·끝점은 소면적 장식 → muted 로 강등(풀채도 accent는 칩·POINT 배지에 예약).
                         <g key={ci}>
-                          <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={accent.accent} strokeWidth={0.7} />
-                          <circle cx={x2} cy={y2} r={1.5} fill={accent.accent} />
+                          <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={mutedAccent(accent)} strokeWidth={0.7} />
+                          <circle cx={x2} cy={y2} r={1.5} fill={mutedAccent(accent)} />
                         </g>
                       )
                     })}
@@ -6541,6 +6536,8 @@ function KeyPointsBig({
                       style={{
                         position: "absolute",
                         ...CALLOUT_SLOTS[ci].pos,
+                        // v5.9(작업D②): 칩 오버행은 이미지 열 안으로만 — maxWidth 로 텍스트 열 침범을 차단.
+                        maxWidth: "72%",
                         background: "#FFFFFF",
                         color: INK,
                         border: `2px solid ${accent.accent}`,
@@ -6550,8 +6547,11 @@ function KeyPointsBig({
                         fontWeight: 800,
                         fontFamily: BODY_FONT,
                         whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
                         letterSpacing: -0.3,
-                        boxShadow: "0 2px 10px rgba(0,0,0,0.14)",
+                        // v5.9(작업D⑦): 흰 칩 → 중립 sm 그림자.
+                        boxShadow: SHADOW.sm,
                       }}
                     >
                       {chip}
@@ -6783,7 +6783,7 @@ function KeyPointsBig({
               background: bg,
             }}
           >
-            {/* 좌측 세로 축색 바 */}
+            {/* 좌측 세로 축색 바 — v5.9(작업D③): 장식 바는 muted 로 강등(POINT 배지에 풀채도 예약). */}
             <div
               aria-hidden
               style={{
@@ -6792,7 +6792,7 @@ function KeyPointsBig({
                 top: isMobile ? 48 : 88,
                 bottom: isMobile ? 64 : 104,
                 width: isMobile ? 6 : 9,
-                background: accent.accent,
+                background: mutedAccent(accent),
                 borderRadius: 4,
               }}
             />
@@ -6935,8 +6935,9 @@ function StorageBlock({
                       height: dot,
                       borderRadius: "50%",
                       background: "#FFFFFF",
-                      // v5.3 듀오톤: 보관 타임라인 점은 보조 그린 링(줄기 톤) — 소면적 장식.
-                      border: `${isMobile ? 3 : 4}px solid ${accent.secondary}`,
+                      // v5.9(작업D①): STEP 점의 보조 그린 링 제거 → 코랄 muted 링으로 단일화
+                      //   (05-03 핑크 원과 계열 통일, 소면적 장식이라 muted: 작업D③).
+                      border: `${isMobile ? 3 : 4}px solid ${mutedAccent(accent)}`,
                       flexShrink: 0,
                     }}
                   />
@@ -7154,8 +7155,8 @@ function ReceiveTimelineBlock({
                         height: circle,
                         borderRadius: "50%",
                         background: "#FFFFFF",
-                        // v5.3 듀오톤: 수령 타임라인 노드 링도 보조 그린(줄기 톤)으로 통일.
-                        border: `${isMobile ? 2 : 3}px solid ${accent.secondary}`,
+                        // v5.9(작업D①): 수령 타임라인 노드 링의 보조 그린 제거 → 코랄 muted 링으로 통일.
+                        border: `${isMobile ? 2 : 3}px solid ${mutedAccent(accent)}`,
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
@@ -8147,7 +8148,8 @@ function ReviewsBlock({
             borderRadius: 20,
             overflow: "hidden",
             minHeight: isMobile ? 300 : 380,
-            boxShadow: `0 12px 34px ${accent.accent}22`,
+            // v5.9(작업D⑦): 컬러 글로우 제거 → 중립 lg 그림자.
+            boxShadow: SHADOW.lg,
           }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -8289,7 +8291,8 @@ function ReviewsBlock({
                 background: "#FFFFFF",
                 borderRadius: 16,
                 border: `1px solid ${accent.soft}`,
-                boxShadow: `0 4px 16px ${accent.accent}10`,
+                // v5.9(작업D⑦): 컬러 글로우 제거 → 중립 sm 그림자.
+                boxShadow: SHADOW.sm,
                 // v5.3: 카드 내부 과대 패딩 압축(가독성 하한은 본문 폰트로 유지).
                 padding: isMobile ? "22px 22px" : "32px 40px",
                 display: "flex",
@@ -8330,7 +8333,8 @@ function ReviewsBlock({
                     border: `2px solid ${accent.accent}`,
                     borderRadius: 10,
                     padding: isMobile ? "10px 16px" : "16px 26px",
-                    boxShadow: `0 6px 18px ${accent.accent}22`,
+                    // v5.9(작업D⑦): 컬러 글로우 제거 → 중립 md 그림자.
+                    boxShadow: SHADOW.md,
                   }}
                 >
                   <span
@@ -8402,7 +8406,8 @@ function FarmStoryBlock({
         background: layout.altSectionBg(accent),
       }}
     >
-      <SectionTitle title={t.detail.result.farmStoryTitle} isMobile={isMobile} editId="sect.farm.title" overline="FARM" editOverlineId="sect.farm.overline" />
+      {/* v5.9(작업D⑤): FARM=감성 계열 → 제목 크기·풀채도 오버라인 유지(기능 섹션 축소 대상 아님). */}
+      <SectionTitle title={t.detail.result.farmStoryTitle} series="emotion" isMobile={isMobile} editId="sect.farm.title" overline="FARM" editOverlineId="sect.farm.overline" />
 
       {/* v1.8: trust에 농부 정보 있으면 ProducerCard로 노출 */}
       {hasProducer && (
@@ -8861,6 +8866,7 @@ function SectionTitle({
   regen,
   isMobile,
   variant = "main",
+  series = "info",
   overline,
   editId,
   editOverlineId,
@@ -8871,6 +8877,15 @@ function SectionTitle({
   isMobile?: boolean
   /** v3.8: 3단 위계 — hero(전환점)/main(콘텐츠)/quiet(약관류). 미지정 시 main. */
   variant?: SectionTitleVariant
+  /**
+   * v5.9(작업D⑤): 헤더 2계열. ⚠️ 정렬은 두 계열 모두 좌측(컨테이너 space-between) — 이 prop 은
+   * 이번 범위에서 크기·오버라인 색만 분기하고 textAlign/justifyContent 는 건드리지 않는다(중앙정렬 미구현).
+   * 감성 섹션의 "센터 헤더"는 SectionTitle 이 아니라 WHY/STORY 등 별도 중앙 블록이 담당한다.
+   *  - "info"(기능: SPEC·GUIDE·TIMELINE·FAQ·SEASON) = muted 오버라인 + 축소 제목(main 40).
+   *  - "emotion"(감성: FARM 등) = 풀채도 오버라인 + 큰 제목(main 46).
+   * 미지정은 "info"(기능 톤) — 좌측정렬, 오버라인만 muted 로 강등(작업D③).
+   */
+  series?: "info" | "emotion"
   /** v3.8: hero 변주에서만 노출하는 오버라인 영문 라벨(예: REVIEW). */
   overline?: string
   /** v4.0: 섹션 제목 인라인 편집 키. 있으면 title을 OverrideText로 감싼다(고정 문구 편집). */
@@ -8880,9 +8895,17 @@ function SectionTitle({
 }) {
   const accent = useAccent()
   const layout = useLayout()
-  // 크기·색 — 데스크톱 기준 hero 60 / main 46 / quiet 34. 모바일은 각 톤에 맞춰 축소.
+  const isEmotion = series === "emotion"
+  // v5.9(작업D⑤): 크기 — hero 60 / quiet 34 는 불변. main 은 계열로 분기:
+  //   감성 main = major(46, 기존 유지), 기능 main = minor(40, 축소 → 매크로 리듬 + 세로 순감).
   const fontSize =
-    variant === "hero" ? (isMobile ? 34 : 60) : variant === "quiet" ? (isMobile ? 21 : 34) : (isMobile ? 27 : 46)
+    variant === "hero"
+      ? (isMobile ? 34 : 60)
+      : variant === "quiet"
+        ? (isMobile ? 21 : 34)
+        : isEmotion
+          ? (isMobile ? 27 : 46)
+          : (isMobile ? 25 : 40)
   const color = variant === "quiet" ? SUB : INK
   // v5.3: 오버라인 락업을 hero/main variant로 확장(STORY/POINT/REVIEW 톤을 상품정보·보관·
   // FAQ·추천 등 bare heading 섹션에도 적용). hero 는 기존 큰 오버라인(불변식: 회귀 0), main 은
@@ -8927,7 +8950,9 @@ function SectionTitle({
           <div
             style={{
               fontSize: overlineFontSize,
-              color: accent.accent,
+              // v5.9(작업D⑤/③): 기능(info) 섹션 오버라인은 muted 로 강등 — 풀채도 코랄은
+              // 감성(emotion)·hero 전환점 오버라인에만 예약(액센트 밀도 감축). L8876 의도 구현.
+              color: isEmotion || isHeroOverline ? accent.accent : mutedAccent(accent),
               fontWeight: 800,
               letterSpacing: 2,
               marginBottom: overlineMb,

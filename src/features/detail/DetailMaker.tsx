@@ -52,6 +52,8 @@ import { PRESET_KEYWORDS } from "@/domain/keywords"
 import { getEnhancedUrl } from "@/lib/image-enhance/enhance-runner"
 import { t } from "@/lib/i18n"
 import { validateProductNameSeo } from "@/lib/ai/validate"
+// v5.9(작업L): 결정적 카피 린터 — 생성 직후 실행해 경고 배너로 노출.
+import { lintCopyOutput, type CopyLintFinding } from "@/lib/ai/copy-lint"
 import { detectFruitFactKey, FRUIT_FACTS } from "@/domain/fruit-facts"
 import { DEMO_COPY } from "./demo-copy"
 import { BrandKitPanel } from "./BrandKitPanel"
@@ -457,6 +459,11 @@ export function DetailMaker({
   const [reviewResult, setReviewResult] = useState<SelfReviewResult | null>(null)
   const [reviewFailed, setReviewFailed] = useState(false)
   const [reviewUsage, setReviewUsage] = useState<UsageInfo | null>(null)
+  /**
+   * v5.9(작업L): 결정적 카피 린터 위반 목록(세션 상태만) — 생성 직후·인라인 편집 후 갱신.
+   * AI 호출 0회. 기존 검수 UI 흐름(reviewFailed 배너 인근)에 경고 배너로만 노출.
+   */
+  const [lintFindings, setLintFindings] = useState<CopyLintFinding[]>([])
   /** 현재 작업 ID — 저장/업데이트에 사용 */
   const [workId, setWorkId] = useState<string | null>(null)
   /** 복원 시 생성된 objectURL — 언마운트 시 일괄 해제 */
@@ -1182,6 +1189,8 @@ export function DetailMaker({
     setReviewResult(null)
     setReviewFailed(false)
     setReviewUsage(null)
+    // v5.9(작업L): 이전 카피 린터 경고도 폐기(새 카피로 재검사).
+    setLintFindings([])
     setStage("generating")
     setGenerationStep(0)
     const stepTimer = setInterval(() => {
@@ -1287,6 +1296,13 @@ export function DetailMaker({
       ])
       const analysisItems = analysisRes?.items ?? null
       setResult(res.output)
+      // v5.9(작업L): 생성 직후 결정적 카피 린터 실행(AI 호출 0회) → 경고 배너로 노출.
+      try {
+        setLintFindings(lintCopyOutput(res.output, input))
+      } catch (lintErr) {
+        console.error("[copy-lint]", lintErr)
+        setLintFindings([])
+      }
       // 분석 usage(신규 분석일 때만 존재 — 재사용/OFF/실패면 없음)를 생성 비용에 합산 표시.
       setLastUsage(mergeUsage(res.usage, analysisRes?.usage))
       setPhotoAnalysis(analysisItems)
@@ -1351,6 +1367,14 @@ export function DetailMaker({
   /** 결과 카피 인라인 편집 → 작업 자동 갱신 */
   const handleCopyChange = (next: CopyOutput) => {
     setResult(next)
+    // v5.9(작업L): 인라인 편집 후에도 린터 경고를 최신 상태로(currentInput 기준 재검사).
+    if (currentInput) {
+      try {
+        setLintFindings(lintCopyOutput(next, currentInput))
+      } catch (lintErr) {
+        console.error("[copy-lint]", lintErr)
+      }
+    }
     if (workId && currentInput && resultMeta) {
       void (async () => {
         try {
@@ -2513,6 +2537,105 @@ export function DetailMaker({
       {result && reviewResult && (
         <SelfReviewPanel result={reviewResult} onClose={() => setReviewResult(null)} />
       )}
+
+      {/*
+        v5.9(작업L): 결정적 카피 린터 경고 배너 — 생성 직후 lintCopyOutput 결과(AI 호출 0회).
+        기존 alert 배너 관례 재사용(신규 대형 UI 없음). findings 0건이면 미노출.
+        reject(식약처·표시광고 위험) 포함 시 danger 톤, warn만이면 앰버 톤. 접힘 기본(details).
+        JPG 미포함(fdp-no-print).
+      */}
+      {result &&
+        lintFindings.length > 0 &&
+        (() => {
+          const rejectCount = lintFindings.filter((f) => f.severity === "reject").length
+          const hasReject = rejectCount > 0
+          const accent = hasReject ? "var(--color-danger)" : SHELL_COLOR.warn
+          const tintBg = hasReject ? "var(--color-danger-tint)" : SHELL_COLOR.helperBg
+          return (
+            <details
+              className="fdp-no-print"
+              style={{
+                marginBottom: 12,
+                background: tintBg,
+                border: `1px solid ${accent}`,
+                borderRadius: "var(--radius-xs)",
+                fontSize: 12,
+                color: "var(--color-neutral-800)",
+              }}
+            >
+              <summary
+                style={{
+                  padding: "10px 14px",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                  color: accent,
+                }}
+              >
+                {"⚠️ "}
+                {t.detail.result.copyLint.title} —{" "}
+                {t.detail.result.copyLint.summary.replace(
+                  "{count}",
+                  String(lintFindings.length),
+                )}
+                {hasReject && (
+                  <span
+                    style={{
+                      display: "block",
+                      fontWeight: 500,
+                      marginTop: 4,
+                      color: "var(--color-danger)",
+                    }}
+                  >
+                    {t.detail.result.copyLint.rejectNote.replace(
+                      "{reject}",
+                      String(rejectCount),
+                    )}
+                  </span>
+                )}
+              </summary>
+              <ul
+                style={{
+                  margin: 0,
+                  padding: "0 14px 12px 14px",
+                  listStyle: "none",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                }}
+              >
+                {lintFindings.map((f, i) => (
+                  <li
+                    key={`${f.field}-${f.code}-${i}`}
+                    style={{ display: "flex", gap: 8, alignItems: "flex-start", lineHeight: 1.5 }}
+                  >
+                    <span
+                      style={{
+                        flexShrink: 0,
+                        marginTop: 1,
+                        padding: "1px 7px",
+                        borderRadius: RADIUS.chip,
+                        fontSize: 10,
+                        fontWeight: 700,
+                        color: "var(--color-text-on-primary)",
+                        background:
+                          f.severity === "reject" ? "var(--color-danger)" : SHELL_COLOR.warn,
+                      }}
+                    >
+                      {f.severity === "reject"
+                        ? t.detail.result.copyLint.rejectBadge
+                        : t.detail.result.copyLint.warnBadge}
+                    </span>
+                    <span>
+                      <strong style={{ color: "var(--color-neutral-900)" }}>{f.field}</strong>
+                      {" · "}
+                      {f.reason}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )
+        })()}
 
       <ResultView
         copy={liveCopy}

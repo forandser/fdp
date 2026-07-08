@@ -413,6 +413,17 @@ export const ko = {
         refresh: "후보 새로 받기",
         refreshing: "후보 받는 중...",
       },
+      /**
+       * v5.9(작업L): 결정적 카피 린터 경고 배너 — 생성 직후 코드 점검 결과(AI 호출 0회).
+       * findings 0건이면 배너 미노출. {count}=전체, {reject}=필수 수정 건수.
+       */
+      copyLint: {
+        title: "카피 자동 점검",
+        summary: "다시 볼 곳 {count}군데를 찾았어요",
+        rejectNote: "이 중 {reject}군데는 표시광고·식약처 위험이라 꼭 고쳐주세요.",
+        rejectBadge: "필수",
+        warnBadge: "권고",
+      },
     },
     sectionRegen: {
       button: "🔄 다시",

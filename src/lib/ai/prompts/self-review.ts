@@ -146,8 +146,10 @@ export function buildSelfReviewMessages(
  *  2) 후기가 전량 5.0 만점이면 4점대 솔직 후기 1개 추가 권장 경고.
  *  3) 질병명 + 효능 표현 감지 시 리젝 수준 경고 + 섭취상황 치환 제시(치환 사전은 아래 상수).
  *
- * 소비처(다른 에이전트가 배선): refine-copy.ts 심사 / validate.ts / 생성 폼 경고 배너.
- * 이 파일은 순수 검사 함수·상수만 제공하고 어디에도 자동 배선하지 않는다(파일 소유권 경계).
+ * 소비처(v5.9 작업L 배선): copy-lint.ts 의 lintCopyOutput 이 아래 검사기 3종
+ *   (detectMedicalEfficacy·detectGradeWithoutMetric·detectAllFiveStar)을 직접 호출한다.
+ *   이 파일은 그 검사 함수·사전(효능 치환·질병어·등급어)의 단일 소유자이고, 통합 실행
+ *   래퍼는 copy-lint 쪽에 있다(v5.8 의 휴면 runCopySelfReview 래퍼는 중복이라 제거).
  * ==========================================================================*/
 
 export type CopyReviewSeverity = "warn" | "reject"
@@ -280,24 +282,5 @@ export function detectMedicalEfficacy(text: string): CopyReviewFinding[] {
   ]
 }
 
-/**
- * 규칙 1~3 통합 실행. 생성된 카피 전체 텍스트와 입력 신호를 받아 findings를 모은다.
- * @param copyText  카피 필드를 이어붙인 전체 텍스트(headline·story·keyPoints 등).
- * @param opts.hasBrix   당도(Brix) 입력 존재 여부.
- * @param opts.hasWeight 중량 입력 존재 여부.
- * @param opts.reviewRatings 셀러 입력 후기 별점 배열(미입력은 undefined).
- */
-export function runCopySelfReview(
-  copyText: string,
-  opts: {
-    hasBrix: boolean
-    hasWeight: boolean
-    reviewRatings?: ReadonlyArray<number | null | undefined>
-  },
-): CopyReviewFinding[] {
-  return [
-    ...detectMedicalEfficacy(copyText),
-    ...detectGradeWithoutMetric(copyText, { hasBrix: opts.hasBrix, hasWeight: opts.hasWeight }),
-    ...detectAllFiveStar(opts.reviewRatings ?? []),
-  ]
-}
+// v5.9(작업L): 통합 실행 래퍼 runCopySelfReview 제거.
+// 세 검사기는 copy-lint.ts 의 checkSelfReviewRules 가 직접 조합해 호출한다(중복 래퍼 이중관리 제거).

@@ -3,8 +3,10 @@
 /**
  * 신선도 타임라인 — 수확일·오늘·권장섭취일 3점 가로 타임라인 (v1.8).
  *
- * Whole Foods 패턴: 빨강 미사용 (녹/노랑/오렌지만).
- * 식약처 텍스트 효능 표현을 우회하면서 신선도를 시각화.
+ * v5.9(작업D①): "신선" 상태색을 하드코딩 초록(#52C41A)에서 페이지 코랄 accent 로 단일화.
+ * 페이지 전체가 코랄 시스템인데 이 위젯만 초록 점·막대여서 색 토큰 이탈이었음(아트디렉터 지적).
+ * 경과·주의 단계의 앰버/오렌지는 "노화 경고"라는 의미색이라 그대로 둔다(초록 이탈만 제거).
+ * 초록과일(샤인머스캣 등) 팔레트는 accent 자체가 녹색이라 자연스럽게 정당한 초록으로 렌더됨.
  */
 
 interface FreshnessTimelineProps {
@@ -12,9 +14,11 @@ interface FreshnessTimelineProps {
   harvestDate: string
   /** 권장 섭취 일수 (수확 후 며칠). */
   daysGood: number
+  /** v5.9(작업D①): "신선" 상태 점·진행바 색 = 페이지 accent 코랄(호출부에서 주입). */
+  accentColor: string
 }
 
-export function FreshnessTimeline({ harvestDate, daysGood }: FreshnessTimelineProps) {
+export function FreshnessTimeline({ harvestDate, daysGood, accentColor }: FreshnessTimelineProps) {
   const harvest = new Date(harvestDate)
   if (Number.isNaN(harvest.getTime())) return null
 
@@ -24,8 +28,8 @@ export function FreshnessTimeline({ harvestDate, daysGood }: FreshnessTimelinePr
   const remain = Math.max(0, daysGood - elapsed)
   const progress = Math.min(1, elapsed / daysGood)
 
-  // 색상 단계 (빨강 미사용)
-  let color = "#52C41A" // green
+  // 색상 단계 — v5.9(작업D①): "신선"=코랄 accent, 노화 단계만 앰버/오렌지 경고색.
+  let color = accentColor
   let label = "신선"
   if (elapsed > daysGood) {
     color = "#FA8C16"
