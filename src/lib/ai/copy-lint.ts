@@ -134,9 +134,10 @@ function buildAllowedNumbers(input: CopyInput): AllowedNumbers {
     if (Number.isFinite(v)) nums.add(v)
   }
 
-  // 무해 서수·스텝 번호(01~04 STEP, 1~3위 등) + 보상 시간창 상수(규칙 47/49/60 — 12h/24h)
-  // + 규칙 70 per-100g 고정 기준량 100(가격 환산 "100g당 약 ○○원"의 분모 — 12·24와 동일한 무해 상수).
-  for (const n of [1, 2, 3, 4, 12, 24, 100]) nums.add(n)
+  // 무해 서수·스텝 번호(01~04 STEP, 1~3위 등)의 소수 카운트만 단위 무관 허용.
+  // v6.4(FIX-5): 12·24·100은 단위 무관 허용에서 제외 — "냉동 12개월"·"100일 보관" 같은 창작 우회를
+  //   막는다. 대신 checkFabricatedNumbers에서 단위 인지형으로 허용한다(12·24=시간 단위, 100=g·원·%).
+  for (const n of [1, 2, 3, 4]) nums.add(n)
 
   add(input.brix)
   add(input.avgWeightG)
@@ -232,6 +233,16 @@ function buildAllowedNumbers(input: CopyInput): AllowedNumbers {
 const NUM_UNIT_RE =
   /(\d+(?:[.,]\d+)?)\s*(brix|kg|g|원|℃|도씨|도|시간|개월|주일|주|일|년|%|퍼센트|과|박스|송이|개입|개)/gi
 
+/**
+ * v6.4(FIX-5): 단위 인지형 무해 상수 허용집합.
+ * - 12·24(보상 시간창 상수 12h/24h)는 "시간" 단위일 때만 허용 → "12개월"·"24일"은 걸린다.
+ * - 100(per-100g 환산 분모, "100g당 ○○원")은 g·원·% 단위일 때만 허용 → "100일 보관"은 걸린다.
+ * 달력 월 표기 "12월"은 NUM_UNIT_RE 단위 목록에 "월"이 없어 애초에 매칭되지 않으므로 계속 통과하고,
+ * 기간 단위 "개월"과 자연히 구분된다.
+ */
+const TIME_UNITS = new Set(["시간", "시"])
+const PER100_UNITS = new Set(["g", "원", "%", "퍼센트"])
+
 function checkFabricatedNumbers(
   fields: FieldText[],
   allowed: AllowedNumbers,
@@ -244,6 +255,9 @@ function checkFabricatedNumbers(
       const n = Number(raw.replace(/,/g, ""))
       if (!Number.isFinite(n)) continue
       if (allowed.nums.has(n)) continue
+      // v6.4(FIX-5): 단위 인지형 무해 상수 — 12·24는 시간 단위, 100은 g·원·% 단위일 때만 통과.
+      if ((n === 12 || n === 24) && TIME_UNITS.has(unit)) continue
+      if (n === 100 && PER100_UNITS.has(unit)) continue
       // 셀러 원문 안전망: "숫자+단위" 또는 숫자만 원문에 있으면 통과.
       const joined = (raw + unit).replace(/\s/g, "").toLowerCase()
       if (allowed.rawText.includes(joined)) continue

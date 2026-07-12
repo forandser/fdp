@@ -546,7 +546,12 @@ export interface SuggestKeywordsResult {
 /** 이미지 생성 모델 — 향후 Gemini, gpt-image-1, Firefly 등으로 확장. */
 export type ImageProviderId =
   | "none"
+  // 스토리지 키(저장 providerId)는 "gemini-2.5-flash-image" 하나로 고정 — 절대 변경 금지.
+  // 사용자가 이미 이 ID 아래 키를 저장했다("업데이트마다 키 사라짐"이 최대 불만).
+  // 아래 3.1 ID는 "실제 호출한 모델"을 ImageGenResult.modelId 로만 담기 위한 값이지,
+  // 저장 providerId 로는 쓰지 않는다(레지스트리/게이트 검사 문자열은 2.5 그대로).
   | "gemini-2.5-flash-image"
+  | "gemini-3.1-flash-image"
   | "gpt-image-1"
   | "photoroom"
   | "firefly-4"

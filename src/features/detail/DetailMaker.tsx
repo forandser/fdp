@@ -1492,6 +1492,18 @@ export function DetailMaker({
   /** 결과 카피 인라인 편집 → 작업 자동 갱신 */
   const handleCopyChange = (next: CopyOutput) => {
     setResult(next)
+    // v6.4(FIX-1): 낡은 레터링 무효화 — 헤드라인 "텍스트"가 바뀌는 모든 경로(후보 칩 클릭·
+    // 헤드라인 섹션 재생성·인라인 편집)는 전부 handleCopyChange 를 지난다. 여기서 옛 타이포
+    // blob/URL 이 있는데 headline 이 실제로 달라졌으면 즉시 폐기해 JPG에 옛 레터링이 박제되는 것을
+    // 막는다. 아래 저장 블록에도 이 무효화를 반영한다(state 비동기 전에 정확).
+    // (전체 재생성 경로 1311·1975 는 result 를 거치지 않는 별도 초기화라 충돌하지 않는다.)
+    const headlineChanged =
+      (next.headline ?? "").trim() !== (result?.headline ?? "").trim()
+    const invalidateTypo =
+      headlineChanged && (typoHeadlineBlob != null || typoHeadlineUrl != null)
+    if (invalidateTypo) {
+      applyTypoBlob(null)
+    }
     // v5.9(작업L): 인라인 편집 후에도 린터 경고를 최신 상태로(currentInput 기준 재검사).
     if (currentInput) {
       try {
@@ -1529,7 +1541,8 @@ export function DetailMaker({
             // v6.1(작업E2): 숨긴 섹션 목록 유지(인라인 편집 저장 시에도 유실 방지).
             hiddenSections: hiddenSections.length > 0 ? hiddenSections : undefined,
             // v6.3(작업3): 타이포 헤드라인 유지(인라인 편집 저장 시에도 유실 방지).
-            typoHeadlineBlob: typoHeadlineBlob ?? undefined,
+            // v6.4(FIX-1): 헤드라인 텍스트가 바뀌어 무효화된 경우엔 null 로 저장(옛 레터링 박제 방지).
+            typoHeadlineBlob: invalidateTypo ? undefined : (typoHeadlineBlob ?? undefined),
           }
           await saveWork(work)
         } catch (e) {

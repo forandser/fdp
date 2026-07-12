@@ -196,5 +196,19 @@ export function mergeSection(
   if (nextOverrides && Object.keys(nextOverrides).length > 0) {
     merged.textOverrides = nextOverrides
   }
+  // v6.4(FIX-2): sectionTitles(AI 섹션 제목)도 옵셔널 — 섹션 재생성 patch엔 없으므로
+  // current 값을 보존한다. (이 처리가 없으면 아무 섹션이나 재생성할 때 AI가 지은 섹션 제목이 사라진다.)
+  const nextSectionTitles =
+    "sectionTitles" in patch ? patch.sectionTitles : current.sectionTitles
+  if (nextSectionTitles && Object.keys(nextSectionTitles).length > 0) {
+    merged.sectionTitles = nextSectionTitles
+  }
+  // v6.4(FIX-2): compositionHints(구성 힌트)도 옵셔널 — 섹션 재생성 patch엔 없으므로
+  // current 값을 보존한다. (이 처리가 없으면 아무 섹션이나 재생성할 때 구성 힌트가 사라진다.)
+  const nextCompositionHints =
+    "compositionHints" in patch ? patch.compositionHints : current.compositionHints
+  if (nextCompositionHints) {
+    merged.compositionHints = nextCompositionHints
+  }
   return merged
 }

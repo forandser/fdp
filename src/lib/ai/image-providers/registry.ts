@@ -55,8 +55,9 @@ export const IMAGE_PROVIDER_OPTIONS: Array<{
   consoleUrl: string
 }> = [
   {
+    // id 는 스토리지 키 — 절대 변경 금지("gemini-2.5-flash-image"). 호출 모델만 3.1로 갱신됨.
     id: "gemini-2.5-flash-image",
-    label: "Gemini 2.5 Flash Image (나노바나나)",
+    label: "나노바나나 2 (Gemini 3.1 Flash Image)",
     description: "Google AI Studio · $0.039/장. 사진 합성·배경 교체에 강함.",
     consoleUrl: "https://aistudio.google.com/app/apikey",
   },

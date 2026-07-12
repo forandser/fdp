@@ -63,6 +63,11 @@ export async function exportNodeAsSlicedJpg(
   // 내보내기 위생: 편집 전용 UI(재생성 버튼·편집 장식 등)는 JPG에 남으면 안 됨.
   // 원본이 아니라 클론에서만 제거 → 화면 UI는 그대로 유지.
   clone.querySelectorAll("[data-edit-chrome]").forEach((el) => el.remove())
+  // v6.4(FIX-3): .fdp-no-print(신선도 위젯·검수 패널 등)의 display:none 은 @media print 에만 있어
+  // html-to-image 화면 캡처엔 그대로 찍힌다(신선도 위젯의 new Date() 로 비결정 오염까지). 편집 크롬과
+  // 동일하게 클론에서 제거 → JPG 미포함. sections 모드의 직속 자식 열거·높이 계산은 이 제거 이후에
+  // 이뤄지므로(아래 :scope > * 열거) 빈 슬라이스가 생기지 않는다(height 0 필터로도 이중 차단).
+  clone.querySelectorAll(".fdp-no-print").forEach((el) => el.remove())
   // 인라인 편집 hover 하이라이트(React state라 클론에 복사됨)를 중화 —
   // 편집 직후 마우스가 안 움직인 채 내보내면 파란 배경이 JPG에 찍히던 버그 방지.
   clone.querySelectorAll<HTMLElement>("[data-inline-edit]").forEach((el) => {

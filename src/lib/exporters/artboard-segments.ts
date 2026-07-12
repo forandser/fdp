@@ -62,6 +62,9 @@ export async function captureArtboardSegments(
   // 1) 위생 클론: 편집 전용 UI 제거 + 인라인 편집 hover 배경 중화(내보내기와 동일 규칙).
   const clone = source.cloneNode(true) as HTMLElement
   clone.querySelectorAll("[data-edit-chrome]").forEach((el) => el.remove())
+  // v6.4(FIX-3): .fdp-no-print 의 display:none 은 @media print 에만 있어 html-to-image 화면 캡처엔
+  // 그대로 찍힌다(신선도 위젯 new Date() 비결정 오염 포함). 편집 크롬과 동일하게 클론에서 제거.
+  clone.querySelectorAll(".fdp-no-print").forEach((el) => el.remove())
   clone.querySelectorAll<HTMLElement>("[data-inline-edit]").forEach((el) => {
     el.style.background = "transparent"
   })

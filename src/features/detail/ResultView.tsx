@@ -888,7 +888,13 @@ function renderHeadlineAccent(value: string, accentColor: string): React.ReactNo
   while ((m = HEADLINE_TOKEN_RE.exec(value)) !== null) {
     if (m.index > last) parts.push(value.slice(last, m.index))
     parts.push(
-      <span key={`ht${k++}`} style={{ color: accentColor }}>
+      // v6.4(D4): 레터링 미사용 폴백 헤드라인 임팩트 — 액센트 토큰(숫자+단위)에 색 + 스케일
+      //   대비(1.1em). fontWeight 는 상속(headingWeight) 유지. lineHeight:1 로 고정해 h1
+      //   행간(1.14) 안에 들어오게 하므로 줄높이 순증 0(제1원칙). verticalAlign baseline.
+      <span
+        key={`ht${k++}`}
+        style={{ color: accentColor, fontSize: "1.1em", lineHeight: 1, verticalAlign: "baseline" }}
+      >
         {m[0]}
       </span>,
     )
@@ -1510,6 +1516,28 @@ function veilTint(soft: string): string {
 }
 
 /**
+ * v6.4(D2): 약관/마감 단락 선두 액센트 도트. 인라인 요소라 큰 lineHeight(1.7) 안에 들어와
+ * 줄 수·높이 순증 0. 시각 앵커만 더해 하단 민무늬 카드 3연속을 해소한다.
+ */
+function AccentLeadDot({ accent, isMobile }: { accent: AccentPalette; isMobile: boolean }) {
+  return (
+    <span
+      aria-hidden
+      style={{
+        display: "inline-block",
+        width: isMobile ? 7 : 10,
+        height: isMobile ? 7 : 10,
+        borderRadius: "50%",
+        background: accent.accent,
+        marginRight: isMobile ? 8 : 12,
+        verticalAlign: "middle",
+        flexShrink: 0,
+      }}
+    />
+  )
+}
+
+/**
  * 곡선 섹션 전환 divider — 위 섹션(topColor) 바닥에서 아래 섹션(fillColor)이
  * 완만한 아치로 솟아오른다. 인라인 SVG path 하나(레퍼런스 지시 2).
  * height는 곡선 깊이. flip=true면 아래로 파인 곡선(돔 대신 골).
@@ -1961,7 +1989,16 @@ export function splitStoryHighlight(
  * 검증이 필요 없는 안전 문구("꼼꼼 선별"/"신선 포장")로 대체해 항상 4칸 유지.
  * TrustBadgesRow/CheckoutTrustStrip의 기존 게이팅 패턴과 동일한 원칙.
  */
-function ValuePropStrip({ isMobile, trust }: { isMobile: boolean; trust?: TrustInfo }) {
+function ValuePropStrip({
+  isMobile,
+  trust,
+  heroChips,
+}: {
+  isMobile: boolean
+  trust?: TrustInfo
+  /** v6.4(D1b): 히어로 신뢰 체크칩(highlightBadges)의 정규화 집합. 트리오 항목과 2개 이상 겹치면 카드 생략. */
+  heroChips?: Set<string>
+}) {
   const accent = useAccent()
   const layout = useLayout()
   const vp = t.detail.result.valueProp
@@ -1998,6 +2035,16 @@ function ValuePropStrip({ isMobile, trust }: { isMobile: boolean; trust?: TrustI
     if (seen.has(it.label)) continue
     seen.add(it.label)
     items.push(it)
+  }
+
+  // v6.4(D1b 반복 회수): 히어로 신뢰 체크칩과 트리오 항목이 2개 이상 겹치면 카드 전체 생략(길이 순감).
+  //   겹침 판정은 공백·기호 제거 정규화 비교("당일수확"="당일 수확"). 1개 이하 겹침이면 유지.
+  if (heroChips && heroChips.size > 0) {
+    let overlap = 0
+    for (const it of items) {
+      if (heroChips.has(normalizeNameForCompare(it.label))) overlap++
+    }
+    if (overlap >= 2) return null
   }
 
   const iconSize = isMobile ? 46 : 78
@@ -2557,27 +2604,55 @@ export function ResultView({
   }, [onomatopoeia, photoVariants.collageActive, photoVariants.cutActive, imagePlan.breaks])
 
   /**
-   * v5.8(작업③A): 핀 콜아웃 칩 — 셀러가 고른 highlightBadges(감각/특징 어휘)에서만 뽑는다(창작 금지).
-   * 짧은 어휘(≤10자)만, 중복 제거, 최대 4개. 3개 미만이면 콜아웃 미발동(현행 POINT 카드 유지).
+   * v6.4(D1a): 히어로에 실제 렌더되는 신뢰 체크칩(highlightBadges — origin 중복 제외, 최대 4)의
+   * 정규화 집합. 핀 콜아웃·아이콘 트리오가 이 집합과 겹치는 항목을 회수하는 데 쓴다(반복 회수).
+   */
+  const heroTrustChipNorms = useMemo(() => {
+    const oNorm = origin?.trim()
+    const norms = new Set<string>()
+    let cnt = 0
+    for (const b of copy.highlightBadges ?? []) {
+      const w = b.trim()
+      if (!w) continue
+      if (oNorm && w === oNorm) continue // 히어로에서 origin 중복 배지는 걸러짐(L4483)
+      norms.add(normalizeNameForCompare(w))
+      cnt++
+      if (cnt >= 4) break // 히어로는 최대 4개 렌더(slice(0,4))
+    }
+    return norms
+  }, [copy.highlightBadges, origin])
+  /**
+   * v6.4(D1a 반복 회수): 핀 콜아웃 칩 — 히어로 신뢰 체크칩과 정규화 텍스트가 겹치는 항목은 제외한다
+   * (페이지 3번째 반복 방지). 후보 우선순위: ① photoAnalysis visibleNote(사진에서 보이는 특징) →
+   * ② 히어로 칩과 겹치지 않는 나머지(비신뢰) highlightBadges. 짧은 어휘(≤10자)만·중복 제거·최대 4개.
+   * 잔여 칩 2개 미만이면 콜아웃 미발동(현행 POINT 카드 유지 — 게이팅 관성).
    */
   const calloutChips = useMemo(() => {
     const seen = new Set<string>()
     const out: string[] = []
-    for (const raw of copy.highlightBadges ?? []) {
+    const tryPush = (raw: string) => {
+      if (out.length >= 4) return
       const w = raw.trim()
-      if (!w || w.length > 10 || seen.has(w)) continue
-      seen.add(w)
+      if (!w || w.length > 10) return
+      const n = normalizeNameForCompare(w)
+      if (!n || heroTrustChipNorms.has(n) || seen.has(n)) return
+      seen.add(n)
       out.push(w)
-      if (out.length >= 4) break
     }
+    // ① 사진에서 보이는 특징(visibleNote, 안전 필터 통과분만)
+    for (const it of photoAnalysis ?? []) {
+      if (it && isCaptionSafeNote(it.visibleNote)) tryPush(it.visibleNote)
+    }
+    // ② 히어로 칩과 겹치지 않는 나머지 highlightBadges
+    for (const raw of copy.highlightBadges ?? []) tryPush(raw)
     return out
-  }, [copy.highlightBadges])
+  }, [copy.highlightBadges, photoAnalysis, heroTrustChipNorms])
   /**
    * 콜아웃을 적용할 POINT 원본 인덱스 — 출하 체크리스트로 승격돼 숨겨지지 않은 "첫" 노출 POINT 중
-   * 사진이 배정된 것. 칩 3개 미만이거나 대상이 없으면 -1(현행 대형 카드 렌더).
+   * 사진이 배정된 것. 칩 2개 미만이거나 대상이 없으면 -1(현행 대형 카드 렌더).
    */
   const calloutIndex = useMemo(() => {
-    if (calloutChips.length < 3) return -1
+    if (calloutChips.length < 2) return -1
     // v6.0(작업C): compositionHints.calloutTargetIndex 오버라이드 — 유효(범위·미숨김·사진 배정)할 때만.
     // 무효(범위 밖·숨겨진 POINT·사진 없음)면 아래 현행 "첫 노출 POINT" 로직으로 폴백(회귀 0).
     const hintIdx = copy.compositionHints?.calloutTargetIndex
@@ -2908,7 +2983,7 @@ export function ResultView({
 
             {/* v2.5: 가치 제안 스트립 — 강한 주장은 trust 체크 시에만, 미체크는 안전 문구 */}
             <SectionShell id="valueProp" isMobile={isMobile}>
-              <ValuePropStrip isMobile={isMobile} trust={trust} />
+              <ValuePropStrip isMobile={isMobile} trust={trust} heroChips={heroTrustChipNorms} />
             </SectionShell>
 
             {/* 2a. FreshnessTimeline — 수확일 + fruit-facts 보관 일수 (v1.8)
@@ -3747,7 +3822,8 @@ function RecipeBlock({
   const name = productName.trim() || "이 상품"
   return (
     <div style={{ padding: `${padY("flow", isMobile)}px ${isMobile ? 24 : 44}px`, background: "#FFFFFF" }}>
-      <div style={{ textAlign: "center", marginBottom: isMobile ? 24 : 40 }}>
+      {/* v6.4(D5): 타이틀↔칩 여백 압축(순감) — 대형 타이틀+칩 3개만 둥둥 뜨던 밀도 대비 소비 높이를 줄인다. */}
+      <div style={{ textAlign: "center", marginBottom: isMobile ? 16 : 24 }}>
         <h2
           style={{
             fontSize: isMobile ? 30 : 50,
@@ -6979,10 +7055,10 @@ function KeyPointsBig({
         const bgTints = ["#FFFFFF", "#FAFBFC", accent.soft]
         const bg = bgTints[i % bgTints.length]
 
-        // v5.8(작업③A): 핀 콜아웃 — 지정 인덱스 & 사진 & 칩 3개+ 일 때 대형 카드를 콜아웃으로 대체.
+        // v5.8(작업③A)+v6.4(D1a): 핀 콜아웃 — 지정 인덱스 & 사진 & (히어로 칩 제외 후) 칩 2개+ 일 때 대형 카드를 콜아웃으로 대체.
         //   칩(셀러 highlightBadges)을 사진 4모서리(10·2·5·7시)에 알약으로 얹고 SVG 지시선으로 잇는다.
         //   POINT 텍스트(제목·본문)는 컴팩트하게 아래 배치 — 편집 경로(keyPoints[i].*) 그대로 보존.
-        if (calloutIndex === i && img && (calloutChips?.length ?? 0) >= 3) {
+        if (calloutIndex === i && img && (calloutChips?.length ?? 0) >= 2) {
           const chips = (calloutChips ?? []).slice(0, 4)
           const cbox = crop.boxOf(img)
           return (
@@ -8388,6 +8464,7 @@ function DeliveryBlock({
   trust?: TrustInfo
   productName: string
 }) {
+  const accent = useAccent()
   // 허위광고 방지: "당일 발송" 확정 약속은 셀러가 sameDayHarvest를 체크한 경우에만 노출.
   const sameDay = !!trust?.sameDayHarvest
   // v5.3(작업6): 배송 안내 문단 fallback을 과일 보관 성격으로 변주(슬롯 id는 그대로).
@@ -8402,11 +8479,13 @@ function DeliveryBlock({
     >
       {/* v3.8(지시3): 배송 안내는 약관류 — quiet 위계(작고 SUB 색). */}
       <SectionTitle title={t.detail.result.deliveryTitle} variant="quiet" isMobile={isMobile} editId="sect.delivery.title" overline="DELIVERY" editOverlineId="sect.delivery.overline" />
-      {/* v2.4: 초록 배경·주황 원형 이모지 삭제 → 얇은 라인 카드 */}
+      {/* v2.4: 초록 배경·주황 원형 이모지 삭제 → 얇은 라인 카드
+          v6.4(D2): 약관류 3연속 민무늬 해소 — 배경 1단 틴트 교차(배송=틴트) + 단락 선두 액센트 도트.
+          폰트·줄수·패딩 불변(높이 순증 0). */}
       <div
         style={{
           padding: isMobile ? "24px 24px" : "40px 44px",
-          background: "#FFFFFF",
+          background: veilTint(accent.soft),
           borderRadius: 6,
           border: `1px solid ${LINE}`,
         }}
@@ -8420,6 +8499,7 @@ function DeliveryBlock({
             fontFamily: BODY_FONT,
           }}
         >
+          <AccentLeadDot accent={accent} isMobile={isMobile} />
           <OverrideText
             id="delivery.body"
             fallback={deliveryBodyFallback}
@@ -9023,6 +9103,7 @@ function FarmStoryBlock({
 }
 
 function ReturnsBlock({ isMobile, trust }: { isMobile: boolean; trust?: TrustInfo }) {
+  const accent = useAccent()
   // C11: 환불 신청 기한 — refundGuarantee.windowHours 입력이 있으면 그 값으로,
   // 없으면 "수령 당일". condition만 있고 windowHours가 없으면 기본 문구 유지(시간 값 없음).
   const rg = trust?.refundGuarantee
@@ -9042,7 +9123,8 @@ function ReturnsBlock({ isMobile, trust }: { isMobile: boolean; trust?: TrustInf
     >
       {/* v3.8(지시3): 교환·환불은 약관류 — quiet 위계. */}
       <SectionTitle title={t.detail.result.returnsTitle} variant="quiet" isMobile={isMobile} editId="sect.returns.title" overline="POLICY" editOverlineId="sect.returns.overline" />
-      {/* v2.4: 원형 이모지·BG_SOFT 배경 삭제 → 얇은 라인 카드 */}
+      {/* v2.4: 원형 이모지·BG_SOFT 배경 삭제 → 얇은 라인 카드
+          v6.4(D2): 틴트 교차의 흰색 차례(배송=틴트 → 교환환불=흰색 → 주의=틴트) + 단락 선두 액센트 도트. */}
       <div
         style={{
           padding: isMobile ? "24px 24px" : "40px 44px",
@@ -9060,6 +9142,7 @@ function ReturnsBlock({ isMobile, trust }: { isMobile: boolean; trust?: TrustInf
             fontFamily: BODY_FONT,
           }}
         >
+          <AccentLeadDot accent={accent} isMobile={isMobile} />
           <OverrideText
             id="returns.body"
             fallback={body}
@@ -9084,6 +9167,7 @@ function CautionsBlock({
   isMobile: boolean
 }) {
   const { onCopyChange } = useEdit()
+  const accent = useAccent()
   // D17: cautions 항목이 faq 답변(a) 또는 storage와 트림 기준 정확 일치하면 렌더 생략.
   const dupeSet = new Set<string>()
   if (copy.storage?.trim()) dupeSet.add(copy.storage.trim())
@@ -9102,11 +9186,12 @@ function CautionsBlock({
         background: "#FFFFFF",
       }}
     >
-      {/* v2.4: 빨강·노랑 경고 박스 삭제 → 얇은 회색 라인 카드 하나로 통합 */}
+      {/* v2.4: 빨강·노랑 경고 박스 삭제 → 얇은 회색 라인 카드 하나로 통합
+          v6.4(D2): 틴트 교차의 틴트 차례(주의) + 단락 선두 액센트 도트. 폰트·줄수·패딩 불변. */}
       <div
         style={{
           padding: isMobile ? "24px 24px" : "40px 44px",
-          background: "#FFFFFF",
+          background: veilTint(accent.soft),
           borderRadius: 6,
           border: `1px solid ${LINE}`,
         }}
@@ -9121,6 +9206,7 @@ function CautionsBlock({
             fontFamily: BODY_FONT,
           }}
         >
+          <AccentLeadDot accent={accent} isMobile={isMobile} />
           <OverrideText
             id="cautions.notice"
             fallback={t.detail.result.cautionsAutoNotice}
@@ -9225,21 +9311,28 @@ function ClosingSignature({
     <div
       style={{
         padding: isMobile ? "8px 24px 52px" : "16px 44px 88px",
-        background: "#FFFFFF",
+        // v6.4(D3): 흰색 → 옅은 액센트 틴트 밴드 배경으로 마무리를 하나의 존으로 묶는다(높이 불변).
+        background: veilTint(accent.soft),
         textAlign: "center",
       }}
     >
-      {/* 가는 구분선 — 중앙 정렬, accent 옅은 톤 */}
+      {/* v6.4(D3): 기존 가는 구분선 슬롯을 작은 오버라인으로 대체 — 마무리 문구 위계(오버라인 → 본문
+          → 강조 서명)를 세운다. 폰트 11/14·lineHeight 1·마진 12/16 → 구분선(2+22 / 2+32) 예산 이내라
+          총높이 순증 0. 기존 OverrideText 슬롯은 유지하고 오버라인 슬롯만 신설(저장 데이터 보존). */}
       <div
-        aria-hidden
         style={{
-          width: isMobile ? 40 : 64,
-          height: 2,
-          background: accent.accent,
-          borderRadius: 2,
-          margin: isMobile ? "0 auto 22px" : "0 auto 32px",
+          fontSize: isMobile ? 11 : 14,
+          fontWeight: 800,
+          letterSpacing: isMobile ? 2 : 3,
+          color: accent.accent,
+          fontFamily: BODY_FONT,
+          lineHeight: 1,
+          textTransform: "uppercase",
+          margin: isMobile ? "0 auto 12px" : "0 auto 16px",
         }}
-      />
+      >
+        <OverrideText id="closing.overline" fallback="Thank you" maxLength={24} />
+      </div>
       {/* 잎 라인 아이콘 (+ v4.9-A 클로징 서명 옆 과일 모티프 — 품종 매칭 시만) */}
       <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: isMobile ? 10 : 16, marginBottom: isMobile ? 14 : 20 }}>
         {motifKind && (
@@ -9269,12 +9362,14 @@ function ClosingSignature({
       {signature && (
         <p
           style={{
+            // v6.4(D3): 서명 강조 — 크기·마진·줄높이는 그대로 두고(높이 불변) 무게 900·풀채도
+            //   accent 색·레터링 간격으로 마무리 위계의 정점을 만든다.
             fontSize: isMobile ? 15 : 24,
-            color: accent.dark,
-            fontWeight: 800,
+            color: accent.accent,
+            fontWeight: 900,
             fontFamily: BODY_FONT,
             margin: isMobile ? "10px 0 0" : "14px 0 0",
-            letterSpacing: 0.3,
+            letterSpacing: 0.5,
             wordBreak: "keep-all",
           }}
         >

@@ -355,6 +355,11 @@ export class AnthropicAdapter implements AIProvider {
           if (!refined.compositionHints && draftOutput.compositionHints) {
             refined.compositionHints = draftOutput.compositionHints
           }
+          // v6.4(FIX-4): AI 섹션 제목 패스스루 — refine 프롬프트는 sectionTitles를 모르므로 정상
+          // 경로에서 대개 드롭한다. draft가 낸 섹션 제목을 보존해 v6.2 기능이 무력화되지 않게 한다.
+          if (!refined.sectionTitles && draftOutput.sectionTitles) {
+            refined.sectionTitles = draftOutput.sectionTitles
+          }
           finalOutput = refined
           refineInputTokens = refineRes.usage?.input_tokens ?? 0
           refineOutputTokens = refineRes.usage?.output_tokens ?? 0
