@@ -1515,6 +1515,59 @@ function veilTint(soft: string): string {
   return `#${mix(0)}${mix(2)}${mix(4)}`
 }
 
+/* ============================================================ */
+/* v6.5 과일별 테마 소비 헬퍼 — 전부 "테마 필드 존재 시에만" 분기.  */
+/* ------------------------------------------------------------ */
+/* ★ 폴백 불변식: 미매칭 과일(DEFAULT_ACCENT=bare RED)은 heroGrad/  */
+/*   punchDeep/chipTint 가 undefined 라 아래 함수가 전부 기존 값을  */
+/*   그대로 반환 → v6.4 렌더와 픽셀 100% 동일. 반환은 전부 구체 hex  */
+/*   /linear-gradient(hex) — CSS 변수·oklch 없음(toCanvas 안전).    */
+/* ============================================================ */
+
+/** 테마(매칭 과일) 여부 — chipTint 존재가 테마 팔레트의 단일 판정자. */
+function hasTheme(a: AccentPalette): boolean {
+  return a.chipTint != null
+}
+
+/** 히어로 배경 — 테마 heroGrad 있으면 수직 그라데이션, 없으면 기존 단색 heroBg.
+ *  soft 변주는 자체 "진하게" 단색 로직(mixHex)을 유지한다(그라데이션과 충돌 회피 — 기존 유지). */
+function heroBackground(layout: LayoutTokens, a: AccentPalette): string {
+  if (a.heroGrad && layout.variant !== "soft") {
+    return `linear-gradient(to bottom, ${a.heroGrad[0]}, ${a.heroGrad[1]})`
+  }
+  return layout.heroBg(a)
+}
+
+/** 히어로 "이미지 밴드" 배경 — 타이틀 밴드 그라데이션이 끝난 색(heroGrad[1])을 단색으로
+ *  이어받는다. 두 스택 div 에 그라데이션을 각각 걸면 경계에서 재시작 역단차(seam)가 생기므로
+ *  아래 밴드는 끝색 연속으로 무이음. 테마 없으면 기존 heroBg 그대로(폴백 불변). */
+function heroBackgroundTail(layout: LayoutTokens, a: AccentPalette): string {
+  if (a.heroGrad && layout.variant !== "soft") return a.heroGrad[1]
+  return layout.heroBg(a)
+}
+
+/** 칩·stat 셀 배경 — 테마 chipTint 있으면 그 값, 없으면 넘겨준 기존 배경(accent.soft/흰색 등). */
+function chipBg(a: AccentPalette, fallback: string): string {
+  return a.chipTint ?? fallback
+}
+
+/** 클로징 밴드 배경 — 테마 punchDeep의 아주 옅은 파생 틴트(밝기 유지·색조만 과일 톤).
+ *  없으면 기존 veilTint(soft). punchDeep 을 흰색에 6%만 섞어 소프트 틴트와 동급 명도 유지. */
+function closingBandBg(a: AccentPalette): string {
+  if (a.punchDeep) return mixHex("#FFFFFF", a.punchDeep, 0.06)
+  return veilTint(a.soft)
+}
+
+/** 폴라로이드/콜라주 종이색 — 테마 있으면 아주 미세한 웜 화이트, 없으면 순백(기존). */
+function paperWhite(a: AccentPalette): string {
+  return hasTheme(a) ? "#FFFDFB" : "#FFFFFF"
+}
+
+/** 2톤 아이콘 보조획 색 — 테마 있을 때만 secondary, 없으면 undefined(단색 폴백 = 기존). */
+function iconSecondary(a: AccentPalette): string | undefined {
+  return hasTheme(a) ? a.secondary : undefined
+}
+
 /**
  * v6.4(D2): 약관/마감 단락 선두 액센트 도트. 인라인 요소라 큰 lineHeight(1.7) 안에 들어와
  * 줄 수·높이 순증 0. 시각 앵커만 더해 하단 민무늬 카드 3연속을 해소한다.
@@ -2082,7 +2135,7 @@ function ValuePropStrip({
               borderLeft: i > 0 ? `2px dotted ${accent.soft}` : "none",
             }}
           >
-            <Icon color={accent.accent} size={iconSize} />
+            <Icon color={accent.accent} secondary={iconSecondary(accent)} size={iconSize} />
             <span
               style={{
                 fontSize: isMobile ? 15 : 26,
@@ -3869,7 +3922,7 @@ function RecipeBlock({
               alignItems: "center",
               gap: isMobile ? 8 : 12,
               padding: isMobile ? "14px 22px" : "24px 40px",
-              background: accent.soft,
+              background: chipBg(accent, accent.soft), // v6.5: 테마 chipTint(없으면 soft)
               borderRadius: 999,
               fontSize: isMobile ? 18 : 32,
               fontWeight: 800,
@@ -4190,7 +4243,7 @@ function HeroBlock({
         style={{
           padding: isMobile ? "44px 24px 30px" : "72px 44px 40px",
           textAlign: layout.heroAlign,
-          background: layout.heroBg(accent),
+          background: heroBackground(layout, accent),
           position: "relative",
           overflow: "hidden",
           isolation: "isolate",
@@ -4245,7 +4298,7 @@ function HeroBlock({
               {/* v4.9-A: 킥커 왼쪽 rule 앞 작은 모티프(킥커 폰트 크기 정도, accent 색).
                   품종 매칭(motifKind) 있을 때만. FruitMotif 는 미지원 kind 면 null(안전). */}
               {motifKind && (
-                <FruitMotif kind={motifKind} size={isMobile ? 16 : 24} color={accent.accent} />
+                <FruitMotif kind={motifKind} size={isMobile ? 16 : 24} color={accent.accent} secondary={iconSecondary(accent)} />
               )}
               {/* 좌측 짧은 rule — 디자이너 킥커 디테일 */}
               <span
@@ -4413,7 +4466,7 @@ function HeroBlock({
           position: "relative",
           zIndex: 1,
           marginTop: isMobile ? -20 : -28,
-          background: layout.heroBg(accent),
+          background: heroBackgroundTail(layout, accent),
         }}
       >
         {/* 기울어진 당도 스티커(지시3) — brix 입력이 있을 때만. 사실 데이터만. */}
@@ -4972,7 +5025,7 @@ function StoryBlock({
               리본과 한 줄 중앙 정렬(리본 자체 좌우 tail 여백이 간격 역할). */}
           <span style={{ display: "inline-flex", alignItems: "center", verticalAlign: "middle" }}>
             {motifKind && (
-              <FruitMotif kind={motifKind} size={isMobile ? 18 : 28} color={accent.accent} />
+              <FruitMotif kind={motifKind} size={isMobile ? 18 : 28} color={accent.accent} secondary={iconSecondary(accent)} />
             )}
             <RibbonLabel text="STORY" accent={accent} isMobile={isMobile} editId="story.ribbon" />
           </span>
@@ -5169,7 +5222,8 @@ function SensoryPunchBlock({
   const motifKind = useMotifKind() // v5.2-A ③: 임팩트 카피 모서리 반짝(품종 매칭 시만).
   const crop = useCrop() // v5.1-A2: 감각 사진 주체 클로즈업(분석 있을 때만).
   // 틴트 버전: 밝은 배경(veilTint) + INK 헤드 + accent 하이라이트. 검정 버전: 검정 배경 + 밝은 카피.
-  const bg = tinted ? veilTint(accent.soft) : PUNCH_BG
+  // v6.5: 다크 밴드는 테마 punchDeep(과일 딥 톤)로 대체(없으면 기존 #1A1A1A). 흰/밝은 카피 대비 검증 완료.
+  const bg = tinted ? veilTint(accent.soft) : accent.punchDeep ?? PUNCH_BG
   // v5.1-A2: subjectBox 가 있고 비흐림이면 주체 클로즈업, 아니면 기존 cover(불변식).
   const punchBox = crop.boxOf(image)
   const punchRatio = isMobile ? 4 / 3 : 16 / 9
@@ -5786,7 +5840,7 @@ function PolaroidCollageBlock({
           <div
             key={img.id}
             style={{
-              background: "#FFFFFF",
+              background: paperWhite(accent), // v6.5: 테마 있으면 미세 웜 화이트, 없으면 순백
               padding: isMobile ? "8px 8px 26px" : "10px 10px 34px",
               borderRadius: 3,
               boxShadow: "0 8px 22px rgba(0,0,0,0.16)",
@@ -6369,7 +6423,7 @@ function BentoDataGrid({
         key={`spec-${i}`}
         style={{
           gridColumn: fullSpan ? "1 / -1" : undefined,
-          background: "#FFFFFF",
+          background: chipBg(accent, "#FFFFFF"), // v6.5: 테마 chipTint(없으면 흰색) — 벤토 stat 셀
           border: `1px solid ${LINE}`,
           borderRadius: 18, // v5.8(작업②): 벤토 radius(16~20급)
           padding: isMobile ? "24px 24px" : "32px 34px",
@@ -6550,7 +6604,7 @@ function BentoDataGrid({
             <div
               style={{
                 gridColumn: "1 / -1",
-                background: accent.soft,
+                background: chipBg(accent, accent.soft), // v6.5: 테마 chipTint(없으면 soft) — 가격 stat 셀
                 border: `1px solid ${accent.soft}`,
                 borderRadius: 18,
                 padding: isMobile ? "24px 24px" : "32px 34px",
@@ -6700,7 +6754,7 @@ function BentoDataGrid({
             <div
               style={{
                 gridColumn: "1 / -1",
-                background: "#FFFFFF",
+                background: chipBg(accent, "#FFFFFF"), // v6.5: 테마 chipTint(없으면 흰색) — 출하 체크리스트
                 border: `1px solid ${LINE}`,
                 borderRadius: 18,
                 padding: isMobile ? "22px 24px" : "30px 34px",
@@ -7753,7 +7807,7 @@ function ReceiveTimelineBlock({
                         width: circle,
                         height: circle,
                         borderRadius: "50%",
-                        background: "#FFFFFF",
+                        background: chipBg(accent, "#FFFFFF"), // v6.5: 테마 chipTint 노드 배경(없으면 흰색)
                         // v5.9(작업D①): 수령 타임라인 노드 링의 보조 그린 제거 → 코랄 muted 링으로 통일.
                         border: `${isMobile ? 2 : 3}px solid ${mutedAccent(accent)}`,
                         display: "flex",
@@ -7764,7 +7818,7 @@ function ReceiveTimelineBlock({
                         flexShrink: 0,
                       }}
                     >
-                      <Icon color={accent.accent} size={isMobile ? 22 : 34} />
+                      <Icon color={accent.accent} secondary={iconSecondary(accent)} size={isMobile ? 22 : 34} />
                     </div>
                     {/* 배지 슬롯 — 고정 높이로 노드별 라벨 수평 정렬 유지(D+0은 수령 노드만). */}
                     <div
@@ -8255,7 +8309,7 @@ function DeliveryFlowBlock({
                     width: circle,
                     height: circle,
                     borderRadius: "50%",
-                    background: "#FFFFFF",
+                    background: chipBg(accent, "#FFFFFF"), // v6.5: 테마 chipTint 배지 배경(없으면 흰색)
                     border: `2.5px solid ${accent.accent}`,
                     display: "flex",
                     alignItems: "center",
@@ -8263,7 +8317,7 @@ function DeliveryFlowBlock({
                     boxShadow: "0 2px 10px rgba(0,0,0,0.06)",
                   }}
                 >
-                  <Icon color={accent.accent} size={isMobile ? 36 : 46} />
+                  <Icon color={accent.accent} secondary={iconSecondary(accent)} size={isMobile ? 36 : 46} />
                 </div>
                 {/* 작은 번호 — 원 좌상단에 겹쳐 붙는 accent 배지 */}
                 <div
@@ -9312,7 +9366,8 @@ function ClosingSignature({
       style={{
         padding: isMobile ? "8px 24px 52px" : "16px 44px 88px",
         // v6.4(D3): 흰색 → 옅은 액센트 틴트 밴드 배경으로 마무리를 하나의 존으로 묶는다(높이 불변).
-        background: veilTint(accent.soft),
+        // v6.5: 테마 있으면 punchDeep 파생 옅은 틴트(밝기 유지·색조만 과일 톤), 없으면 기존 veilTint.
+        background: closingBandBg(accent),
         textAlign: "center",
       }}
     >
@@ -9336,7 +9391,7 @@ function ClosingSignature({
       {/* 잎 라인 아이콘 (+ v4.9-A 클로징 서명 옆 과일 모티프 — 품종 매칭 시만) */}
       <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: isMobile ? 10 : 16, marginBottom: isMobile ? 14 : 20 }}>
         {motifKind && (
-          <FruitMotif kind={motifKind} size={isMobile ? 30 : 46} color={accent.accent} />
+          <FruitMotif kind={motifKind} size={isMobile ? 30 : 46} color={accent.accent} secondary={iconSecondary(accent)} />
         )}
         <LeafIcon color={accent.accent} size={isMobile ? 34 : 52} />
       </div>

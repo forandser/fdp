@@ -15,13 +15,19 @@
 /* ============================================================ */
 
 export interface LineIconProps {
-  /** stroke 색 — 보통 accent.accent. */
+  /** stroke 색 — 보통 accent.accent(주획). */
   color: string
   /** 렌더 픽셀 크기(정사각). 기본 24. */
   size?: number
+  /**
+   * v6.5 2톤 보조획 색 — 잎·점·강조선 등 디테일 획에만 적용(주획은 color 유지).
+   * 미지정(undefined)이면 디테일 획도 color 를 상속 → 기존 단색과 픽셀 동일(폴백 불변식).
+   * 테마(매칭 과일) 있을 때만 accent.secondary 를 넘겨 2톤화한다.
+   */
+  secondary?: string
 }
 
-/** 공통 SVG 래퍼 — viewBox·stroke 스타일 통일(손그림 라인). */
+/** 공통 SVG 래퍼 — viewBox·stroke 스타일 통일(손그림 라인). secondary 는 프레임에서 무시(디테일 획에서만 소비). */
 function IconFrame({ color, size = 24, children }: LineIconProps & { children: React.ReactNode }) {
   return (
     <svg
@@ -52,8 +58,8 @@ export function HarvestIcon(props: LineIconProps) {
       {/* 과일 두 알 (바구니 위로 봉긋) */}
       <path d="M9 11.5 a2.6 2.6 0 0 1 5.2 0" />
       <path d="M13 11.5 a2.2 2.2 0 0 1 4.4 0" />
-      {/* 잎사귀 */}
-      <path d="M11.6 6.4 q1.8 -2.2 3.4 -0.6" />
+      {/* 잎사귀 — v6.5 2톤 보조획 */}
+      <path d="M11.6 6.4 q1.8 -2.2 3.4 -0.6" stroke={props.secondary} />
     </IconFrame>
   )
 }
@@ -66,9 +72,9 @@ export function SortIcon(props: LineIconProps) {
       <circle cx="10.5" cy="10.5" r="6.5" />
       {/* 손잡이 */}
       <path d="M15.5 15.5 L21 21" />
-      {/* 렌즈 안 과일 한 알 + 꼭지 */}
-      <path d="M8 11 a2.4 2.4 0 0 0 4.8 0 a2.4 2.4 0 0 0 -4.8 0" />
-      <path d="M10.4 8.6 q0.4 -1 1.3 -0.7" />
+      {/* 렌즈 안 과일 한 알 + 꼭지 — v6.5 2톤 보조획 */}
+      <path d="M8 11 a2.4 2.4 0 0 0 4.8 0 a2.4 2.4 0 0 0 -4.8 0" stroke={props.secondary} />
+      <path d="M10.4 8.6 q0.4 -1 1.3 -0.7" stroke={props.secondary} />
     </IconFrame>
   )
 }
@@ -82,8 +88,8 @@ export function PackIcon(props: LineIconProps) {
       {/* 뚜껑 접힘선 */}
       <path d="M4 8 L12 12 L20 8" />
       <path d="M12 12 L12 21" />
-      {/* 체크 마크 (박스 윗면) */}
-      <path d="M9 8 L11 9.4 L15 6.3" />
+      {/* 체크 마크 (박스 윗면) — v6.5 2톤 보조획 */}
+      <path d="M9 8 L11 9.4 L15 6.3" stroke={props.secondary} />
     </IconFrame>
   )
 }
@@ -96,9 +102,9 @@ export function DeliverIcon(props: LineIconProps) {
       <path d="M2 7 h10 v8 h-10 Z" />
       {/* 운전실 */}
       <path d="M12 10 h4 l3 3 v2 h-7 Z" />
-      {/* 바퀴 */}
-      <circle cx="7" cy="17.5" r="1.8" />
-      <circle cx="16" cy="17.5" r="1.8" />
+      {/* 바퀴 — v6.5 2톤 보조획 */}
+      <circle cx="7" cy="17.5" r="1.8" stroke={props.secondary} />
+      <circle cx="16" cy="17.5" r="1.8" stroke={props.secondary} />
       {/* 아랫변 (바퀴 사이) */}
       <path d="M8.8 17.5 h5.4 M2 15 h1.4 M18.2 17.5 H19" />
     </IconFrame>
@@ -110,9 +116,9 @@ export function ColdIcon(props: LineIconProps) {
   return (
     <IconFrame {...props}>
       <path d="M12 3 V21 M4.2 7.5 L19.8 16.5 M19.8 7.5 L4.2 16.5" />
-      {/* 가지 팁 */}
-      <path d="M12 3 l-2 2 M12 3 l2 2 M12 21 l-2 -2 M12 21 l2 -2" />
-      <path d="M4.2 7.5 l0.4 2.7 M4.2 7.5 l2.7 -0.3 M19.8 16.5 l-0.4 -2.7 M19.8 16.5 l-2.7 0.3" />
+      {/* 가지 팁 — v6.5 2톤 보조획 */}
+      <path d="M12 3 l-2 2 M12 3 l2 2 M12 21 l-2 -2 M12 21 l2 -2" stroke={props.secondary} />
+      <path d="M4.2 7.5 l0.4 2.7 M4.2 7.5 l2.7 -0.3 M19.8 16.5 l-0.4 -2.7 M19.8 16.5 l-2.7 0.3" stroke={props.secondary} />
     </IconFrame>
   )
 }
@@ -123,7 +129,8 @@ export function SealIcon(props: LineIconProps) {
     <IconFrame {...props}>
       <path d="M6 10.5 h12 v9 h-12 Z" />
       <path d="M8.5 10.5 V7.5 a3.5 3.5 0 0 1 7 0 V10.5" />
-      <path d="M12 14 v2.5" />
+      {/* 열쇠구멍 — v6.5 2톤 보조획 */}
+      <path d="M12 14 v2.5" stroke={props.secondary} />
     </IconFrame>
   )
 }
@@ -133,7 +140,8 @@ export function ShieldIcon(props: LineIconProps) {
   return (
     <IconFrame {...props}>
       <path d="M12 3 L19 6 V11 c0 4.5 -3 7.5 -7 9.5 c-4 -2 -7 -5 -7 -9.5 V6 Z" />
-      <path d="M8.8 11.5 L11 13.6 L15.4 8.8" />
+      {/* 체크 — v6.5 2톤 보조획 */}
+      <path d="M8.8 11.5 L11 13.6 L15.4 8.8" stroke={props.secondary} />
     </IconFrame>
   )
 }
@@ -144,8 +152,8 @@ export function BrixIcon(props: LineIconProps) {
     <IconFrame {...props}>
       {/* 물방울 외곽 (위 뾰족, 아래 둥근) */}
       <path d="M12 3.5 C12 3.5 5.5 11 5.5 15 a6.5 6.5 0 0 0 13 0 C18.5 11 12 3.5 12 3.5 Z" />
-      {/* 안쪽 하이라이트 (반짝임) */}
-      <path d="M9.5 15.5 a2.5 2.5 0 0 0 2 2.3" />
+      {/* 안쪽 하이라이트 (반짝임) — v6.5 2톤 보조획 */}
+      <path d="M9.5 15.5 a2.5 2.5 0 0 0 2 2.3" stroke={props.secondary} />
     </IconFrame>
   )
 }
@@ -156,8 +164,8 @@ export function MapPinIcon(props: LineIconProps) {
     <IconFrame {...props}>
       {/* 핀 외곽 (물방울형 + 아래 꼭지) */}
       <path d="M12 21 C12 21 5 14.5 5 9.5 a7 7 0 0 1 14 0 C19 14.5 12 21 12 21 Z" />
-      {/* 핀 중앙 원 */}
-      <circle cx="12" cy="9.5" r="2.4" />
+      {/* 핀 중앙 원 — v6.5 2톤 보조획 */}
+      <circle cx="12" cy="9.5" r="2.4" stroke={props.secondary} />
     </IconFrame>
   )
 }
@@ -170,10 +178,10 @@ export function ScaleIcon(props: LineIconProps) {
       <path d="M12 4 V19 M5 7 H19 M12 5.4 a1.1 1.1 0 1 0 0 2.2 a1.1 1.1 0 0 0 0 -2.2" />
       {/* 받침대 */}
       <path d="M8.5 19 H15.5" />
-      {/* 왼쪽 접시 (줄 + 그릇) */}
-      <path d="M5 7 L2.8 12 h4.4 Z" />
-      {/* 오른쪽 접시 */}
-      <path d="M19 7 L16.8 12 h4.4 Z" />
+      {/* 왼쪽 접시 (줄 + 그릇) — v6.5 2톤 보조획 */}
+      <path d="M5 7 L2.8 12 h4.4 Z" stroke={props.secondary} />
+      {/* 오른쪽 접시 — v6.5 2톤 보조획 */}
+      <path d="M19 7 L16.8 12 h4.4 Z" stroke={props.secondary} />
     </IconFrame>
   )
 }
@@ -184,8 +192,8 @@ export function LeafIcon(props: LineIconProps) {
     <IconFrame {...props}>
       {/* 잎 외곽 */}
       <path d="M5 19 C5 11 11 5 19 5 C19 13 13 19 5 19 Z" />
-      {/* 잎맥 */}
-      <path d="M5 19 C9 15 13 11 17 7" />
+      {/* 잎맥 — v6.5 2톤 보조획 */}
+      <path d="M5 19 C9 15 13 11 17 7" stroke={props.secondary} />
     </IconFrame>
   )
 }
