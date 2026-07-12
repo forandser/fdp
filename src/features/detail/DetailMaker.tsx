@@ -24,6 +24,7 @@ import type {
   SelfReviewResult,
   SellerReview,
   TrustInfo,
+  TypoVerifyResult,
   UsageInfo,
 } from "@/lib/ai/types"
 import {
@@ -55,6 +56,13 @@ import { validateProductNameSeo } from "@/lib/ai/validate"
 // v5.9(작업L): 결정적 카피 린터 — 생성 직후 실행해 경고 배너로 노출.
 import { lintCopyOutput, type CopyLintFinding } from "@/lib/ai/copy-lint"
 import { detectFruitFactKey, FRUIT_FACTS } from "@/domain/fruit-facts"
+// v6.3(작업4): AI 타이포 히어로 — 축색(프롬프트 accent)·Gemini provider(BYOK)·순수 프롬프트 유틸.
+import { resolveAccent } from "./fruit-accent"
+import {
+  getImageProvider,
+  getSavedImageProviderConfig,
+} from "@/lib/ai/image-providers/registry"
+import { buildFruitMoodHints, buildTypoPrompt } from "@/lib/ai/typo-headline"
 import { DEMO_COPY } from "./demo-copy"
 import { BrandKitPanel } from "./BrandKitPanel"
 import {
@@ -232,6 +240,37 @@ function mergeUsage(base: UsageInfo, extra?: UsageInfo): UsageInfo {
   }
 }
 
+/**
+ * v6.3: Promise.race 기반 타임아웃 — ms 초과 시 reject 한다(typoBusy 영구 고착 방지).
+ * controller 를 주면 초과 시 abort 도 시도해 진행 중인 fetch 를 실제로 끊는다(불가하면 race 만으로도 흐름 해제).
+ */
+function withTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  controller?: AbortController,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      try {
+        controller?.abort()
+      } catch {
+        /* noop — abort 실패해도 아래 reject 로 흐름은 해제된다. */
+      }
+      reject(new Error(`timeout ${ms}ms`))
+    }, ms)
+    p.then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(timer)
+        reject(e)
+      },
+    )
+  })
+}
+
 export function DetailMaker({
   initialWorkId,
   onKeyRegistered,
@@ -321,6 +360,25 @@ export function DetailMaker({
    * 카피가 아니라 편집 상태이므로 copy 와 분리 — 전체 재생성(copy 교체)에도 유지된다.
    */
   const [hiddenSections, setHiddenSections] = useState<string[]>([])
+  /**
+   * v6.3(작업3·4): AI 타이포 히어로 상태.
+   * - typoHeadlineBlob: 확정 헤드라인을 Gemini 로 그린 한글 레터링 이미지(Work 에 저장·복원).
+   * - typoHeadlineUrl: 위 blob 의 objectURL(HeroBlock 렌더용). typoUrlRef 로 수명 관리(언마운트 해제).
+   * - typoBusy/typoError: 생성 진행·원인별 실패 문구.
+   * - hasGeminiKey: "✨ 헤드라인 아트" 블록 노출 게이트(나노바나나 키 등록 시에만).
+   * 하이드레이션: 서버 기본값(null/false)으로 시작하고 마운트 effect 가 동기화(결정성 — Math.random/Date 금지).
+   */
+  const [typoHeadlineBlob, setTypoHeadlineBlob] = useState<Blob | null>(null)
+  const [typoHeadlineUrl, setTypoHeadlineUrl] = useState<string | null>(null)
+  const [typoBusy, setTypoBusy] = useState(false)
+  const [typoError, setTypoError] = useState<string | null>(null)
+  const [hasGeminiKey, setHasGeminiKey] = useState(false)
+  const typoUrlRef = useRef<string | null>(null)
+  /**
+   * v6.3: 타이포 생성 중복 실행 동기 가드(useRef — state 는 비동기라 연타 시 이중 파이프라인 발생).
+   * 함수 진입 즉시 검사·세팅하고 finally 에서 해제한다. setTypoBusy 는 UI 표시 전용으로 병행.
+   */
+  const typoBusyRef = useRef(false)
   /**
    * v5.0-B: "우리 가게" 브랜드 배선.
    * - brands/defaultBrandId: 패널 표시용 목록·기본 지정(부모가 소유·재로딩).
@@ -580,6 +638,20 @@ export function DetailMaker({
             restoredUrlsRef.current.push(img.url)
           }
         }
+        // v6.3(작업3): 타이포 헤드라인 이미지 복원 — 구버전 저장본엔 없음(옵셔널·하위호환).
+        //   objectURL 은 typoUrlRef + restoredUrlsRef 로 수명 관리(언마운트 일괄 해제).
+        let restoredTypoBlob: Blob | null = null
+        let restoredTypoUrl: string | null = null
+        if (work.typoHeadlineBlob && typeof window !== "undefined") {
+          try {
+            restoredTypoUrl = URL.createObjectURL(work.typoHeadlineBlob)
+            restoredTypoBlob = work.typoHeadlineBlob
+            restoredUrlsRef.current.push(restoredTypoUrl)
+          } catch {
+            restoredTypoBlob = null
+            restoredTypoUrl = null
+          }
+        }
         if (cancelled) {
           restoredUrlsRef.current.forEach((u) => URL.revokeObjectURL(u))
           restoredUrlsRef.current = []
@@ -603,6 +675,10 @@ export function DetailMaker({
         setImages(restored)
         setPackagingImage(restoredPackaging)
         setSizeImage(restoredSize)
+        // v6.3(작업3): 타이포 헤드라인 복원(있으면). typoUrlRef 로 이후 교체·언마운트 해제.
+        typoUrlRef.current = restoredTypoUrl
+        setTypoHeadlineBlob(restoredTypoBlob)
+        setTypoHeadlineUrl(restoredTypoUrl)
         // 사진 자동 보정 토글 복원 — 구버전 저장본엔 없음(undefined → 기본 ON, 하위호환).
         setEnhanceImages(work.enhanceImages ?? true)
         // v4.4: 사진 분석 토글·결과 복원 — 구버전 저장본엔 없음(undefined → 기본 ON, 하위호환).
@@ -682,9 +758,36 @@ export function DetailMaker({
 
   useEffect(() => {
     const ref = restoredUrlsRef
+    const typoRef = typoUrlRef
     return () => {
       ref.current.forEach((u) => URL.revokeObjectURL(u))
       ref.current = []
+      // v6.3(작업3): 타이포 헤드라인 objectURL 도 언마운트 시 해제(누수 방지).
+      if (typoRef.current) {
+        URL.revokeObjectURL(typoRef.current)
+        typoRef.current = null
+      }
+    }
+  }, [])
+
+  /**
+   * v6.3(작업4): "✨ 헤드라인 아트" 블록 노출 게이트 — 나노바나나(Gemini) 키 등록 여부.
+   * 하이드레이션 안전: 서버 기본값 false 로 시작하고 마운트 후 IDB 설정을 읽어 동기화한다.
+   * 결정성: 렌더 중 Math.random/Date 미사용 — 이 값은 마운트 effect 로만 갱신된다.
+   */
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const cfg = await getSavedImageProviderConfig()
+        if (cancelled) return
+        setHasGeminiKey(cfg?.providerId === "gemini-2.5-flash-image" && !!cfg.apiKey)
+      } catch {
+        /* 설정 조회 실패는 무시 — 블록 미노출(안전) */
+      }
+    })()
+    return () => {
+      cancelled = true
     }
   }, [])
 
@@ -1204,6 +1307,9 @@ export function DetailMaker({
     setReviewUsage(null)
     // v5.9(작업L): 이전 카피 린터 경고도 폐기(새 카피로 재검사).
     setLintFindings([])
+    // v6.3(작업3): 새 생성 = 새 헤드라인 → 이전 타이포 이미지는 폐기(다른 헤드라인 표시 방지).
+    applyTypoBlob(null)
+    setTypoError(null)
     setStage("generating")
     setGenerationStep(0)
     const stepTimer = setInterval(() => {
@@ -1360,6 +1466,8 @@ export function DetailMaker({
           brandSnapshot: brandSnapshot ?? undefined,
           // v6.1(작업E2): 숨긴 섹션 목록 저장(생성 시엔 보통 빈 배열 → undefined, 하위호환).
           hiddenSections: hiddenSections.length > 0 ? hiddenSections : undefined,
+          // v6.3(작업3): 타이포 헤드라인 이미지(신규 생성 시엔 보통 없음 → undefined).
+          typoHeadlineBlob: typoHeadlineBlob ?? undefined,
         }
         void saveWork(work)
       } catch (saveErr) {
@@ -1420,6 +1528,8 @@ export function DetailMaker({
             brandSnapshot: brandSnapshot ?? undefined,
             // v6.1(작업E2): 숨긴 섹션 목록 유지(인라인 편집 저장 시에도 유실 방지).
             hiddenSections: hiddenSections.length > 0 ? hiddenSections : undefined,
+            // v6.3(작업3): 타이포 헤드라인 유지(인라인 편집 저장 시에도 유실 방지).
+            typoHeadlineBlob: typoHeadlineBlob ?? undefined,
           }
           await saveWork(work)
         } catch (e) {
@@ -1459,6 +1569,8 @@ export function DetailMaker({
             brandSnapshot: brandSnapshot ?? undefined,
             // v6.1(작업E2): 숨긴 섹션 목록 유지(레이아웃 변주 저장 시에도 유실 방지).
             hiddenSections: hiddenSections.length > 0 ? hiddenSections : undefined,
+            // v6.3(작업3): 타이포 헤드라인 유지(레이아웃 변주 저장 시에도 유실 방지).
+            typoHeadlineBlob: typoHeadlineBlob ?? undefined,
           }
           await saveWork(work)
         } catch (e) {
@@ -1504,6 +1616,8 @@ export function DetailMaker({
           brandSnapshot: snap ?? undefined,
           // v6.1(작업E2): 숨긴 섹션 목록 유지(브랜드 저장 시에도 유실 방지).
           hiddenSections: hiddenSections.length > 0 ? hiddenSections : undefined,
+          // v6.3(작업3): 타이포 헤드라인 유지(브랜드 저장 시에도 유실 방지).
+          typoHeadlineBlob: typoHeadlineBlob ?? undefined,
         }
         await saveWork(work)
       } catch (e) {
@@ -1540,12 +1654,191 @@ export function DetailMaker({
           layoutVariant,
           brandSnapshot: brandSnapshot ?? undefined,
           hiddenSections: next.length > 0 ? next : undefined,
+          // v6.3(작업3): 타이포 헤드라인 유지(섹션 숨김 저장 시에도 유실 방지).
+          typoHeadlineBlob: typoHeadlineBlob ?? undefined,
         }
         await saveWork(work)
       } catch (e) {
         console.error("[saveWork-hidden]", e)
       }
     })()
+  }
+
+  /* ───────── v6.3(작업3·4): AI 타이포 히어로 ───────── */
+
+  /**
+   * 타이포 이미지 blob 을 렌더 상태에 적용한다. 이전 objectURL 은 즉시 해제(누수 방지).
+   * blob=null 이면 텍스트 헤드라인으로 복귀. 결정성: Math.random/Date 미사용.
+   */
+  const applyTypoBlob = (blob: Blob | null) => {
+    if (typoUrlRef.current) {
+      URL.revokeObjectURL(typoUrlRef.current)
+      typoUrlRef.current = null
+    }
+    if (blob && typeof window !== "undefined") {
+      const url = URL.createObjectURL(blob)
+      typoUrlRef.current = url
+      setTypoHeadlineBlob(blob)
+      setTypoHeadlineUrl(url)
+    } else {
+      setTypoHeadlineBlob(null)
+      setTypoHeadlineUrl(null)
+    }
+  }
+
+  /**
+   * 현재 작업에 타이포 blob 을 즉시 저장(재렌더 결정성·내보내기 포함).
+   * persistBrandToWork 와 동일 가드(결과 단계에서만) — blob 을 직접 실어 state 비동기 전에도 정확.
+   */
+  const persistTypoToWork = (blob: Blob | null) => {
+    if (!(workId && currentInput && resultMeta && result)) return
+    void (async () => {
+      try {
+        const work: Work = {
+          id: workId,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          productName: resultMeta.productName,
+          thumbDataUrl: images[0] ? await makeThumbDataUrl(images[0].file) : null,
+          input: currentInput,
+          copy: result,
+          imageBlobs: images.map((i) => i.file),
+          imageIds: images.map((i) => i.id),
+          packagingBlob: packagingImage?.file ?? null,
+          sizeBlob: sizeImage?.file ?? null,
+          enhanceImages,
+          photoAnalysisEnabled,
+          photoAnalysis: photoAnalysis ?? undefined,
+          layoutVariant,
+          brandSnapshot: brandSnapshot ?? undefined,
+          hiddenSections: hiddenSections.length > 0 ? hiddenSections : undefined,
+          typoHeadlineBlob: blob ?? undefined,
+        }
+        await saveWork(work)
+      } catch (e) {
+        console.error("[saveWork-typo]", e)
+      }
+    })()
+  }
+
+  /**
+   * "만들기/다시 그리기" — 확정 헤드라인을 Gemini(나노바나나)로 한글 레터링 이미지로 생성.
+   * 파이프라인: buildTypoPrompt → Gemini 생성(60s 타임아웃) → vision 오탈자 게이트(30s 타임아웃, 정확 일치)
+   * → 불일치 시 재생성(최초 1 + 재시도 2 = 최대 3회) → 최종 실패 시 기존 상태 유지 + 원인별 문구.
+   * 검수 불가(null)는 오탈자와 분리 처리 — null 1회면 재시도, 2연속 null 이면 즉시 중단(헛비용 방지).
+   * ⚠️ 셀러 사진을 이미지 생성에 절대 넣지 않는다(generate 에 referenceImage 미전달 — 사진 불가침).
+   */
+  const handleGenerateTypoHeadline = async () => {
+    // 4) 중복 클릭 동기 가드 — state(typoBusy) 는 비동기라 연타 시 이중 파이프라인이 뜬다.
+    //    useRef 로 함수 진입 즉시 잠그고 finally 에서 해제. setTypoBusy 는 UI 표시 전용.
+    if (typoBusyRef.current) return
+    typoBusyRef.current = true
+    try {
+      const headline = result?.headline?.trim() ?? ""
+      if (!headline) {
+        setTypoError("먼저 헤드라인을 만들거나 입력해 주세요.")
+        return
+      }
+      // 오탈자 게이트(vision)에 Anthropic 키가 필요 — 없으면 등록 모달, 취소면 중단.
+      if (!(await ensureKey())) return
+      const imgProvider = await getImageProvider()
+      if (!imgProvider || imgProvider.id !== "gemini-2.5-flash-image") {
+        setTypoError("Gemini(나노바나나) 키를 먼저 등록해 주세요.")
+        return
+      }
+      const nameForMood = productName.trim() || resultMeta?.productName || ""
+      const accent = resolveAccent(nameForMood)
+      const hints = buildFruitMoodHints(nameForMood, accent.accent)
+      const MAX_ATTEMPTS = 3 // 최초 1 + 재시도 2
+      const GEN_TIMEOUT_MS = 60_000 // 생성(Gemini) 권장 타임아웃
+      const VERIFY_TIMEOUT_MS = 30_000 // 검수(vision) 권장 타임아웃
+      let sawTypo = false
+      let sawGenFail = false
+      let sawVerifyFail = false
+      let verifyFailStreak = 0 // 연속 검수 불가(null) 카운트 — 2연속이면 즉시 중단.
+      setTypoBusy(true)
+      setTypoError(null)
+      try {
+        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+          // 1) 생성 — 60s 타임아웃 + AbortController(초과·예외 시 이 시도 실패 처리 후 계속).
+          let dataUrl: string
+          try {
+            const genController = new AbortController()
+            // referenceImage 미전달 = 사진 불가침(텍스트·스타일 지시만).
+            const gen = await withTimeout(
+              imgProvider.generate({
+                prompt: buildTypoPrompt(headline, hints, attempt),
+                signal: genController.signal,
+              }),
+              GEN_TIMEOUT_MS,
+              genController,
+            )
+            dataUrl = gen.dataUrl
+          } catch (genErr) {
+            console.warn("[typoHeadline] generate failed/timeout:", genErr)
+            sawGenFail = true
+            continue
+          }
+          // 2) 오탈자 게이트 — 30s 타임아웃. 타임아웃/예외/어댑터 실패는 모두 null(검수 불가)로 취급.
+          let verify: TypoVerifyResult | null = null
+          try {
+            verify = await withTimeout(
+              getAIProvider().verifyTypoImage(dataUrl, headline),
+              VERIFY_TIMEOUT_MS,
+            )
+          } catch (verErr) {
+            console.warn("[typoHeadline] verify failed/timeout:", verErr)
+            verify = null
+          }
+          if (verify && verify.matches) {
+            const blob = await (await fetch(dataUrl)).blob()
+            applyTypoBlob(blob)
+            persistTypoToWork(blob)
+            setTypoError(null)
+            return
+          }
+          // 3) 검증 불가(null) — 오탈자와 구분. 1회면 1회 재시도, 2연속이면 즉시 중단(Gemini 재생성 헛비용 방지).
+          if (verify === null) {
+            sawVerifyFail = true
+            verifyFailStreak += 1
+            if (verifyFailStreak >= 2) {
+              setTypoError(
+                "레터링 검수를 할 수 없어요 — 잠시 후 다시 시도해 주세요.",
+              )
+              return
+            }
+            continue
+          }
+          // verify 존재 & !matches → 실제 오탈자. 연속 null 스트릭은 끊는다.
+          verifyFailStreak = 0
+          sawTypo = true
+        }
+        // 최종 실패 — 기존 상태(있으면) 유지 + 원인별 안내(폴백=텍스트 헤드라인).
+        setTypoError(
+          sawTypo
+            ? "글자가 정확히 그려지지 않았어요(오탈자 반복). 기본 글씨를 유지할게요 — 다시 시도해 보세요."
+            : sawGenFail
+              ? "레터링 이미지 생성에 실패했어요. 키·네트워크를 확인하고 다시 시도해 주세요."
+              : sawVerifyFail
+                ? "레터링 검수를 할 수 없어요 — 잠시 후 다시 시도해 주세요."
+                : "레터링 생성에 실패했어요. 다시 시도해 주세요.",
+        )
+      } catch (err) {
+        console.error("[typoHeadline]", err)
+        setTypoError("레터링 생성 중 오류가 발생했어요. 다시 시도해 주세요.")
+      } finally {
+        setTypoBusy(false)
+      }
+    } finally {
+      typoBusyRef.current = false
+    }
+  }
+
+  /** "기본 글씨로" — 타이포 이미지를 제거하고 텍스트 헤드라인으로 복귀(Work 에도 반영). */
+  const handleResetTypoHeadline = () => {
+    applyTypoBlob(null)
+    setTypoError(null)
+    persistTypoToWork(null)
   }
 
   /**
@@ -1678,6 +1971,10 @@ export function DetailMaker({
     setReviewUsage(null)
     // v5.4(작업3): 이전 실패 배너도 초기화.
     setGenError(null)
+    // v6.3(작업3): 전체 재생성 시 타이포 헤드라인도 초기화(새 헤드라인과 어긋나지 않게).
+    applyTypoBlob(null)
+    setTypoError(null)
+    setTypoBusy(false)
   }
 
   if (stage === "restoring") {
@@ -2718,6 +3015,12 @@ export function DetailMaker({
         hiddenSections={hiddenSections}
         onHiddenChange={handleHiddenChange}
         onRetry={handleRetry}
+        typoHeadlineUrl={typoHeadlineUrl}
+        hasTypoHeadlineProvider={hasGeminiKey && stage === "result"}
+        typoHeadlineBusy={typoBusy}
+        typoHeadlineError={typoError}
+        onGenerateTypoHeadline={handleGenerateTypoHeadline}
+        onResetTypoHeadline={handleResetTypoHeadline}
       />
 
       {isGenerating && (

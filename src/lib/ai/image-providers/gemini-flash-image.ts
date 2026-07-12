@@ -97,6 +97,8 @@ export class GeminiFlashImageProvider implements ImageProvider {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        // v6.3: 호출부 타임아웃/취소 신호 — 초과 시 진행 중 요청을 실제로 끊는다(typoBusy 고착 방지).
+        signal: input.signal,
       },
     )
     if (!res.ok) {

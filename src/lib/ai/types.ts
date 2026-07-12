@@ -480,6 +480,19 @@ export interface SelfReviewResult {
   usage?: UsageInfo
 }
 
+/* ───────────────── v6.3(작업2): 타이포 히어로 오탈자 게이트 ───────────────── */
+
+/**
+ * v6.3: 생성된 한글 레터링 이미지의 오탈자 검수(vision) 결과.
+ * - readText: 이미지에서 읽어낸 글자(정규화 전 원문).
+ * - matches: 헤드라인 문자열과 (공백 무시) 정확 일치 여부(조사·음절 포함).
+ * 어떤 실패든(빈 입력·API 에러·빈 응답·JSON 파싱 실패) 어댑터가 null 을 반환한다.
+ */
+export interface TypoVerifyResult {
+  matches: boolean
+  readText: string
+}
+
 export type DiagnosticStatus =
   | "ok"
   | "invalid_key"
@@ -549,6 +562,11 @@ export interface ImageGenInput {
   /** 출력 폭(px). 미지정 시 모델 기본값. */
   width?: number
   seed?: number
+  /**
+   * v6.3: 취소 신호(선택). 호출부 타임아웃/취소 시 진행 중인 네트워크 요청을 실제로 끊는다.
+   * 지원 어댑터는 fetch 에 전달; 미지원 어댑터는 무시(호출부 Promise.race 로 흐름은 해제됨).
+   */
+  signal?: AbortSignal
 }
 
 export interface ImageGenResult {
@@ -614,4 +632,17 @@ export interface AIProvider {
     segments: { label: string; dataUrl: string }[],
     context: { productType: string },
   ): Promise<SelfReviewResult | null>
+
+  /**
+   * v6.3(작업2): 생성된 한글 레터링 이미지(dataURL)를 vision 1콜로 검수 —
+   * "이미지 속 글자를 그대로 읽어" 헤드라인 문자열과 정확 일치(공백 무시·조사 포함)하는지 판정한다.
+   * 오탈자 게이트의 핵심 — 불일치면 호출부가 재생성한다.
+   *
+   * **어떤 실패든(빈 입력·API 에러·빈 응답·JSON 파싱 실패) null 반환.**
+   * 절대 throw 로 흐름을 막지 않는다. null 은 "검증 불가"이므로 호출부는 폴백(불일치 취급)한다.
+   */
+  verifyTypoImage(
+    imageDataUrl: string,
+    expected: string,
+  ): Promise<TypoVerifyResult | null>
 }

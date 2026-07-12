@@ -439,6 +439,25 @@ interface ResultViewProps {
    * 자체가 노출되지 않는다(읽기 전용 렌더). DetailMaker 가 Work.hiddenSections 로 저장·복원한다.
    */
   onHiddenChange?: (next: string[]) => void
+  /* ── v6.3(작업3·4): AI 타이포 히어로 ── */
+  /**
+   * 타이포 헤드라인 이미지 objectURL(있을 때만). HeroBlock 이 텍스트 헤드라인 자리에 렌더.
+   * 없으면(null/undefined) 현행 텍스트 헤드라인(회귀 0).
+   */
+  typoHeadlineUrl?: string | null
+  /**
+   * "✨ 헤드라인 아트" 사이드바 블록 노출 게이트 — Gemini(나노바나나) 키가 등록됐을 때만 true.
+   * false/미전달이면 블록 자체를 렌더하지 않는다(무료 원칙·BYOK).
+   */
+  hasTypoHeadlineProvider?: boolean
+  /** 생성/재생성 진행 중 여부(스피너). */
+  typoHeadlineBusy?: boolean
+  /** 실패 사유 문구(키 오류/생성 실패/오탈자 반복). 없으면 미표시. */
+  typoHeadlineError?: string | null
+  /** "만들기/다시 그리기" 클릭 → 부모가 생성 파이프라인 실행. 미전달이면 버튼 미동작. */
+  onGenerateTypoHeadline?: () => void
+  /** "기본 글씨로" 클릭 → 타이포 이미지 제거(텍스트 헤드라인 복귀). */
+  onResetTypoHeadline?: () => void
 }
 
 const RED = "#E03131" // 사이드바 편집 컨트롤용 브랜드 색 (내보내는 페이지엔 accent 사용)
@@ -2146,6 +2165,12 @@ export function ResultView({
   brandSnapshot,
   hiddenSections,
   onHiddenChange,
+  typoHeadlineUrl,
+  hasTypoHeadlineProvider,
+  typoHeadlineBusy,
+  typoHeadlineError,
+  onGenerateTypoHeadline,
+  onResetTypoHeadline,
 }: ResultViewProps) {
   const [enhance, setEnhance] = useState(true)
   /**
@@ -2869,6 +2894,7 @@ export function ResultView({
               onRegenCandidates={renderRegen("headlineCandidates")}
               ctaText={ctaText}
               brix={extractBrix(copy)}
+              typoHeadlineUrl={typoHeadlineUrl}
             />
 
             {/* v5.8(작업①): 후기 집계 스트립 — 히어로 직하단. 셀러가 입력한 집계 값만(허위 금지).
@@ -3405,6 +3431,78 @@ export function ResultView({
             />
             {t.detail.result.enhanceLabel}
           </label>
+
+          {/* ── v6.3(작업4): ✨ 헤드라인 아트 (AI 타이포 히어로) ──
+              Gemini(나노바나나) 키가 등록됐을 때만 노출(무료 원칙·BYOK). 편집 크롬이라 JPG와 무관
+              (사이드바 aside 는 captureRef 밖). 확정된 헤드라인 텍스트만 레터링 이미지로 생성 —
+              셀러 사진은 절대 이미지 생성에 넣지 않는다(사진 불가침, 파이프라인 코드가 보장). */}
+          {hasTypoHeadlineProvider && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                padding: "10px 10px",
+                background: "var(--color-bg-surface)",
+                borderRadius: RADIUS.control,
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 800, color: "var(--color-neutral-800)" }}>
+                ✨ 헤드라인 아트
+              </div>
+              <p style={{ margin: 0, fontSize: 11, lineHeight: 1.5, color: "var(--color-neutral-500)" }}>
+                맨 위 헤드라인을 나노바나나가 그린 한글 레터링 이미지로 바꿔요. 글씨만 생성하고 사진은
+                건드리지 않아요.
+              </p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => onGenerateTypoHeadline?.()}
+                  disabled={!!typoHeadlineBusy || !onGenerateTypoHeadline}
+                  style={{
+                    padding: "6px 12px",
+                    background: typoHeadlineBusy ? "var(--color-neutral-300)" : RED,
+                    color: "#FFFFFF",
+                    border: "none",
+                    borderRadius: 999,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: typoHeadlineBusy ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {typoHeadlineBusy
+                    ? "⏳ 그리는 중…"
+                    : typoHeadlineUrl
+                      ? "다시 그리기"
+                      : "만들기"}
+                </button>
+                {typoHeadlineUrl && !typoHeadlineBusy && (
+                  <button
+                    type="button"
+                    onClick={() => onResetTypoHeadline?.()}
+                    disabled={!onResetTypoHeadline}
+                    style={{
+                      padding: "6px 12px",
+                      background: "transparent",
+                      border: "1px solid var(--color-neutral-300)",
+                      borderRadius: 999,
+                      color: "var(--color-neutral-700)",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    기본 글씨로
+                  </button>
+                )}
+              </div>
+              {typoHeadlineError && !typoHeadlineBusy && (
+                <p style={{ margin: 0, fontSize: 11, lineHeight: 1.5, color: RED }}>
+                  {typoHeadlineError}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* B2: 전체 재생성은 텍스트 버튼으로 강등 + 1회 확인(오클릭·편집손실 방지). */}
           <button
@@ -3956,6 +4054,7 @@ function HeroBlock({
   onRegenCandidates,
   ctaText,
   brix,
+  typoHeadlineUrl,
 }: {
   heroImage?: UploadedImage
   copy: CopyOutput
@@ -3974,6 +4073,12 @@ function HeroBlock({
   ctaText: string
   /** 당도(brix) — 입력 스펙에서 추출. 있을 때만 기울어진 스티커 배지 노출(지시3, 사실 데이터). */
   brix: number | null
+  /**
+   * v6.3(작업3): 타이포 헤드라인 이미지 objectURL(있을 때만). 있으면 텍스트 헤드라인 자리에
+   * 이 이미지를 렌더한다(같은 슬롯, 최대 높이 = 기존 헤드라인 영역 이내 → 총높이 순증 0).
+   * 없으면(undefined/null) 현행 텍스트 헤드라인(바이트 동일, 회귀 0).
+   */
+  typoHeadlineUrl?: string | null
 }) {
   const accent = useAccent()
   const layout = useLayout()
@@ -3995,7 +4100,11 @@ function HeroBlock({
   const headlineNorm = normalizeNameForCompare(copy.headline ?? "")
   const nameNorm = normalizeNameForCompare(name)
   const hookText = copy.subheadline?.trim() ?? ""
-  const promoteHook = nameNorm.length > 0 && headlineNorm === nameNorm && hookText.length > 0
+  // v6.3(작업3): 타이포 이미지가 있으면 헤드라인 슬롯을 이미지가 차지하므로 훅 승격을 끈다
+  //   (이미지 = 헤드라인이라 상품명↔훅 재배치가 무의미 + 표준 레이아웃으로 총높이 순증 방지).
+  const showTypo = typeof typoHeadlineUrl === "string" && typoHeadlineUrl.length > 0
+  const promoteHook =
+    !showTypo && nameNorm.length > 0 && headlineNorm === nameNorm && hookText.length > 0
   return (
     <div style={{ background: "#FFFFFF" }}>
       {/* v2.9: 상단 캡션 + 대형 헤드 (수플린 레퍼런스 — 헤드가 이미지 위) */}
@@ -4119,18 +4228,39 @@ function HeroBlock({
             ...WRAP_BALANCE,
           }}
         >
-          <EditableResultText
-            copy={copy}
-            onChange={onCopyChange}
-            path={promoteHook ? ["subheadline"] : ["headline"]}
-            maxLength={promoteHook ? 60 : 40}
-            placeholder={
-              promoteHook
-                ? factPlaceholder?.sub ?? "여기에 서브 카피를 적어보세요"
-                : factPlaceholder?.headline ?? "여기에 상품 헤드라인을 적어보세요"
-            }
-            renderDisplay={(v) => renderHeadlineAccent(v, accent.accent)}
-          />
+          {showTypo ? (
+            // v6.3(작업3): 타이포 헤드라인 이미지 — 텍스트 헤드라인 자리에 같은 슬롯으로 렌더.
+            //   maxHeight 를 텍스트 헤드라인 높이(대략 fontSize×1.14) 이내로 묶어 총높이 순증 0.
+            //   alt = 헤드라인 텍스트(접근성·SEO). JPG 캡처 대상(편집 크롬 아님) — 헤드라인이므로 포함.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={typoHeadlineUrl as string}
+              alt={copy.headline?.trim() || productName.trim()}
+              data-typo-headline
+              style={{
+                display: "block",
+                maxWidth: "100%",
+                height: "auto",
+                maxHeight: isMobile ? 60 : 96,
+                objectFit: "contain",
+                marginLeft: heroJustify === "center" ? "auto" : 0,
+                marginRight: heroJustify === "center" ? "auto" : 0,
+              }}
+            />
+          ) : (
+            <EditableResultText
+              copy={copy}
+              onChange={onCopyChange}
+              path={promoteHook ? ["subheadline"] : ["headline"]}
+              maxLength={promoteHook ? 60 : 40}
+              placeholder={
+                promoteHook
+                  ? factPlaceholder?.sub ?? "여기에 서브 카피를 적어보세요"
+                  : factPlaceholder?.headline ?? "여기에 상품 헤드라인을 적어보세요"
+              }
+              renderDisplay={(v) => renderHeadlineAccent(v, accent.accent)}
+            />
+          )}
         </h1>
 
         {/* v5.3 승격 모드: 상품명(=headline 필드)을 From 배지와 묶은 보조 라인으로 강등.

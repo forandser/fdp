@@ -79,6 +79,13 @@ export interface Work {
    * 구버전 저장본엔 없음(옵셔널 — 하위호환). 없거나 빈 배열이면 전 섹션 노출(기존 렌더와 동일).
    */
   hiddenSections?: string[]
+  /**
+   * v6.3(작업3): AI 타이포 히어로 — 확정 헤드라인을 Gemini(나노바나나)로 그린 한글 레터링
+   * 이미지(블롭). 있으면 HeroBlock 이 기존 텍스트 헤드라인 자리에 이미지로 렌더한다(같은 슬롯).
+   * 없거나 null 이면 현행 텍스트 헤드라인(회귀 0). imageBlobs 와 같은 Blob 영속 패턴.
+   * 구버전 저장본엔 없음(옵셔널 — 하위호환). ⚠️ 셀러 사진이 아니라 "글씨만" 생성한 결과물.
+   */
+  typoHeadlineBlob?: Blob | null
 }
 
 export interface WorkSummary {
@@ -197,6 +204,8 @@ export interface WorkBackupItem {
   brandSnapshot?: BrandSnapshot
   /** v6.1(작업E2): 숨긴 섹션 id 목록. 없으면 생략(하위호환 — 로드 시 전 섹션 노출). */
   hiddenSections?: string[]
+  /** v6.3(작업3): 타이포 헤드라인 이미지 base64(dataURL). 없으면 생략(하위호환). */
+  typoHeadlineBase64?: string | null
 }
 export interface WorkBackup {
   format: "fdp-backup"
@@ -278,6 +287,15 @@ export async function exportAllWorksToJson(): Promise<WorkBackup> {
         sizeBase64 = null
       }
     }
+    // v6.3(작업3): 타이포 헤드라인 이미지도 base64로 백업(있을 때만).
+    let typoHeadlineBase64: string | null = null
+    if (w.typoHeadlineBlob) {
+      try {
+        typoHeadlineBase64 = await blobToDataUrl(w.typoHeadlineBlob)
+      } catch {
+        typoHeadlineBase64 = null
+      }
+    }
     items.push({
       id: w.id,
       createdAt: w.createdAt,
@@ -301,6 +319,8 @@ export async function exportAllWorksToJson(): Promise<WorkBackup> {
       brandSnapshot: w.brandSnapshot,
       // v6.1(작업E2): 숨긴 섹션 목록도 백업(undefined/빈 배열이면 생략 → 로드 시 전 섹션 노출).
       hiddenSections: w.hiddenSections && w.hiddenSections.length > 0 ? w.hiddenSections : undefined,
+      // v6.3(작업3): 타이포 헤드라인 이미지 base64(없으면 생략 → 로드 시 텍스트 헤드라인).
+      typoHeadlineBase64,
     })
   }
   return {
@@ -348,6 +368,14 @@ export async function importBackupJson(
       if (typeof item.sizeBase64 === "string" && item.sizeBase64.startsWith("data:")) {
         sizeBlob = await dataUrlToBlob(item.sizeBase64)
       }
+      // v6.3(작업3): 타이포 헤드라인 이미지 복원(구버전 백업엔 없음 — 하위호환). data: URL 만 통과.
+      let typoHeadlineBlob: Blob | null = null
+      if (
+        typeof item.typoHeadlineBase64 === "string" &&
+        item.typoHeadlineBase64.startsWith("data:")
+      ) {
+        typoHeadlineBlob = await dataUrlToBlob(item.typoHeadlineBase64)
+      }
       // v4.4: 이미지 id 복원(구버전 백업엔 없음 — 하위호환). 문자열만 통과.
       const imageIds = Array.isArray(item.imageIds)
         ? item.imageIds.filter((x): x is string => typeof x === "string")
@@ -393,6 +421,8 @@ export async function importBackupJson(
         brandSnapshot,
         // v6.1(작업E2): 검증 통과한 숨김 목록만 저장(빈 배열이면 undefined → 전 섹션 노출).
         hiddenSections: hiddenSections.length > 0 ? hiddenSections : undefined,
+        // v6.3(작업3): 복원한 타이포 헤드라인 이미지(없으면 null → 텍스트 헤드라인).
+        typoHeadlineBlob,
       }
       imported++
     } catch {

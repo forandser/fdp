@@ -24,6 +24,7 @@ import {
   type SuggestPointsInput,
   type SuggestPointsResult,
   type SuggestKeywordsResult,
+  type TypoVerifyResult,
 } from "./types"
 import { getKeySource } from "./key-source"
 import { buildFruitCopyMessages, FRUIT_COPY_SYSTEM_PROMPT } from "./prompts/fruit-copy"
@@ -55,6 +56,13 @@ import {
   SELF_REVIEW_SYSTEM_PROMPT,
   SELF_REVIEW_MAX_TOKENS,
 } from "./prompts/self-review"
+// v6.3(작업2): 타이포 히어로 오탈자 게이트(vision) — 순수 프롬프트/비교 유틸.
+import {
+  buildTypoVerifyMessages,
+  TYPO_VERIFY_SYSTEM_PROMPT,
+  TYPO_VERIFY_MAX_TOKENS,
+  typoTextMatches,
+} from "./typo-headline"
 import {
   estimateInputCostKRW,
   estimateOutputCostKRW,
@@ -585,6 +593,47 @@ export class AnthropicAdapter implements AIProvider {
     } catch (err) {
       // 자가 검수 실패는 절대 치명적이지 않다 — 조용히 null 폴백.
       console.warn("[reviewArtboard] failed, returning null:", err)
+      return null
+    }
+  }
+
+  /**
+   * v6.3(작업2): 생성된 한글 레터링 이미지(dataURL)를 vision 1콜로 읽어 오탈자 게이트.
+   * "이미지 속 글자를 그대로 읽어라" → 헤드라인과 정확 일치(공백 무시·조사 포함) 여부 판정.
+   *
+   * **어떤 실패든(빈 입력·파싱·API 에러·빈 응답·JSON 파싱 실패) null 반환.**
+   * null = "검증 불가" — 호출부는 불일치로 취급해 재생성/폴백한다(오탈자 통과 방지).
+   */
+  async verifyTypoImage(
+    imageDataUrl: string,
+    expected: string,
+  ): Promise<TypoVerifyResult | null> {
+    if (typeof imageDataUrl !== "string" || !imageDataUrl.startsWith("data:")) {
+      return null
+    }
+    const messages = buildTypoVerifyMessages(imageDataUrl)
+    if (!messages) return null
+    try {
+      const client = await this.createClient()
+      const res = await client.messages.create({
+        model: this.modelId,
+        system: TYPO_VERIFY_SYSTEM_PROMPT,
+        max_tokens: TYPO_VERIFY_MAX_TOKENS,
+        messages,
+      })
+
+      const textBlock = res.content.find((c) => c.type === "text")
+      if (!textBlock || textBlock.type !== "text") return null
+
+      const parsed = extractJson(textBlock.text) as { read?: unknown } | null
+      const readText =
+        parsed && typeof parsed.read === "string" ? parsed.read : ""
+      if (!readText) return null
+
+      return { matches: typoTextMatches(readText, expected), readText }
+    } catch (err) {
+      // 검증 실패는 흐름을 막지 않는다 — null 로 폴백(호출부가 불일치 취급).
+      console.warn("[verifyTypoImage] failed, returning null:", err)
       return null
     }
   }
