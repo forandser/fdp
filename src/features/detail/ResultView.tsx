@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { t } from "@/lib/i18n"
-import type { CopyOutput, CopyKeyPoint, TrustInfo, SellerReview, ReviewStats, ProductCategory, PhotoAnalysisItem } from "@/lib/ai/types"
+import type { CopyOutput, CopyKeyPoint, TrustInfo, SellerReview, ReviewStats, ProductCategory, PhotoAnalysisItem, SectionTitleKey } from "@/lib/ai/types"
 import type { SectionId } from "@/lib/ai/section-regenerate"
 // v5.0-C: 브랜드 스냅샷 타입. brand-db 는 타 에이전트가 작성 중 —
 // 미존재 시 본인 tsc 에서 "Cannot find module" 로 잡히면 노트만(교차 계약).
@@ -179,10 +179,16 @@ function resolveOverride(
  *
  * renderDisplay: 기본 문구가 액센트 색 span·물결 밑줄 강조 등 리치 렌더일 때 사용.
  * 값이 fallback 그대로면 리치 렌더를, 셀러가 고치면 평문을 보여주는 식으로 색/강조를 보존한다.
+ *
+ * v6.1(작업E1): 별도 파일 컴포넌트(CertCaption 등)에서도 재사용할 수 있도록 export.
+ * 함수 선언이라 호이스팅되어 순환 import(ResultView↔CertCaption)에도 초기화 순서 안전 —
+ * 실제 호출은 렌더 시점(모듈 로드 완료 후)이라 문제 없다. EditContext.Provider(아트보드 루트)
+ * 안에서만 쓰인다.
  */
-function OverrideText({
+export function OverrideText({
   id,
   fallback,
+  sectionTitleKey,
   multiline,
   maxLength,
   placeholder,
@@ -193,6 +199,13 @@ function OverrideText({
 }: {
   id: string
   fallback: string
+  /**
+   * v6.2b(T1): AI 섹션 제목 소비 — 지정 시 우선순위 = 셀러 수동 편집 > AI copy.sectionTitles?.[키]
+   * > 고정 기본값(fallback). AI 값이 있으면 그것을 "effectiveFallback"으로 끼워 resolveOverride/
+   * writeTextOverride의 [편집 > effectiveFallback] 우선순위를 그대로 재사용한다(최소 침습·회귀 0).
+   * 미지정이거나 copy.sectionTitles 없음/해당 키 없음이면 effectiveFallback === fallback → 현행 동일.
+   */
+  sectionTitleKey?: SectionTitleKey
   multiline?: boolean
   maxLength?: number
   placeholder?: string
@@ -202,19 +215,155 @@ function OverrideText({
   renderDisplay?: (value: string) => React.ReactNode
 }) {
   const { copy, onCopyChange } = useEdit()
-  const value = resolveOverride(copy, id, fallback)
+  const aiTitle = sectionTitleKey ? copy.sectionTitles?.[sectionTitleKey] : undefined
+  const effectiveFallback = aiTitle && aiTitle.length > 0 ? aiTitle : fallback
+  const value = resolveOverride(copy, id, effectiveFallback)
   return (
     <InlineEdit
       value={value}
-      onChange={(next) => onCopyChange(writeTextOverride(copy, id, next, fallback))}
+      onChange={(next) => onCopyChange(writeTextOverride(copy, id, next, effectiveFallback))}
       multiline={multiline}
       maxLength={maxLength}
-      placeholder={placeholder ?? fallback}
+      placeholder={placeholder ?? effectiveFallback}
       style={style}
       ariaLabel={ariaLabel}
       preserveWhitespace={preserveWhitespace}
       renderDisplay={renderDisplay}
     />
+  )
+}
+
+/**
+ * v6.1(작업E1): 내용 파생 안정 오버라이드 키 — 후기·추천칩처럼 순서/삭제가 바뀌어도
+ * 문구가 그 항목에 계속 귀속되도록 내용 해시로 id를 만든다. 콜라주 말풍선(review.bubble.*)의
+ * 기존 해시식(h*31+charCode → >>>0 → base36)과 동일하게 맞춰, 같은 후기 본문이면 콜라주/카드
+ * 어느 레이아웃에서 편집해도 같은 키를 공유한다. 결정적(Math.random·Date 없음) → JPG 위생 안전.
+ */
+function contentKey(prefix: string, s: string): string {
+  let h = 0
+  for (let k = 0; k < s.length; k++) h = (h * 31 + s.charCodeAt(k)) | 0
+  return `${prefix}.${(h >>> 0).toString(36)}`
+}
+
+/* ============================================================ */
+/* v6.1(작업E2) 섹션 숨김/복원                                    */
+/* ------------------------------------------------------------ */
+/* 각 섹션을 SectionShell 로 감싸 hover 시 "섹션 숨기기" 편집 크롬  */
+/* (fdp-no-print + data-edit-chrome → JPG 캡처에서 제외)을 띄운다. */
+/* 숨긴 섹션은 렌더 트리에서 완전 제거(JPG·총높이에서 소멸).        */
+/* id 는 재생성·복원에도 유지되는 안정 슬러그(아래 레지스트리).      */
+/*                                                              */
+/* ★ 불변식: 아무것도 숨기지 않은 기본 상태는 SectionShell 이 자식을 */
+/*   position:relative 투명 div 로만 감쌀 뿐 여백/보더/마진을 더하지 */
+/*   않아 픽셀 100% 동일. 내부 게이팅으로 자식이 null 이면 래퍼는     */
+/*   높이 0(버튼도 hover 영역 없어 미노출) — 레이아웃 무개입.        */
+/* ============================================================ */
+
+/** 숨김 가능한 섹션 메타 — label 은 사이드바 복원 목록·확인창용(편집 크롬, JPG 제외). */
+const HIDEABLE_SECTION_META: Record<string, { label: string; warn?: string }> = {
+  brandTopLabel: { label: "브랜드 상단 라벨" },
+  reviewStatsStrip: { label: "후기 집계 스트립" },
+  valueProp: { label: "가치 제안 3종" },
+  whyBrand: { label: "WHY 카드" },
+  certCaption: { label: "공식 인증" },
+  problemArc: { label: "문제 서사 아크" },
+  story: { label: "스토리" },
+  impact: { label: "임팩트 배너" },
+  recommendFor: { label: "이런 분께 추천" },
+  reviews: { label: "고객 후기" },
+  gallery: { label: "사진 갤러리" },
+  bento: { label: "스펙·가격" },
+  seasonCalendar: { label: "제철 캘린더" },
+  photoBreak0: { label: "포토 브레이크 ①" },
+  sizeDiagram: { label: "크기 참고" },
+  keyPointsBig: { label: "핵심 포인트 카드" },
+  farmStory: { label: "팜 스토리" },
+  photoBreak1: { label: "포토 브레이크 ②" },
+  receiveTimeline: { label: "수령 후 타임라인" },
+  storage: { label: "보관법" },
+  recipe: { label: "즐기는 법" },
+  faq: { label: "자주 묻는 질문(FAQ)" },
+  packaging: { label: "배송 구성" },
+  deliveryFlow: { label: "신선 배송 4단계" },
+  delivery: { label: "배송 안내" },
+  // 교환·환불은 판매 필수 고지일 수 있어 숨김 시 경고 후 허용(셀러 결정권 존중).
+  returns: {
+    label: "교환·환불 안내",
+    warn: "교환·환불 안내는 판매에 꼭 필요한 법정 고지일 수 있어요.\n그래도 이 섹션을 숨길까요?",
+  },
+  ctaBottom: { label: "하단 구매 버튼" },
+  cautions: { label: "주의사항" },
+  closing: { label: "클로징 서명" },
+}
+
+interface HideCtx {
+  hidden: Set<string>
+  /** 섹션 숨기기 — warn 이 있으면 확인창 통과 시에만 숨긴다. */
+  hideSection: (id: string, warn?: string) => void
+  /** 편집 가능 여부 — onHiddenChange 미전달(읽기전용)이면 false → 호버 버튼 미노출. */
+  canEdit: boolean
+}
+const HideContext = createContext<HideCtx | null>(null)
+
+/**
+ * 섹션 래퍼 — 숨김이면 null(트리 제거), 아니면 자식 + hover "섹션 숨기기" 버튼.
+ * 버튼은 fdp-no-print + data-edit-chrome 라 두 캡처 경로(html-to-jpg·artboard-segments)
+ * 모두 클론에서 제거된다. position:absolute 라 레이아웃 무개입(호버 시에만 렌더).
+ */
+function SectionShell({
+  id,
+  isMobile,
+  children,
+}: {
+  id: string
+  isMobile: boolean
+  children: React.ReactNode
+}) {
+  const ctx = useContext(HideContext)
+  const [hover, setHover] = useState(false)
+  if (ctx?.hidden.has(id)) return null
+  const meta = HIDEABLE_SECTION_META[id]
+  const canEdit = !!ctx?.canEdit
+  return (
+    <div
+      data-fdp-section={id}
+      style={{ position: "relative" }}
+      onMouseEnter={canEdit ? () => setHover(true) : undefined}
+      onMouseLeave={canEdit ? () => setHover(false) : undefined}
+    >
+      {children}
+      {canEdit && hover && (
+        <button
+          type="button"
+          className="fdp-no-print"
+          data-edit-chrome=""
+          aria-label={`${meta?.label ?? "섹션"} 숨기기`}
+          onClick={() => ctx?.hideSection(id, meta?.warn)}
+          style={{
+            position: "absolute",
+            top: 8,
+            right: 8,
+            zIndex: 6,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            padding: isMobile ? "3px 8px" : "4px 10px",
+            background: "rgba(255,255,255,0.94)",
+            border: `1px solid ${RED}`,
+            borderRadius: 999,
+            color: RED,
+            fontSize: isMobile ? 11 : 12,
+            fontWeight: 700,
+            lineHeight: 1.2,
+            cursor: "pointer",
+            boxShadow: "0 1px 4px rgba(0,0,0,0.14)",
+            whiteSpace: "nowrap",
+          }}
+        >
+          ✕ 섹션 숨기기
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -280,6 +429,16 @@ interface ResultViewProps {
    * 기존 렌더와 100% 동일(게이팅 불변식). 로고는 dataURL img 로만 렌더(JPG 위생 안전).
    */
   brandSnapshot?: BrandSnapshot | null
+  /**
+   * v6.1(작업E2): 셀러가 "숨기기"한 섹션 id 목록. 이 목록의 섹션은 렌더 트리에서 완전 제거된다
+   * (JPG·총높이에서 소멸). 미전달/빈 배열이면 전 섹션 노출 — 기존 렌더와 100% 동일(불변식).
+   */
+  hiddenSections?: string[]
+  /**
+   * v6.1(작업E2): 숨김 목록 변경 콜백(숨기기·복원). 미전달이면 숨김 편집 크롬(호버 버튼·복원 목록)
+   * 자체가 노출되지 않는다(읽기 전용 렌더). DetailMaker 가 Work.hiddenSections 로 저장·복원한다.
+   */
+  onHiddenChange?: (next: string[]) => void
 }
 
 const RED = "#E03131" // 사이드바 편집 컨트롤용 브랜드 색 (내보내는 페이지엔 accent 사용)
@@ -1537,7 +1696,10 @@ function BrixLockup({ value }: { value: number }) {
         whiteSpace: "nowrap",
       }}
     >
-      <span style={{ fontWeight: 800, letterSpacing: "-0.01em" }}>{value}</span>
+      {/* v6.2b(T4): 히어로 Brix는 '큰 숫자' 연출(리서치 ★7/★5, 01-01 지적 — num이 단위와 붙어
+          단어처럼 읽혀 큰 숫자 연출이 죽음). 숫자를 스티커 최강 무게(900)로 올리고 살짝 키워
+          단위(Brix)와 위계를 벌린다. 스티커는 이미지 위 absolute 오버레이라 페이지 높이 불변. */}
+      <span style={{ fontSize: "1.1em", fontWeight: 900, letterSpacing: "-0.01em" }}>{value}</span>
       <span style={{ fontSize: "0.62em", fontWeight: 700, marginLeft: "0.14em" }}>Brix</span>
     </span>
   )
@@ -1866,7 +2028,10 @@ function ValuePropStrip({ isMobile, trust }: { isMobile: boolean; trust?: TrustI
                 wordBreak: "keep-all",
               }}
             >
-              <OverrideText id={`trio.${i}`} fallback={label} maxLength={20} />
+              {/* v6.1(작업E1): 위치 인덱스(trio.{i}) 대신 라벨 내용 해시 키 —
+                  trust 토글로 슬롯 구성이 바뀌어도 편집 문구가 라벨 의미에 안정 귀속되어
+                  다른 아이콘 자리에 오귀속되지 않는다(ReceiveTimeline 역할키와 동일 처리). */}
+              <OverrideText id={contentKey("trio", label)} fallback={label} maxLength={20} />
             </span>
           </div>
         ))}
@@ -1979,8 +2144,32 @@ export function ResultView({
   busySection,
   layoutVariant,
   brandSnapshot,
+  hiddenSections,
+  onHiddenChange,
 }: ResultViewProps) {
   const [enhance, setEnhance] = useState(true)
+  /**
+   * v6.1(작업E2): 숨긴 섹션 집합 + 숨기기/복원 핸들러.
+   * onHiddenChange 미전달(읽기전용)이면 canEdit=false → 호버 숨김 버튼·복원 목록 미노출.
+   * hideSection 은 warn 있으면 확인창 통과 시에만 숨긴다(교환·환불 등 법정 고지 보호).
+   */
+  const hiddenSet = useMemo(() => new Set(hiddenSections ?? []), [hiddenSections])
+  const hideCtxValue = useMemo<HideCtx>(
+    () => ({
+      hidden: hiddenSet,
+      canEdit: !!onHiddenChange,
+      hideSection: (id, warn) => {
+        if (!onHiddenChange || hiddenSet.has(id)) return
+        if (warn && typeof window !== "undefined" && !window.confirm(warn)) return
+        onHiddenChange([...(hiddenSections ?? []), id])
+      },
+    }),
+    [hiddenSet, hiddenSections, onHiddenChange],
+  )
+  const restoreSection = (id: string) => {
+    if (!onHiddenChange) return
+    onHiddenChange((hiddenSections ?? []).filter((x) => x !== id))
+  }
   /** v4.6: 레이아웃 토큰 — undefined면 standard(불변식). Provider로 각 블록에 주입. */
   const layout = useMemo(
     () => LAYOUT_TOKENS[layoutVariant ?? "standard"] ?? LAYOUT_TOKENS.standard,
@@ -2586,6 +2775,7 @@ export function ResultView({
     <LayoutContext.Provider value={layout}>
     <MotifContext.Provider value={motifKind}>
     <EditContext.Provider value={{ copy, onCopyChange }}>
+    <HideContext.Provider value={hideCtxValue}>
     <CropContext.Provider value={cropCtxValue}>
     <div
       style={{
@@ -2658,7 +2848,11 @@ export function ResultView({
 
             {/* v5.0-C: 상단 브랜드 라벨 — From 배지 위, 흰 바탕 얇은 서명(로고+스토어명).
                 brandSnapshot 없으면 렌더 안 됨(게이팅 불변식 — 기존 렌더와 100% 동일). */}
-            {brandSnapshot && <BrandTopLabel brand={brandSnapshot} isMobile={isMobile} />}
+            {brandSnapshot && (
+              <SectionShell id="brandTopLabel" isMobile={isMobile}>
+                <BrandTopLabel brand={brandSnapshot} isMobile={isMobile} />
+              </SectionShell>
+            )}
 
             {/* v2.9: HERO를 최상단으로 (수플린 레퍼런스 — 헤드/이미지/CTA가 먼저) */}
             <HeroBlock
@@ -2679,13 +2873,17 @@ export function ResultView({
 
             {/* v5.8(작업①): 후기 집계 스트립 — 히어로 직하단. 셀러가 입력한 집계 값만(허위 금지).
                 하나도 없으면 내부에서 null 반환 → 렌더 안 됨(기존 렌더와 동일). */}
-            <ReviewStatsStrip stats={reviewStats} isMobile={isMobile} />
+            <SectionShell id="reviewStatsStrip" isMobile={isMobile}>
+              <ReviewStatsStrip stats={reviewStats} isMobile={isMobile} />
+            </SectionShell>
 
             {/* v5.9(작업D⑥): 배송 약속 밴드 삭제 — 당일수확 3중 중복 정리(세로 순감).
                 신뢰요소는 히어로 highlightBadges + ValuePropStrip 아이콘 트리오 2곳으로만. */}
 
             {/* v2.5: 가치 제안 스트립 — 강한 주장은 trust 체크 시에만, 미체크는 안전 문구 */}
-            <ValuePropStrip isMobile={isMobile} trust={trust} />
+            <SectionShell id="valueProp" isMobile={isMobile}>
+              <ValuePropStrip isMobile={isMobile} trust={trust} />
+            </SectionShell>
 
             {/* 2a. FreshnessTimeline — 수확일 + fruit-facts 보관 일수 (v1.8)
                 v5.9(작업X·리뷰): 이 위젯은 now=new Date() 시점 의존이라 JPG 캡처 결정성 위반이었다
@@ -2701,26 +2899,30 @@ export function ResultView({
               </div>
             )}
 
-            {/* v3.4(지시2): 흰 돔 곡선 전환 — 틴트에서 흰 돔이 솟고 정점에 WHY 원 */}
-            <DomeTransition
-              tintColor={veilTint(accent.soft)}
-              accent={accent}
-              label="WHY"
-              isMobile={isMobile}
-            />
+            {/* v6.1(작업E2): DomeTransition(리드인)+WhyBrandCard를 한 셸로 묶어 함께 숨김. */}
+            <SectionShell id="whyBrand" isMobile={isMobile}>
+              {/* v3.4(지시2): 흰 돔 곡선 전환 — 틴트에서 흰 돔이 솟고 정점에 WHY 원 */}
+              <DomeTransition
+                tintColor={veilTint(accent.soft)}
+                accent={accent}
+                label="WHY"
+                isMobile={isMobile}
+              />
 
-            {/* v2.9: WHY 카드 (수플린 레퍼런스 — Hero 다음). 돔이 흰 배경으로 착지. */}
-            <WhyBrandCard
-              productName={productName}
-              image={imagePlan.whyBrand}
-              isMobile={isMobile}
-            />
+              {/* v2.9: WHY 카드 (수플린 레퍼런스 — Hero 다음). 돔이 흰 배경으로 착지. */}
+              <WhyBrandCard
+                productName={productName}
+                image={imagePlan.whyBrand}
+                isMobile={isMobile}
+              />
+            </SectionShell>
 
             {/* D14: WHY 하단 신뢰 pill 행(TrustBadgesRow) 삭제 — 신뢰 3종은 히어로
                 highlightBadges + 아이콘 트리오(ValuePropStrip) 2곳으로만 노출. */}
 
             {/* 1b. CertCaption — 공식 인증 (v1.8) */}
             {trust && (trust.gapNumber?.trim() || trust.organicNumber?.trim() || trust.pesticideFreeNumber?.trim()) && (
+              <SectionShell id="certCaption" isMobile={isMobile}>
               <div
                 style={{
                   display: "flex",
@@ -2756,29 +2958,34 @@ export function ResultView({
                   />
                 )}
               </div>
+              </SectionShell>
             )}
 
             {/* 2b. PROBLEM ARC — 문제 제기→해결 서사 아크 (실물 키위 레퍼런스).
                    WHY 카드 다음, Story 앞. problemArc 없으면(구버전 카피) 미노출. */}
-            {copy.problemArc && copy.problemArc.problems.length > 0 ? (
-              <>
+            {/* v6.1(작업E2): 숨김이면 곡선쌍 대신 DotDivider(서사 없는 페이지와 동일 간격)로 폴백 —
+                구분선 이중/고아 방지. 곡선 divider 2개는 셸 내부에 통째로 담겨 반토막 슬라이스 없음. */}
+            {copy.problemArc && copy.problemArc.problems.length > 0 && !hiddenSet.has("problemArc") ? (
+              <SectionShell id="problemArc" isMobile={isMobile}>
                 {/* v3.4(지시2): 흰 → 틴트 곡선 전환 */}
                 <CurveDivider topColor="#FFFFFF" fillColor={veilTint(accent.soft)} height={isMobile ? 44 : 64} />
                 <ProblemArcBlock arc={copy.problemArc} photos={imagePlan.problemArc} isMobile={isMobile} />
                 {/* 틴트 → 흰(STORY) 곡선 전환 (아래로 파인 곡선처럼 보이도록 색 반전) */}
                 <CurveDivider topColor={veilTint(accent.soft)} fillColor="#FFFFFF" height={isMobile ? 44 : 64} />
-              </>
+              </SectionShell>
             ) : (
               <DotDivider />
             )}
 
             {/* 3. STORY (형광펜 강조 — 첫 감각 문장 자동 강조) */}
-            <StoryBlock
-              copy={copy}
-              onCopyChange={onCopyChange}
-              onRegen={renderRegen("story")}
-              isMobile={isMobile}
-            />
+            <SectionShell id="story" isMobile={isMobile}>
+              <StoryBlock
+                copy={copy}
+                onCopyChange={onCopyChange}
+                onRegen={renderRegen("story")}
+                isMobile={isMobile}
+              />
+            </SectionShell>
 
             {/* 3a-2 / 3b. 임팩트 블록 — 페이지당 하나 (v5.1.1 우선순위: 오버레이 > 다크밴드).
                 오버레이(와이드 사진 위 카피)가 가능하면 다크밴드 슬로건(highlightBox)을 사진 위로
@@ -2787,6 +2994,8 @@ export function ResultView({
                 오버레이 불가(적합 사진 없음)면 기존 다크밴드(SensoryPunch) 그대로.
                 ★ overlayImage 는 subjectBox(v5.1 신규 분석 신호) 유효 사진만 선정 →
                   구버전 저장본·분석 없는 경로엔 오버레이가 절대 안 뜨고 다크밴드가 기존과 동일(회귀 0). */}
+            {/* v6.1(작업E2): 오버레이/다크밴드 택1을 한 셸로 — 둘 다 없으면 자식 null → 높이0 무해. */}
+            <SectionShell id="impact" isMobile={isMobile}>
             {overlayImage && (punchDisplay || overlayQuote) ? (
               <OverlayQuoteBlock
                 image={overlayImage}
@@ -2820,27 +3029,28 @@ export function ResultView({
                 />
               )
             )}
+            </SectionShell>
 
             {/* 3a. RECOMMEND FOR */}
             {copy.recommendFor && copy.recommendFor.length > 0 && (
-              <>
+              <SectionShell id="recommendFor" isMobile={isMobile}>
                 <DotDivider />
                 <RecommendForBlock items={copy.recommendFor} isMobile={isMobile} />
-              </>
+              </SectionShell>
             )}
 
             {/* 3c. REVIEWS — 셀러가 직접 입력한 고객 후기(AI 생성 아님). 0건이면 미노출. */}
             {validReviews.length > 0 && (
-              <>
+              <SectionShell id="reviews" isMobile={isMobile}>
                 <DotDivider />
                 <ReviewsBlock reviews={validReviews} bgImage={reviewBgImage} isMobile={isMobile} />
-              </>
+              </SectionShell>
             )}
 
             {/* 4. GALLERY (2x2) — v5.8(작업③): 컷 스트립/콜라주가 흡수한 사진은 galleryFinal 에서
                 제외되어 같은 사진이 두 번 찍히지 않는다(변주 미발동이면 galleryFinal === galleryImages). */}
             {photoVariants.galleryFinal.length > 0 && (
-              <>
+              <SectionShell id="gallery" isMobile={isMobile}>
                 <DotDivider />
                 <GalleryBlock
                   images={photoVariants.galleryFinal}
@@ -2848,30 +3058,36 @@ export function ResultView({
                   isMobile={isMobile}
                   noteFor={(id) => photoNoteById.get(id)}
                 />
-              </>
+              </SectionShell>
             )}
-
-            <DotDivider />
 
             {/* 5. SPEC + PRICE — v5.8(작업②): 벤토 데이터 그리드로 대체.
                 당도 게이지·중량/개수·개당/100g당 가격·출하 기준 체크리스트를 2컬럼 1블록으로 통합.
-                (크기·중량 서술 섹션과 선별·수확 POINT를 흡수 → 아래 SizeDiagramBlock/KeyPointsBig가 그만큼 축소) */}
-            <BentoDataGrid
-              copy={copy}
-              productName={productName}
-              weight={weight}
-              price={price}
-              onCopyChange={onCopyChange}
-              onRegen={renderRegen("spec")}
-              isMobile={isMobile}
-              shipmentPoints={shipmentPoints}
-            />
+                (크기·중량 서술 섹션과 선별·수확 POINT를 흡수 → 아래 SizeDiagramBlock/KeyPointsBig가 그만큼 축소)
+                v6.1(작업E2): 선행 DotDivider를 셸에 포함(숨김 시 함께 제거 — 고아 구분선 방지). */}
+            <SectionShell id="bento" isMobile={isMobile}>
+              <DotDivider />
+              <BentoDataGrid
+                copy={copy}
+                productName={productName}
+                weight={weight}
+                price={price}
+                onCopyChange={onCopyChange}
+                onRegen={renderRegen("spec")}
+                isMobile={isMobile}
+                shipmentPoints={shipmentPoints}
+              />
+            </SectionShell>
 
             {/* v4.5: 5-1. 제철 캘린더 — 스펙 부근. fruit-facts 품종 매칭 실패/연중 수확이면 미노출. */}
-            <SeasonCalendarBlock productName={productName} isMobile={isMobile} />
+            <SectionShell id="seasonCalendar" isMobile={isMobile}>
+              <SeasonCalendarBlock productName={productName} isMobile={isMobile} />
+            </SectionShell>
 
             {/* 포토 브레이크 ①(슬롯0) — v5.8(작업③C): 절단면 컷 2장+ 이면 세로 대신 가로 컷 시퀀스로
-                대체. 컷이 없고 콜라주도 없을 때만 기존 풀블리드 포토브레이크(게이팅). 셋 다 미충족이면 미노출. */}
+                대체. 컷이 없고 콜라주도 없을 때만 기존 풀블리드 포토브레이크(게이팅). 셋 다 미충족이면 미노출.
+                v6.1(작업E2): 택1 변주를 한 셸로 — 각 분기가 선행 DotDivider를 함께 담아 숨김 시 고아 없음. */}
+            <SectionShell id="photoBreak0" isMobile={isMobile}>
             {photoVariants.cutActive ? (
               <>
                 <DotDivider />
@@ -2898,21 +3114,24 @@ export function ResultView({
                 />
               </>
             ) : null}
+            </SectionShell>
 
             {/* 5a. 크기 참고 사진 — v5.8(작업②C): 중량·개수 환산은 벤토로 이관되어 이 섹션은
                 크기 전용 슬롯 사진이 있을 때만 렌더(사진 없으면 미노출). */}
-            <SizeDiagramBlock
-              productName={productName}
-              sizeImage={sizeImage}
-              isMobile={isMobile}
-              noun={noun}
-              hasSizeMention={hasSizeMention}
-            />
+            <SectionShell id="sizeDiagram" isMobile={isMobile}>
+              <SizeDiagramBlock
+                productName={productName}
+                sizeImage={sizeImage}
+                isMobile={isMobile}
+                noun={noun}
+                hasSizeMention={hasSizeMention}
+              />
+            </SectionShell>
 
             {/* 6. POINT BIG CARDS — v5.8(작업②B): 출하 기준(선별·수확)으로 승격된 POINT는
                 벤토 체크리스트로 내려가 여기선 숨긴다. 남는 대형 카드가 1장 이상일 때만 렌더. */}
             {keyPoints.length - shipmentHideIndices.size > 0 && (
-              <>
+              <SectionShell id="keyPointsBig" isMobile={isMobile}>
                 <DotDivider />
                 <KeyPointsBig
                   points={keyPoints}
@@ -2925,22 +3144,24 @@ export function ResultView({
                   calloutIndex={calloutIndex}
                   calloutChips={calloutChips}
                 />
-              </>
+              </SectionShell>
             )}
 
             {/* 6a. FARM STORY */}
             {copy.farmStory && (
-              <>
+              <SectionShell id="farmStory" isMobile={isMobile}>
                 <DotDivider />
                 <FarmStoryBlock
                   isMobile={isMobile}
                   trust={trust}
                 />
-              </>
+              </SectionShell>
             )}
 
             {/* 포토 브레이크 ②(슬롯1) — v5.8(작업③B): 사진 6장+ 이면 두 포토브레이크를 폴라로이드
-                콜라주 1블록으로 대체(순증 방지). 콜라주 미발동이면 기존 풀블리드 포토브레이크(게이팅). */}
+                콜라주 1블록으로 대체(순증 방지). 콜라주 미발동이면 기존 풀블리드 포토브레이크(게이팅).
+                v6.1(작업E2): 택1 변주를 한 셸로 — 각 분기가 선행 DotDivider를 함께 담아 숨김 시 고아 없음. */}
+            <SectionShell id="photoBreak1" isMobile={isMobile}>
             {photoVariants.collageActive ? (
               <>
                 <DotDivider />
@@ -2964,14 +3185,17 @@ export function ResultView({
                 />
               </>
             ) : null}
+            </SectionShell>
 
             {/* v4.5: 6-1. 수령 후 타임라인 — 보관 섹션 위. fruit-facts storage 없으면 미노출.
                 copy.storage(셀러 원문) 유무와 무관하게 fruit-facts storage 매칭 시 노출한다. */}
-            <ReceiveTimelineBlock productName={productName} isMobile={isMobile} />
+            <SectionShell id="receiveTimeline" isMobile={isMobile}>
+              <ReceiveTimelineBlock productName={productName} isMobile={isMobile} />
+            </SectionShell>
 
             {/* 7. STORAGE */}
             {copy.storage && (
-              <>
+              <SectionShell id="storage" isMobile={isMobile}>
                 <DotDivider />
                 <StorageBlock
                   copy={copy}
@@ -2979,20 +3203,20 @@ export function ResultView({
                   onRegen={renderRegen("storage")}
                   isMobile={isMobile}
                 />
-              </>
+              </SectionShell>
             )}
 
             {/* v2.9: 7a. 즐기는 법 (수플린 RECIPE 레퍼런스, 과일 매칭 시만) */}
             {hasRecipe && (
-              <>
+              <SectionShell id="recipe" isMobile={isMobile}>
                 <DotDivider />
                 <RecipeBlock productName={productName} isMobile={isMobile} />
-              </>
+              </SectionShell>
             )}
 
             {/* 8. FAQ */}
             {copy.faq.length > 0 && (
-              <>
+              <SectionShell id="faq" isMobile={isMobile}>
                 <DotDivider />
                 <FaqBlock
                   copy={copy}
@@ -3000,66 +3224,79 @@ export function ResultView({
                   onRegen={renderRegen("faq")}
                   isMobile={isMobile}
                 />
-              </>
+              </SectionShell>
             )}
 
             {/* v3.7: 8a. 배송 시 구성 — 포장 전용 슬롯 사진이 있을 때만 노출.
                 포장 사진이 없으면 섹션 자체를 렌더하지 않는다(일반 풀 사진 대체 금지). */}
             {packagingImage && (
-              <>
+              <SectionShell id="packaging" isMobile={isMobile}>
                 <DotDivider />
                 <PackagingBlock
                   image={packagingImage}
                   weight={weight}
                   isMobile={isMobile}
                 />
-              </>
+              </SectionShell>
             )}
 
-            <DotDivider />
-
-            {/* v2.8: 8b. 신선함을 잇는 4단계 (수플린 배송 흐름 레퍼런스) */}
-            <DeliveryFlowBlock trust={trust} isMobile={isMobile} productName={productName} />
-
-            <DotDivider />
+            {/* v2.8: 8b. 신선함을 잇는 4단계 (수플린 배송 흐름 레퍼런스)
+                v6.1(작업E2): 각 약관/흐름 섹션은 선행 DotDivider를 셸에 포함 —
+                자기 앞 구분선을 소유하므로 어느 하나를 숨겨도 구분선 이중/고아가 없다. */}
+            <SectionShell id="deliveryFlow" isMobile={isMobile}>
+              <DotDivider />
+              <DeliveryFlowBlock trust={trust} isMobile={isMobile} productName={productName} />
+            </SectionShell>
 
             {/* 9. DELIVERY (정형 텍스트 상세) — 당일 발송 문구는 trust 체크 시에만 */}
-            <DeliveryBlock isMobile={isMobile} trust={trust} productName={productName} />
+            <SectionShell id="delivery" isMobile={isMobile}>
+              <DotDivider />
+              <DeliveryBlock isMobile={isMobile} trust={trust} productName={productName} />
+            </SectionShell>
 
-            <DotDivider />
-
-            {/* 9a. RETURNS (정형) — 환불 기한은 refundGuarantee 입력이 있으면 그 값(C11) */}
-            <ReturnsBlock isMobile={isMobile} trust={trust} />
+            {/* 9a. RETURNS (정형) — 환불 기한은 refundGuarantee 입력이 있으면 그 값(C11).
+                v6.1(작업E2): 숨김 시 "판매 필수 고지" 경고 후 허용(SectionShell warn). */}
+            <SectionShell id="returns" isMobile={isMobile}>
+              <DotDivider />
+              <ReturnsBlock isMobile={isMobile} trust={trust} />
+            </SectionShell>
 
             {/* D14: 교환·환불 하단 신뢰 pill 행(CheckoutTrustStrip) 삭제 — 신뢰 3종 연타 방지.
                 신뢰 요소는 히어로 highlightBadges + 아이콘 트리오(ValuePropStrip) 2곳으로만. */}
 
             {/* CTA 반복 — 교환·환불 안내 뒤, 주의 박스 앞 (리서치: CTA 2회 반복).
                 하단은 히어로와 동일 데이터의 제목형 변주(이슈4) — 같은 문구 2회 반복 방지. */}
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                padding: isMobile ? "36px 24px 8px" : "72px 44px 16px",
-                background: "#FFFFFF",
-              }}
-            >
-              <CtaPill text={ctaTextBottom} isMobile={isMobile} editId="cta.bottom" />
-            </div>
+            <SectionShell id="ctaBottom" isMobile={isMobile}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "center",
+                  padding: isMobile ? "36px 24px 8px" : "72px 44px 16px",
+                  background: "#FFFFFF",
+                }}
+              >
+                <CtaPill text={ctaTextBottom} isMobile={isMobile} editId="cta.bottom" />
+              </div>
+            </SectionShell>
 
             {/* 10. CAUTIONS — 신선식품 면책 박스 자동 표시 (cautions 비어 있어도 노출).
-                D17: faq 답변·storage와 정확 일치하는 cautions 항목은 렌더 생략. */}
-            <DotDivider />
-            <CautionsBlock cautions={copy.cautions ?? []} copy={copy} isMobile={isMobile} />
+                D17: faq 답변·storage와 정확 일치하는 cautions 항목은 렌더 생략.
+                v6.1(작업E2): 선행 DotDivider를 셸에 포함(숨김 시 함께 제거). */}
+            <SectionShell id="cautions" isMobile={isMobile}>
+              <DotDivider />
+              <CautionsBlock cautions={copy.cautions ?? []} copy={copy} isMobile={isMobile} />
+            </SectionShell>
 
             {/* v3.8(지시6): 클로징 브랜드 서명 — 잎 라인 아이콘 + 한 줄 + 가는 구분선.
                 v5.0-C: brandSnapshot 있으면 로고·스토어명·서명·문의 브랜드 블록 확장. */}
-            <ClosingSignature
-              productName={productName}
-              trust={trust}
-              isMobile={isMobile}
-              brand={brandSnapshot}
-            />
+            <SectionShell id="closing" isMobile={isMobile}>
+              <ClosingSignature
+                productName={productName}
+                trust={trust}
+                isMobile={isMobile}
+                brand={brandSnapshot}
+              />
+            </SectionShell>
           </div>
             </div>
           </div>
@@ -3191,6 +3428,77 @@ export function ResultView({
           </button>
         </section>
 
+        {/* ── 구역 2b(v6.1 작업E2): 숨긴 섹션 — N개일 때만 노출, 접이식 목록 + 개별 복원. ──
+            편집 크롬(fdp-no-print)이라 JPG·저장 결과물과 무관. onHiddenChange 없으면 미노출. */}
+        {onHiddenChange && (() => {
+          const hiddenList = Object.keys(HIDEABLE_SECTION_META).filter((id) => hiddenSet.has(id))
+          if (hiddenList.length === 0) return null
+          return (
+            <section
+              className="fdp-no-print"
+              style={{
+                ...SIDEBAR_REGION_STYLE,
+                padding: 12,
+                background: "var(--color-bg-subtle)",
+                borderRadius: RADIUS.card,
+              }}
+            >
+              <details open>
+                <summary
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 800,
+                    color: "var(--color-neutral-800)",
+                    cursor: "pointer",
+                    listStyle: "revert",
+                  }}
+                >
+                  숨긴 섹션 {hiddenList.length}개
+                </summary>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
+                  {hiddenList.map((id) => (
+                    <div
+                      key={id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        padding: "6px 10px",
+                        background: "var(--color-bg-surface)",
+                        borderRadius: RADIUS.control,
+                        fontSize: 12,
+                        color: "var(--color-neutral-700)",
+                      }}
+                    >
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {HIDEABLE_SECTION_META[id]?.label ?? id}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => restoreSection(id)}
+                        style={{
+                          flexShrink: 0,
+                          padding: "3px 10px",
+                          background: "transparent",
+                          border: `1px solid ${RED}`,
+                          borderRadius: 999,
+                          color: RED,
+                          fontSize: 11,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                        }}
+                      >
+                        복원
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            </section>
+          )
+        })()}
+
         {/* ── 구역 3: JPG로 내보내기 (옵션 카드 + 다운로드 sticky 푸터) ──
             ExportPanel이 프래그먼트로 [옵션 카드]+[sticky 다운로드]를 형제로 뱉으므로,
             사이드바의 마지막 자식이 되어 다운로드가 스크롤과 무관하게 항상 보인다.
@@ -3213,6 +3521,7 @@ export function ResultView({
       {/* v2.7: StickyMobileCta 삭제 (사이드바에 이미 있으므로 중복 제거) */}
     </div>
     </CropContext.Provider>
+    </HideContext.Provider>
     </EditContext.Provider>
     </MotifContext.Provider>
     </LayoutContext.Provider>
@@ -3269,6 +3578,7 @@ function WhyBrandCard({
         >
           <OverrideText
             id="why.title"
+            sectionTitleKey="why"
             fallback={`WHY ${name || "이 상품"}일까요?`}
             maxLength={40}
             renderDisplay={(v) =>
@@ -3353,6 +3663,7 @@ function RecipeBlock({
         >
           <OverrideText
             id="recipe.title"
+            sectionTitleKey="enjoy"
             fallback={`${name} 이렇게 즐겨보세요`}
             maxLength={40}
             renderDisplay={(v) =>
@@ -3395,7 +3706,8 @@ function RecipeBlock({
             }}
           >
             <span aria-hidden style={{ color: accent.accent, fontWeight: 900 }}>✓</span>
-            {pairing}
+            {/* v6.1(작업E1): 페어링 칩 문구 편집화. fact 파생이라 내용 해시 키로 순서/재생성에도 안정 귀속. */}
+            <OverrideText id={contentKey("recipe.pairing", pairing)} fallback={pairing} maxLength={20} />
           </span>
         ))}
       </div>
@@ -3718,17 +4030,21 @@ function HeroBlock({
               style={{
                 display: "inline-flex",
                 alignItems: "center",
-                padding: isMobile ? "5px 14px" : "8px 20px",
+                // v6.2b(T4): From 배지 크기·패딩을 승격 모드 배지와 단일 스펙으로 통일(리서치
+                // 라벨 위계 — 메타 칩 절제). 데스크톱 24→20 과대 축소로 킥커(22)·헤드라인과의
+                // 경합 완화. 각 값은 종전 이하라 배지행 높이 순증 0(제1원칙).
+                padding: isMobile ? "4px 12px" : "6px 16px",
                 borderRadius: 999,
                 background: accent.accent,
                 color: "#FFFFFF",
-                fontSize: isMobile ? 14 : 24,
+                fontSize: isMobile ? 13 : 20,
                 fontWeight: 800,
                 letterSpacing: 0.5,
                 fontFamily: BODY_FONT,
               }}
             >
-              From. {originText}
+              {/* v6.1(작업E1): 'From.' 접두는 고정 문구 → OverrideText로 편집화. origin은 입력 파생이라 평문 유지. */}
+              <OverrideText id="hero.fromPrefix" fallback="From." maxLength={12} /> {originText}
             </span>
           </div>
         )}
@@ -3845,7 +4161,10 @@ function HeroBlock({
                   fontFamily: BODY_FONT,
                 }}
               >
-                From. {originText}
+                {/* v6.1(작업E1) 정합: 승격 모드 From 배지도 비승격 배지(L4047)와 동일한
+                    'hero.fromPrefix' 키로 접두를 편집화 — 두 변주가 상호배타라 편집값이 일관되고,
+                    히어로 변주에 따라 편집 가능/불가가 갈리던 어포던스 불일치를 제거. origin은 평문. */}
+                <OverrideText id="hero.fromPrefix" fallback="From." maxLength={12} /> {originText}
               </span>
             )}
             <span
@@ -5937,7 +6256,10 @@ function BentoDataGrid({
                       wordBreak: "keep-all",
                     }}
                   >
-                    <span style={{ fontWeight: 800, color: accent.dark }}>{bento.pickTipLabel}</span>{" "}
+                    <span style={{ fontWeight: 800, color: accent.dark }}>
+                      {/* v6.1(작업E1): 고르기 팁 라벨(i18n 고정) 편집화. pickTip 값은 fact 파생이라 별도. */}
+                      <OverrideText id="bento.pickTipLabel" fallback={bento.pickTipLabel} maxLength={24} />
+                    </span>{" "}
                     {pickTip}
                   </div>
                 )}
@@ -6047,14 +6369,16 @@ function BentoDataGrid({
                   const MiniIcon = specLabelIcon("가격")
                   return <MiniIcon color={accent.accent} size={isMobile ? 20 : 30} />
                 })()}
-                <span>{bento.priceLabel}</span>
+                {/* v6.1(작업E1): 가격 라벨(i18n 고정) 편집화. per100gWon 값은 산술 파생이라 평문 유지. */}
+                <span><OverrideText id="bento.priceLabel" fallback={bento.priceLabel} maxLength={16} /></span>
               </div>
               <div style={{ display: "flex", alignItems: "baseline", gap: isMobile ? 6 : 10, lineHeight: 1, color: accent.accent, fontFamily: DISPLAY_FONT }}>
                 <span style={{ fontSize: featuredIdx >= 0 ? (isMobile ? 40 : 68) : (isMobile ? 60 : 100), fontWeight: 900, letterSpacing: -3 }}>
                   {per100gWon}
                 </span>
                 <span style={{ fontSize: isMobile ? 15 : 26, fontWeight: 800, color: accent.dark, fontFamily: BODY_FONT, letterSpacing: 1 }}>
-                  {bento.per100gUnit}
+                  {/* v6.1(작업E1): 100g당 단위 라벨(i18n 고정) 편집화. */}
+                  <OverrideText id="bento.per100gUnit" fallback={bento.per100gUnit} maxLength={16} />
                 </span>
               </div>
               {perEachWon && (
@@ -6071,7 +6395,8 @@ function BentoDataGrid({
                 </div>
               )}
               <div style={{ fontSize: isMobile ? 10 : 14, color: MUTE, fontFamily: BODY_FONT, lineHeight: 1.4 }}>
-                {bento.priceCaption}
+                {/* v6.1(작업E1): 가격 캡션(i18n 고정) 편집화. */}
+                <OverrideText id="bento.priceCaption" fallback={bento.priceCaption} maxLength={60} />
               </div>
             </div>
           )}
@@ -6130,7 +6455,8 @@ function BentoDataGrid({
                   const MiniIcon = specLabelIcon(bento.weightLabel)
                   return <MiniIcon color={accent.accent} size={isMobile ? 20 : 30} />
                 })()}
-                <span>{bento.weightLabel}</span>
+                {/* v6.1(작업E1): 중량 라벨(i18n 고정) 편집화. 아이콘 lookup은 fallback 문자열 사용. */}
+                <span><OverrideText id="bento.weightLabel" fallback={bento.weightLabel} maxLength={16} /></span>
               </div>
               <div
                 style={{
@@ -6193,7 +6519,8 @@ function BentoDataGrid({
                   const MiniIcon = specLabelIcon("선별")
                   return <MiniIcon color={accent.accent} size={isMobile ? 20 : 30} />
                 })()}
-                <span>{bento.shipmentTitle}</span>
+                {/* v6.1(작업E1): 출하 체크리스트 소제목(i18n 고정) 편집화. */}
+                <span><OverrideText id="bento.shipmentTitle" fallback={bento.shipmentTitle} maxLength={24} /></span>
               </div>
               {shipmentPoints.map(({ idx }) => (
                 <div key={`ship-${idx}`} style={{ display: "flex", alignItems: "flex-start", gap: isMobile ? 8 : 12 }}>
@@ -6249,8 +6576,13 @@ function BentoDataGrid({
                   wordBreak: "keep-all",
                 }}
               >
-                <span style={{ fontWeight: 800, color: accent.dark }}>{termEntry[0]}</span>
-                <span>{termEntry[1]}</span>
+                {/* v6.1(작업E1): 품종 용어 칩 편집화. 용어 사전(fact) 파생 →
+                    내용 해시 키(contentKey)로 상품/품종이 바뀌면 자연히 다른 키가 되도록 해
+                    이전 상품의 오버라이드가 새 용어를 덮는 stale 문제를 방지(recipe.pairing과 동일 패턴). */}
+                <span style={{ fontWeight: 800, color: accent.dark }}>
+                  <OverrideText id={contentKey("bento.term.name", termEntry[0])} fallback={termEntry[0]} maxLength={20} />
+                </span>
+                <span><OverrideText id={contentKey("bento.term.def", termEntry[1])} fallback={termEntry[1]} maxLength={60} /></span>
               </span>
             </div>
           )}
@@ -6499,6 +6831,7 @@ function KeyPointsBig({
         >
           <OverrideText
             id="sect.keypoints.title"
+            sectionTitleKey="reason"
             fallback={t.detail.result.keyPointsSectionTitle
               .replace("{noun}", noun)
               .replace("{josa}", subjectJosa(noun))}
@@ -6936,7 +7269,7 @@ function StorageBlock({
         background: "#FFFFFF",
       }}
     >
-      <SectionTitle title={t.detail.result.storage} regen={onRegen} isMobile={isMobile} editId="sect.storage.title" overline="GUIDE" editOverlineId="sect.storage.overline" />
+      <SectionTitle title={t.detail.result.storage} regen={onRegen} isMobile={isMobile} editId="sect.storage.title" sectionTitleKey="storage" overline="GUIDE" editOverlineId="sect.storage.overline" />
 
       {steps.length > 0 && (
         <div
@@ -7107,37 +7440,41 @@ function ReceiveTimelineBlock({
   const days = storage.days && storage.days > 0 ? storage.days : null
   const temp = storage.tempC != null ? storage.tempC : null
 
+  // v6.1(작업E1): editId는 스텝의 '역할' 기반 안정 키 — 보관 모드(product 파생)가 바뀌어도
+  // 같은 역할 스텝에 편집 문구가 귀속된다(위치 인덱스 기반 키의 오귀속 방지).
   type TLStep = {
+    editId: string
     label: string
     desc: string
     Icon: (p: LineIconProps) => React.JSX.Element
     badge?: string
   }
 
-  const receive: TLStep = { label: rt.receiveLabel, desc: rt.receiveDesc, Icon: DeliverIcon, badge: "D+0" }
+  const receive: TLStep = { editId: "receive.receive", label: rt.receiveLabel, desc: rt.receiveDesc, Icon: DeliverIcon, badge: "D+0" }
   let steps: TLStep[]
   if (storage.mode === "ripen-then-fridge") {
     // 받으면 → 실온 후숙(days) → 냉장 보관 → 완숙 후 소비.
     steps = [
       receive,
       {
+        editId: "receive.ripen",
         label: rt.ripenLabel,
         desc: days ? rt.ripenDesc.replace("{days}", `${days}`) : rt.ripenNoDaysDesc,
         Icon: HarvestIcon,
       },
-      { label: rt.thenFridgeLabel, desc: rt.thenFridgeDesc, Icon: ColdIcon },
-      { label: rt.enjoyRipeLabel, desc: rt.enjoyRipeDesc, Icon: BrixIcon },
+      { editId: "receive.thenFridge", label: rt.thenFridgeLabel, desc: rt.thenFridgeDesc, Icon: ColdIcon },
+      { editId: "receive.enjoyRipe", label: rt.enjoyRipeLabel, desc: rt.enjoyRipeDesc, Icon: BrixIcon },
     ]
   } else if (storage.mode === "room") {
     // 받으면 → 실온 보관 → 신선할 때 소비/가공. (room 모드 days 의미가 균일화·가공 등이라 미주입)
     // 생식 부적합(가공 전용, 예: 매실)이면 "드세요"(생식 권유) 대신 가공 안내로 게이트.
     // fruit-facts.rawEdible === false 를 단일 진실원으로 삼아 cautions '생식 X'와 정합.
     const lastStep: TLStep = isRawEdible(productName)
-      ? { label: rt.enjoySoonLabel, desc: rt.enjoySoonDesc, Icon: BrixIcon }
-      : { label: rt.useSoonLabel, desc: rt.useSoonDesc, Icon: LeafIcon }
+      ? { editId: "receive.enjoySoon", label: rt.enjoySoonLabel, desc: rt.enjoySoonDesc, Icon: BrixIcon }
+      : { editId: "receive.useSoon", label: rt.useSoonLabel, desc: rt.useSoonDesc, Icon: LeafIcon }
     steps = [
       receive,
-      { label: rt.roomLabel, desc: rt.roomDesc, Icon: PackIcon },
+      { editId: "receive.room", label: rt.roomLabel, desc: rt.roomDesc, Icon: PackIcon },
       lastStep,
     ]
   } else {
@@ -7145,11 +7482,13 @@ function ReceiveTimelineBlock({
     steps = [
       receive,
       {
+        editId: "receive.fridge",
         label: rt.fridgeLabel,
         desc: temp != null ? rt.fridgeTempDesc.replace("{temp}", `${temp}`) : rt.fridgeDesc,
         Icon: ColdIcon,
       },
       {
+        editId: "receive.enjoy",
         label: rt.enjoyLabel,
         desc: days ? rt.enjoyDaysDesc.replace("{days}", `${days}`) : rt.enjoyNoDaysDesc,
         Icon: BrixIcon,
@@ -7166,7 +7505,7 @@ function ReceiveTimelineBlock({
     <>
       <DotDivider />
       <div style={{ padding: `${padY("flow", isMobile)}px ${isMobile ? 24 : 44}px`, background: veilTint(accent.soft) }}>
-        <SectionTitle title={rt.title} isMobile={isMobile} editId="sect.receive.title" overline="TIMELINE" editOverlineId="sect.receive.overline" />
+        <SectionTitle title={rt.title} isMobile={isMobile} editId="sect.receive.title" sectionTitleKey="timeline" overline="TIMELINE" editOverlineId="sect.receive.overline" />
         <div
           style={{
             background: "#FFFFFF",
@@ -7242,7 +7581,8 @@ function ReceiveTimelineBlock({
                             lineHeight: 1,
                           }}
                         >
-                          {st.badge}
+                          {/* v6.1(작업E1): 수령 배지(D+0, 고정 문구) 편집화. */}
+                          <OverrideText id={`${st.editId}.badge`} fallback={st.badge} maxLength={8} />
                         </span>
                       )}
                     </div>
@@ -7259,7 +7599,8 @@ function ReceiveTimelineBlock({
                         wordBreak: "keep-all",
                       }}
                     >
-                      {st.label}
+                      {/* v6.1(작업E1): 타임라인 스텝명(i18n 고정) 편집화 — 역할 기반 안정 키. */}
+                      <OverrideText id={`${st.editId}.label`} fallback={st.label} maxLength={20} />
                     </span>
                     {/* 설명 */}
                     <span
@@ -7275,7 +7616,8 @@ function ReceiveTimelineBlock({
                         padding: isMobile ? "0 2px" : "0 6px",
                       }}
                     >
-                      {st.desc}
+                      {/* v6.1(작업E1): 스텝 설명 편집화. {days}/{temp} 반영된 문구가 fallback(편집 시 고정됨). */}
+                      <OverrideText id={`${st.editId}.desc`} fallback={st.desc} maxLength={40} />
                     </span>
                   </div>
                 )
@@ -7320,7 +7662,7 @@ function FaqBlock({
         background: layout.altSectionBg(accent),
       }}
     >
-      <SectionTitle title={t.detail.result.faq} regen={onRegen} isMobile={isMobile} editId="sect.faq.title" overline="FAQ" editOverlineId="sect.faq.overline" />
+      <SectionTitle title={t.detail.result.faq} regen={onRegen} isMobile={isMobile} editId="sect.faq.title" sectionTitleKey="faq" overline="FAQ" editOverlineId="sect.faq.overline" />
       <div
         style={{
           background: "#FFFFFF",
@@ -7636,6 +7978,7 @@ function DeliveryFlowBlock({
         >
           <OverrideText
             id="flow.title"
+            sectionTitleKey="deliverySteps"
             fallback="신선함을 잇는 4단계"
             maxLength={30}
             renderDisplay={(v) =>
@@ -7988,7 +8331,7 @@ function RecommendForBlock({
         background: layout.altSectionBg(accent),
       }}
     >
-      <SectionTitle title={t.detail.result.recommendForTitle} isMobile={isMobile} editId="sect.recommend.title" overline="FOR YOU" editOverlineId="sect.recommend.overline" />
+      <SectionTitle title={t.detail.result.recommendForTitle} isMobile={isMobile} editId="sect.recommend.title" sectionTitleKey="recommend" overline="FOR YOU" editOverlineId="sect.recommend.overline" />
       <div
         style={{
           background: "#FFFFFF",
@@ -8093,16 +8436,17 @@ function ReviewStars({ rating, size }: { rating: number; size: number }) {
 function ReviewStatsStrip({ stats, isMobile }: { stats?: ReviewStats; isMobile: boolean }) {
   const accent = useAccent()
   const rs = t.detail.result.reviewStats
-  const cells: { big: string; label: string }[] = []
+  // v6.1(작업E1): big(집계 수치)은 폼 입력 파생이라 평문 유지, label만 OverrideText로 편집화(id 안정 키).
+  const cells: { big: string; label: string; id: string }[] = []
   if (stats?.totalCount != null) {
     const n = String(stats.totalCount).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-    cells.push({ big: `${n}${rs.countUnit}`, label: rs.countLabel })
+    cells.push({ big: `${n}${rs.countUnit}`, label: rs.countLabel, id: "reviewStats.countLabel" })
   }
   if (stats?.fiveStarPct != null) {
-    cells.push({ big: `${stats.fiveStarPct}%`, label: rs.fiveLabel })
+    cells.push({ big: `${stats.fiveStarPct}%`, label: rs.fiveLabel, id: "reviewStats.fiveLabel" })
   }
   const rep = stats?.repurchase?.trim()
-  if (rep) cells.push({ big: rep, label: rs.repurchaseLabel })
+  if (rep) cells.push({ big: rep, label: rs.repurchaseLabel, id: "reviewStats.repurchaseLabel" })
   if (cells.length === 0) return null
   return (
     <div style={{ padding: isMobile ? "14px 24px 10px" : "16px 44px 12px", background: "#FFFFFF" }}>
@@ -8152,7 +8496,8 @@ function ReviewStatsStrip({ stats, isMobile }: { stats?: ReviewStats; isMobile: 
                 fontFamily: BODY_FONT,
               }}
             >
-              {cell.label}
+              {/* v6.1(작업E1): 집계 라벨(누적 후기 등, i18n 고정) 편집화. */}
+              <OverrideText id={cell.id} fallback={cell.label} maxLength={20} />
             </span>
           </div>
         ))}
@@ -8168,7 +8513,8 @@ function ReviewStatsStrip({ stats, isMobile }: { stats?: ReviewStats; isMobile: 
           letterSpacing: -0.2,
         }}
       >
-        {rs.caption}
+        {/* v6.1(작업E1): 집계 기준 캡션(i18n 고정) 편집화. */}
+        <OverrideText id="reviewStats.caption" fallback={rs.caption} maxLength={40} />
       </div>
     </div>
   )
@@ -8193,7 +8539,7 @@ function ReviewsBlock({
   return (
     <div style={{ padding: `${padY("band", isMobile)}px ${isMobile ? 24 : 44}px ${isMobile ? 40 : 56}px`, background: veilTint(accent.soft) }}>
       {/* v3.8(지시3): 후기는 전환점 — hero 위계 + REVIEW 오버라인. */}
-      <SectionTitle title={t.detail.result.reviews.title} variant="hero" overline="REVIEW" isMobile={isMobile} editId="sect.reviews.title" editOverlineId="sect.reviews.overline" />
+      <SectionTitle title={t.detail.result.reviews.title} variant="hero" overline="REVIEW" isMobile={isMobile} editId="sect.reviews.title" sectionTitleKey="reviews" editOverlineId="sect.reviews.overline" />
       {bgImage ? (
         // v5.8(작업①): 콜라주 — 셀러 사진 1장 위 반투명 백색 말풍선(결정적 인덱스 오프셋, 난수 금지).
         <div
@@ -8294,7 +8640,8 @@ function ReviewsBlock({
                         wordBreak: "keep-all",
                       }}
                     >
-                      “{hi}”
+                      {/* v6.1(작업E1): 후기 발췌 강조문 편집화 — 내용 해시 키(콜라주/카드 공유). 게이팅은 원본 r.text 기준이라 편집과 무관. */}
+                      “<OverrideText id={contentKey("review.hi", hi ?? "")} fallback={hi ?? ""} maxLength={80} />”
                     </span>
                   )}
                   {/* 작성자·옵션 메타 — 입력된 것만. 셋 다 없으면 이 라인 자체가 없다(회귀 0). */}
@@ -8373,7 +8720,14 @@ function ReviewsBlock({
                   whiteSpace: "pre-line",
                 }}
               >
-                {r.text}
+                {/* v6.1(작업E1): 카드형 후기 본문 편집화 — 콜라주 말풍선과 동일한 내용 해시 키 공유. */}
+                <OverrideText
+                  id={contentKey("review.bubble", r.text)}
+                  fallback={r.text}
+                  multiline
+                  preserveWhitespace
+                  maxLength={200}
+                />
               </p>
 
               {/* 발췌 콜아웃 — 본문 아래 흐름 내 배치, 살짝 회전 유지. 본문 안 가림(A1). */}
@@ -8402,7 +8756,8 @@ function ReviewsBlock({
                       wordBreak: "keep-all",
                     }}
                   >
-                    {hi}
+                    {/* v6.1(작업E1): 카드형 후기 발췌 강조문 편집화 — 콜라주와 동일 내용 해시 키 공유. */}
+                    <OverrideText id={contentKey("review.hi", hi ?? "")} fallback={hi ?? ""} maxLength={80} />
                   </span>
                 </div>
               )}
@@ -8924,6 +9279,7 @@ function SectionTitle({
   overline,
   editId,
   editOverlineId,
+  sectionTitleKey,
 }: {
   title: string
   regen?: React.ReactNode
@@ -8946,6 +9302,12 @@ function SectionTitle({
   editId?: string
   /** v4.0: 오버라인 라벨 인라인 편집 키. hero 변주에서 overline과 함께 있을 때만. */
   editOverlineId?: string
+  /**
+   * v6.2b(T1): AI 섹션 제목 소비 키. editId와 함께 지정하면 OverrideText가
+   * 셀러 편집 > AI copy.sectionTitles?.[키] > title(고정 기본값) 순으로 해석한다.
+   * 미지정이면 현행과 동일(고정 기본값 폴백).
+   */
+  sectionTitleKey?: SectionTitleKey
 }) {
   const accent = useAccent()
   const layout = useLayout()
@@ -9032,7 +9394,7 @@ function SectionTitle({
             ...WRAP_BALANCE,
           }}
         >
-          {editId ? <OverrideText id={editId} fallback={title} maxLength={40} /> : title}
+          {editId ? <OverrideText id={editId} fallback={title} maxLength={40} sectionTitleKey={sectionTitleKey} /> : title}
         </h2>
       </div>
       {regen}

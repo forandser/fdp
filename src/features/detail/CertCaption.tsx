@@ -7,6 +7,11 @@
  * Hero 직후 above-fold 위치에 노출 권장.
  */
 
+// v6.1(작업E1): 인증 라벨(고정 상수 문구)도 인라인 편집 가능하게 OverrideText 재사용.
+// ResultView 아트보드(EditContext.Provider) 안에서만 렌더되므로 컨텍스트가 항상 존재한다.
+// OverrideText는 함수 선언(호이스팅)이라 ResultView↔CertCaption 순환 import에도 안전.
+import { OverrideText } from "./ResultView"
+
 interface CertCaptionProps {
   certType: "gap" | "organic" | "pesticide-free"
   certNumber: string
@@ -61,7 +66,9 @@ export function CertCaption({
       <span aria-hidden style={{ fontSize: 26 }}>
         {meta.icon}
       </span>
-      <span style={{ color: meta.color, fontWeight: 800 }}>{meta.label}</span>
+      <span style={{ color: meta.color, fontWeight: 800 }}>
+        <OverrideText id={`cert.label.${certType}`} fallback={meta.label} maxLength={30} />
+      </span>
       <span style={{ color: "#495057" }}>제{certNumber.trim()}호</span>
       {(producerName || producerRegion) && (
         <>

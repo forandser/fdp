@@ -15,6 +15,7 @@ import type {
   PhotoAnalysisItem,
   ResearchResult,
   ResearchSource,
+  SectionTitleKey,
   SelfReviewIssue,
   SelfReviewResult,
 } from "./types"
@@ -388,6 +389,107 @@ export function pickCompositionHints(v: unknown): CompositionHints | undefined {
   return Object.keys(out).length > 0 ? out : undefined
 }
 
+/* ───────────────── v6.2a: 섹션 제목 오버라이드 검증 ───────────────── */
+
+/**
+ * v6.2a: 섹션 제목 오버라이드 키 화이트리스트(런타임 단일 소유).
+ * types.SectionTitleKey와 정합 — 배열 원소 타입으로 컴파일 타임에 오탈자를 잡는다.
+ */
+export const SECTION_TITLE_KEYS = [
+  "why",
+  "reason",
+  "reviews",
+  "timeline",
+  "storage",
+  "enjoy",
+  "faq",
+  "deliverySteps",
+  "recommend",
+] as const satisfies readonly SectionTitleKey[]
+
+/**
+ * v6.2(작업X): 망라(exhaustive) 가드 — 위 satisfies는 "원소 타입"만 보장할 뿐
+ * SectionTitleKey 유니온의 "모든 멤버가 배열에 있는지"는 강제하지 못한다. 후속에서
+ * SectionTitleKey에 키를 추가하고 이 배열 갱신을 빠뜨리면, 그 키는 pickSectionTitles 순회
+ * 밖으로 새어 "조용히 드롭"된다(컴파일 에러도 안 남). 아래 타입 레벨 체크로 누락 키가 있으면
+ * tsc가 막는다: 누락 키가 없으면 never → true 대입 통과, 누락 키가 있으면 그 키 리터럴이 남아
+ * true 대입이 컴파일 에러가 된다.
+ */
+type _MissingSectionTitleKey = Exclude<
+  SectionTitleKey,
+  (typeof SECTION_TITLE_KEYS)[number]
+>
+const _sectionTitleKeysExhaustive: [_MissingSectionTitleKey] extends [never]
+  ? true
+  : _MissingSectionTitleKey = true
+void _sectionTitleKeysExhaustive
+
+/**
+ * 섹션 제목 길이 상한(글자) — 키별 세분화(v6.2b 실측 재조정).
+ *
+ * 종전 단일 20자는 대형 폰트 전환 헤더(reason 72px·reviews/flow 60px 등)에서 AI 제목이
+ * 모바일 폭(420px)에 한 줄 더 접혀 "총높이 순증"을 일으킬 수 있었다. 실물 고정 문구 길이와
+ * 각 렌더 지점 폰트(모바일 폭 기준 줄당 글자수)를 실측해, 기본 문구가 차지하는 줄 수를 넘기지
+ * 않는 선으로 조정한다. 전 키가 종전 20 이하(순증 0, 오히려 강화).
+ *
+ * 두 계열:
+ *  - 대형 전환 헤더(폰트 ≥46px: why·reason·reviews·enjoy·deliverySteps) = 16.
+ *    이 계열은 고정 문구 자체가 이미 2줄(좁은 폭에서 워드랩)이라 16자 AI 제목이 줄 수를
+ *    늘리지 않는다(무해). 예: 자두 "새콤달콤이 꽉 찬 이유"(12) 여유 통과.
+ *  - 표준 정보 헤더(폰트 ≤40px: storage·faq·recommend·timeline) = 13.
+ *    이 계열 고정 문구는 전부 1줄(7~13자)이다. 종전 18은 모바일(25px·콘텐츠폭 ~312px, 줄당
+ *    ~13자)에서 2줄로 접혀 1줄이던 고정 문구 대비 +1줄 총높이 순증을 일으킬 수 있었다(기획 가드
+ *    "제목 순증 0" 위반). 상한을 폰트 티어의 최장 제목이 아니라 "고정 문구가 차지하는 줄 수(=1줄)"
+ *    기준으로 재산정 → 최장 고정 문구 timeline(13)에 맞춰 13. 이로써 AI 제목도 1줄을 넘지 않는다.
+ *
+ * 초과분은 자르지 않고 그 키를 드롭 → renderer가 기존 고정 문구로 폴백
+ * (하드컷이 만드는 "쓰다 만 제목" 방지 + 회귀 0 유지).
+ * 실측 고정 문구: reason "이 과일이 특별한 이유"(11)·reviews "먼저 맛본 분들의 솔직 후기"(15)·
+ * flow "신선함을 잇는 4단계"(11)·storage "보관·먹는 법"(7)·faq "자주 묻는 질문"(8)·
+ * recommend "이런 분께 추천해요"(10)·timeline "받으신 뒤 이렇게 드세요"(13).
+ */
+const SECTION_TITLE_MAX_BY_KEY: Record<SectionTitleKey, number> = {
+  why: 16,
+  reason: 16,
+  reviews: 16,
+  enjoy: 16,
+  deliverySteps: 16,
+  storage: 13,
+  faq: 13,
+  recommend: 13,
+  timeline: 13,
+}
+
+/**
+ * 섹션 제목 금지어(효능·질병·최상급) — 규칙 4·5 정합.
+ * 하나라도 걸리면 그 키를 드롭(기본 문구 폴백). 오탐은 무해(기본 제목이 될 뿐).
+ */
+const SECTION_TITLE_FORBIDDEN =
+  /(효능|효과|면역|항산화|디톡스|해독|다이어트|예방|치료|치유|완화|감기|변비|혈압|혈당|당뇨|아토피|염증|최고|최상|최고급|최상급|1위|제일|단연|세계\s*최초|완벽|100\s*%|국내\s*최대)/
+
+/**
+ * v6.2a: 섹션 제목 오버라이드 맵 검증.
+ * - 키는 SECTION_TITLE_KEYS 화이트리스트만(그 외 키는 드롭).
+ * - 값은 SECTION_TITLE_MAX_BY_KEY[키] 초과 시 드롭(길이 순증 방지 — 자르지 않음), 금지어 포함 시 드롭.
+ * - 유효 항목이 하나도 없으면 undefined(키 생략 → 구버전 저장본과 동일 형태 = 회귀 0).
+ * 렌더 소비(v6.2b): ResultView OverrideText가 셀러 편집 > 이 값 > 고정 기본값 순으로 해석.
+ */
+export function pickSectionTitles(
+  v: unknown,
+): Partial<Record<SectionTitleKey, string>> | undefined {
+  if (!isObject(v)) return undefined
+  if (Object.keys(v).some((k) => FORBIDDEN_KEYS.has(k))) return undefined
+  const out: Partial<Record<SectionTitleKey, string>> = {}
+  for (const key of SECTION_TITLE_KEYS) {
+    const raw = safeString(v[key])
+    if (!raw) continue
+    if (raw.length > SECTION_TITLE_MAX_BY_KEY[key]) continue // 길이 순증 방지(키별) — 초과 키는 기본 문구로 폴백
+    if (SECTION_TITLE_FORBIDDEN.test(raw)) continue // 효능·질병·최상급 차단
+    out[key] = raw
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
 /** v3.5: 리서치 결과 각 배열 항목 최대 개수 / 길이 상한. */
 const RESEARCH_LIMITS = {
   listItems: 6,
@@ -735,6 +837,8 @@ export function validateCopyOutput(raw: unknown): CopyOutput {
   const problemArc = pickProblemArc(raw.problemArc)
   // v6.0(작업C): 동적 구성 힌트 — 비면 키 생략(구버전 저장본과 동일 형태 = 회귀 0).
   const compositionHints = pickCompositionHints(raw.compositionHints)
+  // v6.2a: 섹션 제목 오버라이드 — 화이트리스트·길이·금지어 검증. 비면 키 생략(회귀 0).
+  const sectionTitles = pickSectionTitles(raw.sectionTitles)
   // v4.3: 히어로 후킹 캡션 — 40자로 관대하게 절삭. 비면 키 생략(구버전 저장본과 동일 형태,
   // A 렌더가 기본 캡션으로 폴백). 필드명 정확히 "heroKicker" — A 에이전트 소비 계약.
   const heroKicker = trimTo(safeString(raw.heroKicker), LIMITS.heroKicker)
@@ -749,6 +853,8 @@ export function validateCopyOutput(raw: unknown): CopyOutput {
     ...(problemArc ? { problemArc } : {}),
     // 옵셔널 — 구성 힌트 없으면(구버전/근거 없음) 키 생략 → 렌더 현행 폴백(회귀 0).
     ...(compositionHints ? { compositionHints } : {}),
+    // v6.2a 옵셔널 — 섹션 제목 오버라이드 없으면 키 생략 → renderer 기본 문구 폴백(회귀 0).
+    ...(sectionTitles ? { sectionTitles } : {}),
     subheadline: trimTo(safeString(raw.subheadline), LIMITS.subheadline),
     story: safeString(raw.story),
     spec: pickSpec(raw.spec),

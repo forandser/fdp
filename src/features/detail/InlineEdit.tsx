@@ -107,6 +107,14 @@ export function InlineEdit({
 
   const commit = useCallback(
     (next: string) => {
+      // v6.1(작업E1): 무변경 blur 가드 — 값이 그대로면(예: 긴 후기 본문을 읽으려고
+      // 클릭만 하고 아무것도 안 고친 채 클릭 아웃) maxLength 슬라이스로 인한
+      // 재저장(콘텐츠 잘림)을 원천 차단한다. 이 가드가 없으면 value.length>maxLength 인
+      // 자유 서술 문구가 무변경 상호작용만으로 잘려 overrides에 저장되는 회귀가 난다.
+      if (next === value) {
+        setEditing(false)
+        return
+      }
       const trimmed = maxLength != null ? next.slice(0, maxLength) : next
       if (trimmed !== value) onChange(trimmed)
       setEditing(false)

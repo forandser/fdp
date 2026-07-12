@@ -71,6 +71,14 @@ export interface Work {
    * 구버전 저장본엔 없음(옵셔널 — 하위호환). 없으면 브랜드 요소 미노출.
    */
   brandSnapshot?: BrandSnapshot
+  /**
+   * v6.1(작업E2): 셀러가 "숨기기"한 섹션의 안정 id 목록(예: "faq", "recommendFor").
+   * 렌더 시 이 목록의 섹션을 트리에서 완전히 제거한다(JPG·총높이에서 소멸).
+   * 카피가 아니라 "편집 상태"이므로 copy 와 분리해 Work 최상위에 둔다 —
+   * 전체 재생성(copy 통째 교체)에도 살아남아 "재생성해도 숨김 유지"를 충족한다.
+   * 구버전 저장본엔 없음(옵셔널 — 하위호환). 없거나 빈 배열이면 전 섹션 노출(기존 렌더와 동일).
+   */
+  hiddenSections?: string[]
 }
 
 export interface WorkSummary {
@@ -187,6 +195,8 @@ export interface WorkBackupItem {
   layoutVariant?: "standard" | "soft" | "editorial"
   /** v5.0: 브랜드 박제 스냅샷. 없으면 생략(하위호환). */
   brandSnapshot?: BrandSnapshot
+  /** v6.1(작업E2): 숨긴 섹션 id 목록. 없으면 생략(하위호환 — 로드 시 전 섹션 노출). */
+  hiddenSections?: string[]
 }
 export interface WorkBackup {
   format: "fdp-backup"
@@ -289,6 +299,8 @@ export async function exportAllWorksToJson(): Promise<WorkBackup> {
       layoutVariant: w.layoutVariant,
       // v5.0: 브랜드 스냅샷도 백업(undefined면 JSON에서 생략).
       brandSnapshot: w.brandSnapshot,
+      // v6.1(작업E2): 숨긴 섹션 목록도 백업(undefined/빈 배열이면 생략 → 로드 시 전 섹션 노출).
+      hiddenSections: w.hiddenSections && w.hiddenSections.length > 0 ? w.hiddenSections : undefined,
     })
   }
   return {
@@ -354,6 +366,11 @@ export async function importBackupJson(
           : undefined
       // v5.0: 브랜드 스냅샷 형태 검증(비문자열 드롭·외부 URL 차단). 없으면 undefined.
       const brandSnapshot = sanitizeBrandSnapshot(item.brandSnapshot)
+      // v6.1(작업E2): 숨긴 섹션 목록은 신뢰 없는 외부 입력 — 문자열만 통과, 중복 제거, 상한 64개.
+      //   미지 id 가 섞여도 렌더 시 매칭되는 섹션이 없어 무해(방어적 필터). 없으면 undefined.
+      const hiddenSections = Array.isArray(item.hiddenSections)
+        ? Array.from(new Set(item.hiddenSections.filter((x): x is string => typeof x === "string"))).slice(0, 64)
+        : []
       map[item.id] = {
         id: item.id,
         createdAt: item.createdAt ?? Date.now(),
@@ -374,6 +391,8 @@ export async function importBackupJson(
         layoutVariant,
         // v5.0: 검증 통과한 브랜드 스냅샷만 저장(없으면 undefined → 브랜드 미노출).
         brandSnapshot,
+        // v6.1(작업E2): 검증 통과한 숨김 목록만 저장(빈 배열이면 undefined → 전 섹션 노출).
+        hiddenSections: hiddenSections.length > 0 ? hiddenSections : undefined,
       }
       imported++
     } catch {

@@ -53,6 +53,8 @@ export type CopyLintCode =
   | "ai-cliche"
   | "word-repeat"
   | "over-budget"
+  | "template-formula"
+  | "no-question-exclaim"
   | "medical-efficacy"
   | "grade-without-metric"
   | "all-five-star"
@@ -475,6 +477,93 @@ function checkBudgets(fields: FieldText[]): CopyLintFinding[] {
   return out
 }
 
+/* ───────────────── ⑥ 정형 공식(템플릿 문형) — v6.2a ───────────────── */
+
+/**
+ * 스키마/few-shot 예시에서 온 "원형 그대로"의 정형 문형. 이게 상품 맥락 변형 없이
+ * 그대로 나오면 "매번 같은 카피" 신호 → S3(warn·강제 아님, "상품 맥락으로 변형 권장").
+ * 오탐 최소화를 위해 스키마 예시 문구의 "완전 일치"만 표적으로 삼는다(보수적).
+ */
+const TEMPLATE_VERBATIM: { re: RegExp; label: string }[] = [
+  // 추천 기본형 — 스키마 예시 recommendFor 원형(상품 맥락 미반영).
+  { re: /^부모님[·・]?\s*어른께\s*드릴\s*선물용$/, label: "추천 기본형(스키마 예시 원형)" },
+  { re: /^사무실[·・]?\s*가정에서\s*손쉽게\s*즐기고\s*싶은\s*분$/, label: "추천 기본형(스키마 예시 원형)" },
+  { re: /^단골\s*산지를\s*정해\s*두고\s*받고\s*싶은\s*분$/, label: "추천 기본형(스키마 예시 원형)" },
+  { re: /^아이가\s*안심하고\s*먹을\s*수\s*있는\s*과일을\s*찾는\s*분$/, label: "추천 기본형(스키마 예시 원형)" },
+  // FAQ 기본형 — 스키마 예시 질문 원형(교환·크기 문의).
+  { re: /^맛이\s*다르면\s*교환이\s*되나요[?？]?$/, label: "FAQ 기본형(스키마 예시 원형)" },
+  { re: /^크기가\s*들쑥날쑥해요$/, label: "FAQ 기본형(스키마 예시 원형)" },
+]
+
+/** problemArc.question 정형 — 가장 반복되는 "왜 마트 ~" 골격(의문형 허용이라 강제 아님·advisory). */
+const PROBLEM_ARC_FORMULA_RE = /^왜\s*마트/
+
+/**
+ * 정형 공식 검사(v6.2a·S3): 알려진 템플릿 문형이 원형 그대로면 warn(강제 아님).
+ * 기존 검사와 심각도 체계 일관 — 모두 "warn"(reject 아님)이라 게이트를 막지 않고 변형만 권장.
+ */
+function checkTemplateFormula(copy: CopyOutput): CopyLintFinding[] {
+  const out: CopyLintFinding[] = []
+  const scan = (field: string, text: string | undefined) => {
+    const t = (text ?? "").trim()
+    if (!t) return
+    for (const { re, label } of TEMPLATE_VERBATIM) {
+      if (re.test(t)) {
+        out.push({
+          field,
+          code: "template-formula",
+          severity: "warn",
+          reason: `[S3] 정형 공식 '${label}' 그대로예요 — 상품 맥락으로 변형 권장(강제 아님).`,
+          snippet: t.slice(0, 40),
+        })
+        break
+      }
+    }
+  }
+  copy.recommendFor?.forEach((r, i) => scan(`recommendFor[${i}]`, r))
+  copy.faq?.forEach((f, i) => scan(`faq[${i}].q`, f.q))
+
+  const q = copy.problemArc?.question?.trim()
+  if (q && PROBLEM_ARC_FORMULA_RE.test(q)) {
+    out.push({
+      field: "problemArc.question",
+      code: "template-formula",
+      severity: "warn",
+      reason:
+        // v6.2(작업X): 의문형 자체는 규칙 57a가 승인하는 정답 문형 — 프롬프트 gold(few-shot 예시1·팔레트)와의
+        // 신호 충돌을 줄이려 'advisory' 성격을 명시. 이 골격이 상품 불만에 맞으면 유지 가능, 반복 골격일 때만 변형 권장.
+        "[S3] '왜 마트 ~' 정형 질문이에요 — 의문형 자체는 규칙 57a가 허용하는 정답 문형이라, 이 상품 불만(품종·산지·불만)에 맞으면 그대로 둬도 됩니다. 다만 이 골격이 상품 간 가장 반복되기 쉬우니, 맥락이 잘 배어들지 않았다면 상황형·경험 공감형으로 변형을 권장해요(강제 아님·advisory).",
+      snippet: q.slice(0, 40),
+    })
+  }
+  return out
+}
+
+/* ───────────────── ⑦ 페이지 리듬(의문·감탄 1회) — v6.2(작업X) ───────────────── */
+
+/**
+ * 규칙 29 결정적 보강(S3·warn): 문형 팔레트(규칙 57a) 도입으로 problemArc.question을
+ * 단언형·상황형(물음표 없음)으로 쓸 수 있게 되면서, 기존에 자동 충족되던 "페이지에 의문·감탄
+ * 최소 1회"가 소프트 규칙만 남았다. 페이지 전체(모든 필드 합산)에 ?·! 가 하나도 없으면 카피
+ * 리듬이 평평해지므로 경고만 준다(강제 아님). 대개 faq.q·problemArc.question이 이 요건을 이미
+ * 충족하니 이 경고는 "완전 평서" 극단에서만 발동 → 오탐·노이즈가 낮다. 억지 감탄부호 삽입은
+ * 금지(느낌표 상한은 규칙 49·checkExclaim 유지)이니, 문형으로 자연히 채우도록 유도한다.
+ */
+function checkPageRhythm(fields: FieldText[]): CopyLintFinding[] {
+  const hasQuestionOrExclaim = fields.some((f) => /[?？!！]/.test(f.text))
+  if (hasQuestionOrExclaim) return []
+  return [
+    {
+      field: "전체",
+      code: "no-question-exclaim",
+      severity: "warn",
+      reason:
+        "페이지 전체에 의문·감탄이 한 번도 없어요 — story·faq·recommendFor 중 한 곳에서 자연스럽게 1회 넣어 리듬을 살리세요(규칙 29). 억지 감탄부호는 금지.",
+      snippet: "의문·감탄 0회",
+    },
+  ]
+}
+
 /* ───────────────── 휴면 runCopySelfReview 흡수 ───────────────── */
 
 /** self-review.ts의 결정적 검사기 3종(의학효능·등급어·만점후기)을 배선·변환. */
@@ -521,6 +610,8 @@ export function lintCopyOutput(copy: CopyOutput, input: CopyInput): CopyLintFind
     ...checkAiTell(fields),
     ...checkWordRepeat(fields, input),
     ...checkBudgets(fields),
+    ...checkTemplateFormula(copy),
+    ...checkPageRhythm(fields),
     ...checkSelfReviewRules(copy, input),
   ]
 }

@@ -316,6 +316,12 @@ export function DetailMaker({
    */
   const [layoutVariant, setLayoutVariant] = useState<LayoutVariant>("standard")
   /**
+   * v6.1(작업E2): 셀러가 숨긴 섹션 id 목록. Work(hiddenSections)에 저장·복원.
+   * ResultView 가 이 목록의 섹션을 렌더 트리에서 제거(JPG·총높이에서 소멸)한다.
+   * 카피가 아니라 편집 상태이므로 copy 와 분리 — 전체 재생성(copy 교체)에도 유지된다.
+   */
+  const [hiddenSections, setHiddenSections] = useState<string[]>([])
+  /**
    * v5.0-B: "우리 가게" 브랜드 배선.
    * - brands/defaultBrandId: 패널 표시용 목록·기본 지정(부모가 소유·재로딩).
    * - selectedBrandId: 현재 선택 프로필(신규 스냅샷의 원천).
@@ -604,6 +610,13 @@ export function DetailMaker({
         setPhotoAnalysis(work.photoAnalysis ?? null)
         // v4.6: 레이아웃 변주 복원 — 구버전 저장본엔 없음(undefined → "standard", 하위호환).
         setLayoutVariant(work.layoutVariant ?? "standard")
+        // v6.1(작업E2): 숨긴 섹션 목록 복원 — 구버전 저장본엔 없음(undefined → 전 섹션 노출, 하위호환).
+        //   문자열만 통과(손상 저장본 방어). 미지 id 가 섞여도 매칭 섹션이 없어 무해.
+        setHiddenSections(
+          Array.isArray(work.hiddenSections)
+            ? work.hiddenSections.filter((x): x is string => typeof x === "string")
+            : [],
+        )
         // v5.0-B: 작업에 박제된 브랜드 스냅샷 복원(있으면 우선 — 불변, 프로필 목록과 무관).
         //   구버전 저장본엔 없음(옵셔널 — 하위호환). ref 를 세워 기본-프로필 자동선택이 덮지 않게 한다.
         if (work.brandSnapshot) {
@@ -1345,6 +1358,8 @@ export function DetailMaker({
           layoutVariant,
           // v5.0-B: 선택 브랜드 스냅샷 박제(없으면 undefined). 이후 브랜드 편집/삭제와 무관하게 고정.
           brandSnapshot: brandSnapshot ?? undefined,
+          // v6.1(작업E2): 숨긴 섹션 목록 저장(생성 시엔 보통 빈 배열 → undefined, 하위호환).
+          hiddenSections: hiddenSections.length > 0 ? hiddenSections : undefined,
         }
         void saveWork(work)
       } catch (saveErr) {
@@ -1403,6 +1418,8 @@ export function DetailMaker({
             layoutVariant,
             // v5.0-B: 브랜드 스냅샷 유지(인라인 편집 저장 시에도 유실 방지).
             brandSnapshot: brandSnapshot ?? undefined,
+            // v6.1(작업E2): 숨긴 섹션 목록 유지(인라인 편집 저장 시에도 유실 방지).
+            hiddenSections: hiddenSections.length > 0 ? hiddenSections : undefined,
           }
           await saveWork(work)
         } catch (e) {
@@ -1440,6 +1457,8 @@ export function DetailMaker({
             layoutVariant: next,
             // v5.0-B: 브랜드 스냅샷 유지(레이아웃 변주 저장 시에도 유실 방지).
             brandSnapshot: brandSnapshot ?? undefined,
+            // v6.1(작업E2): 숨긴 섹션 목록 유지(레이아웃 변주 저장 시에도 유실 방지).
+            hiddenSections: hiddenSections.length > 0 ? hiddenSections : undefined,
           }
           await saveWork(work)
         } catch (e) {
@@ -1483,10 +1502,48 @@ export function DetailMaker({
           photoAnalysis: photoAnalysis ?? undefined,
           layoutVariant,
           brandSnapshot: snap ?? undefined,
+          // v6.1(작업E2): 숨긴 섹션 목록 유지(브랜드 저장 시에도 유실 방지).
+          hiddenSections: hiddenSections.length > 0 ? hiddenSections : undefined,
         }
         await saveWork(work)
       } catch (e) {
         console.error("[saveWork-brand]", e)
+      }
+    })()
+  }
+
+  /**
+   * v6.1(작업E2): 섹션 숨기기/복원 → 즉시 state 반영(미리보기 갱신) + 결과 단계면 Work 저장.
+   * next 를 직접 Work 에 실어(state 비동기 갱신 전에도 정확) — persistBrandToWork 와 동일 가드.
+   * 아직 생성 전(workId 없음)이면 state 만 바꾸고, 이후 저장 시 함께 기록된다.
+   */
+  const handleHiddenChange = (next: string[]) => {
+    setHiddenSections(next)
+    if (!(workId && currentInput && resultMeta && result)) return
+    void (async () => {
+      try {
+        const work: Work = {
+          id: workId,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          productName: resultMeta.productName,
+          thumbDataUrl: images[0] ? await makeThumbDataUrl(images[0].file) : null,
+          input: currentInput,
+          copy: result,
+          imageBlobs: images.map((i) => i.file),
+          imageIds: images.map((i) => i.id),
+          packagingBlob: packagingImage?.file ?? null,
+          sizeBlob: sizeImage?.file ?? null,
+          enhanceImages,
+          photoAnalysisEnabled,
+          photoAnalysis: photoAnalysis ?? undefined,
+          layoutVariant,
+          brandSnapshot: brandSnapshot ?? undefined,
+          hiddenSections: next.length > 0 ? next : undefined,
+        }
+        await saveWork(work)
+      } catch (e) {
+        console.error("[saveWork-hidden]", e)
       }
     })()
   }
@@ -2658,6 +2715,8 @@ export function DetailMaker({
         busySection={busySection}
         layoutVariant={layoutVariant}
         brandSnapshot={brandSnapshot}
+        hiddenSections={hiddenSections}
+        onHiddenChange={handleHiddenChange}
         onRetry={handleRetry}
       />
 

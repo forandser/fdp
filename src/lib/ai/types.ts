@@ -280,6 +280,24 @@ export interface CompositionHints {
   emphasisOrder?: string[]
 }
 
+/**
+ * v6.2a: AI가 상품 맥락으로 다시 쓸 수 있는 섹션 제목 키 화이트리스트.
+ * renderer가 쓸 "안정 문자열" 키 — 값은 그 섹션 제목 문구.
+ * 종전 고정 문구(WHY 제목·특별한 이유·후기·타임라인·보관법·즐기기·FAQ·배송 4단계·추천)를
+ * 대체할 수 있는 키만 정의한다. 여기 없는 키는 validate에서 드롭.
+ * (렌더 위치 기준 안정 키 — 런타임 화이트리스트는 validate.SECTION_TITLE_KEYS가 단일 소유.)
+ */
+export type SectionTitleKey =
+  | "why" // WHY 카드 제목 ("왜 ○○일까요")
+  | "reason" // 특별한 이유 제목
+  | "reviews" // 후기 제목
+  | "timeline" // 타임라인 제목
+  | "storage" // 보관법 제목
+  | "enjoy" // 즐기기(먹는 법) 제목
+  | "faq" // FAQ 제목
+  | "deliverySteps" // 배송 4단계 제목
+  | "recommend" // 추천 제목
+
 export interface CopyOutput {
   /** 1차 헤드라인 — 가운데 큰 한글 (예: "썬프레 천도 복숭아") */
   headline: string
@@ -340,6 +358,18 @@ export interface CopyOutput {
    * 하위호환: 구버전 저장본엔 없음(undefined) — 전 렌더 현행 폴백.
    */
   compositionHints?: CompositionHints
+  /**
+   * v6.2a: 섹션 제목 오버라이드 맵 (선택) — AI가 "상품 맥락이 자연스럽게 배어들 때만"
+   * 다시 쓴 섹션 제목(예: 자두 → "새콤달콤이 꽉 찬 이유"). 키는 SectionTitleKey 화이트리스트의
+   * 안정 문자열, 값은 그 섹션 제목 문구. 억지 변주가 아니라 자신 있을 때만 채우고, 없으면 생략.
+   *
+   * ⚠️ 렌더 소비는 후속(v6.2b) — 이번엔 스키마·생성·검증만이라 미소비 상태로 무해하다.
+   *   옵셔널이라 renderer가 이 맵을 아직 읽지 않아도 기존 고정 문구가 그대로 폴백된다(회귀 0).
+   * 검증: validate.pickSectionTitles가 키 화이트리스트 + 길이 상한(길이 순증 방지) +
+   *   금지어(효능·질병·최상급)로 거른다.
+   * 하위호환: 구버전 저장본엔 없음(undefined) — 전부 기본 문구로 렌더.
+   */
+  sectionTitles?: Partial<Record<SectionTitleKey, string>>
   /**
    * v4.0: 고정 문구(섹션 제목·오버라인·아이콘 트리오 라벨·4단계 스텝·배송/교환/주의
    * 보일러플레이트·사진 캡션·CTA·클로징 서명 등) 인라인 편집 오버라이드 저장소.
