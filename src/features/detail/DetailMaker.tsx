@@ -380,6 +380,17 @@ export function DetailMaker({
    */
   const typoBusyRef = useRef(false)
   /**
+   * v6.4(작업1): 레터링 자동 생성 옵트아웃 상태(Work.typoOptOut 로 저장·복원).
+   * "기본 글씨로" 클릭 시 true → 이후 전체 카피 생성에서 자동 발동 안 함. 수동 생성 성공 시 false 로 해제.
+   */
+  const [typoOptOut, setTypoOptOut] = useState(false)
+  /**
+   * v6.4(작업1): "이번 전체 카피 생성이 자동 레터링 발동 대상인가" 1회성 플래그.
+   * handleSubmit 성공 경로에서만 true 로 세운다 → 작업 복원·섹션 재생성·헤드라인 편집(handleCopyChange)
+   * 은 세우지 않아 자동 제외(수동 버튼만). 결과 확정(stage==="result") 시 effect 가 1회 소비 후 해제.
+   */
+  const autoTypoPendingRef = useRef(false)
+  /**
    * v5.0-B: "우리 가게" 브랜드 배선.
    * - brands/defaultBrandId: 패널 표시용 목록·기본 지정(부모가 소유·재로딩).
    * - selectedBrandId: 현재 선택 프로필(신규 스냅샷의 원천).
@@ -499,6 +510,12 @@ export function DetailMaker({
   /** 마지막으로 시도한 AI 동작 — 에러 배너의 '다시 시도'·키 재등록 후 이어가기에 재실행. */
   const lastActionRef = useRef<(() => void | Promise<void>) | null>(null)
   const [result, setResult] = useState<CopyOutput | null>(null)
+  /** v6.6 리뷰 수정: 초 단위로 도는 비동기 레터링 파이프라인이 "적용 시점의 최신 헤드라인"을
+   *  재확인할 수 있도록 최신 result 를 ref 로 미러링(effect 동기화 — 지연 파이프라인엔 충분). */
+  const resultRef = useRef<CopyOutput | null>(null)
+  useEffect(() => {
+    resultRef.current = result
+  }, [result])
   const [resultMeta, setResultMeta] = useState<{
     priceNum: number
     productName: string
@@ -679,6 +696,9 @@ export function DetailMaker({
         typoUrlRef.current = restoredTypoUrl
         setTypoHeadlineBlob(restoredTypoBlob)
         setTypoHeadlineUrl(restoredTypoUrl)
+        // v6.4(작업1): 옵트아웃 복원 — 구버전 저장본엔 없음(→ false, 자동 허용). 복원은 자동 발동 제외:
+        //   autoTypoPendingRef 를 세우지 않으므로 여기서 자동 레터링이 돌지 않는다.
+        setTypoOptOut(work.typoOptOut === true)
         // 사진 자동 보정 토글 복원 — 구버전 저장본엔 없음(undefined → 기본 ON, 하위호환).
         setEnhanceImages(work.enhanceImages ?? true)
         // v4.4: 사진 분석 토글·결과 복원 — 구버전 저장본엔 없음(undefined → 기본 ON, 하위호환).
@@ -1310,6 +1330,8 @@ export function DetailMaker({
     // v6.3(작업3): 새 생성 = 새 헤드라인 → 이전 타이포 이미지는 폐기(다른 헤드라인 표시 방지).
     applyTypoBlob(null)
     setTypoError(null)
+    // v6.4(작업1): 새 전체 생성 = 새 작업(새 headline) → 옵트아웃 초기화(이전 작업 상태 잔존 방지).
+    setTypoOptOut(false)
     setStage("generating")
     setGenerationStep(0)
     const stepTimer = setInterval(() => {
@@ -1434,6 +1456,9 @@ export function DetailMaker({
         origin: origin.trim(),
         weight: weight.trim(),
       })
+      // v6.4(작업1): 이 성공한 전체 생성은 자동 레터링 발동 대상 — 결과 확정 후 effect 가 1회 소비한다.
+      //   (작업 복원·섹션 재생성·헤드라인 편집/후보 칩은 이 플래그를 세우지 않아 자동 제외 = 수동만.)
+      autoTypoPendingRef.current = true
       setStage("result")
 
       // 작업 저장 (실패해도 결과 화면은 보여줌)
@@ -1468,6 +1493,8 @@ export function DetailMaker({
           hiddenSections: hiddenSections.length > 0 ? hiddenSections : undefined,
           // v6.3(작업3): 타이포 헤드라인 이미지(신규 생성 시엔 보통 없음 → undefined).
           typoHeadlineBlob: typoHeadlineBlob ?? undefined,
+          // v6.4(작업1): 신규 작업은 옵트아웃 아님(자동 발동 허용).
+          typoOptOut: undefined,
         }
         void saveWork(work)
       } catch (saveErr) {
@@ -1543,6 +1570,8 @@ export function DetailMaker({
             // v6.3(작업3): 타이포 헤드라인 유지(인라인 편집 저장 시에도 유실 방지).
             // v6.4(FIX-1): 헤드라인 텍스트가 바뀌어 무효화된 경우엔 null 로 저장(옛 레터링 박제 방지).
             typoHeadlineBlob: invalidateTypo ? undefined : (typoHeadlineBlob ?? undefined),
+            // v6.4(작업1): 옵트아웃 유지(편집 저장 시에도 보존).
+            typoOptOut: typoOptOut || undefined,
           }
           await saveWork(work)
         } catch (e) {
@@ -1584,6 +1613,8 @@ export function DetailMaker({
             hiddenSections: hiddenSections.length > 0 ? hiddenSections : undefined,
             // v6.3(작업3): 타이포 헤드라인 유지(레이아웃 변주 저장 시에도 유실 방지).
             typoHeadlineBlob: typoHeadlineBlob ?? undefined,
+            // v6.4(작업1): 옵트아웃 유지.
+            typoOptOut: typoOptOut || undefined,
           }
           await saveWork(work)
         } catch (e) {
@@ -1631,6 +1662,8 @@ export function DetailMaker({
           hiddenSections: hiddenSections.length > 0 ? hiddenSections : undefined,
           // v6.3(작업3): 타이포 헤드라인 유지(브랜드 저장 시에도 유실 방지).
           typoHeadlineBlob: typoHeadlineBlob ?? undefined,
+          // v6.4(작업1): 옵트아웃 유지.
+          typoOptOut: typoOptOut || undefined,
         }
         await saveWork(work)
       } catch (e) {
@@ -1669,6 +1702,8 @@ export function DetailMaker({
           hiddenSections: next.length > 0 ? next : undefined,
           // v6.3(작업3): 타이포 헤드라인 유지(섹션 숨김 저장 시에도 유실 방지).
           typoHeadlineBlob: typoHeadlineBlob ?? undefined,
+          // v6.4(작업1): 옵트아웃 유지.
+          typoOptOut: typoOptOut || undefined,
         }
         await saveWork(work)
       } catch (e) {
@@ -1703,7 +1738,7 @@ export function DetailMaker({
    * 현재 작업에 타이포 blob 을 즉시 저장(재렌더 결정성·내보내기 포함).
    * persistBrandToWork 와 동일 가드(결과 단계에서만) — blob 을 직접 실어 state 비동기 전에도 정확.
    */
-  const persistTypoToWork = (blob: Blob | null) => {
+  const persistTypoToWork = (blob: Blob | null, optOut: boolean) => {
     if (!(workId && currentInput && resultMeta && result)) return
     void (async () => {
       try {
@@ -1726,6 +1761,8 @@ export function DetailMaker({
           brandSnapshot: brandSnapshot ?? undefined,
           hiddenSections: hiddenSections.length > 0 ? hiddenSections : undefined,
           typoHeadlineBlob: blob ?? undefined,
+          // v6.4(작업1): 옵트아웃 플래그도 함께 저장(생성 성공=false 해제, "기본 글씨로"=true 설정).
+          typoOptOut: optOut || undefined,
         }
         await saveWork(work)
       } catch (e) {
@@ -1804,9 +1841,15 @@ export function DetailMaker({
             verify = null
           }
           if (verify && verify.matches) {
+            // v6.6 리뷰 수정: 생성이 도는 사이 헤드라인이 바뀌었으면(후보 칩·편집·재생성) 이
+            // 레터링은 낡은 텍스트다 — 적용·저장 없이 조용히 폐기(수동 "만들기"로 재생성 가능).
+            const currentHeadline = resultRef.current?.headline?.trim() ?? ""
+            if (currentHeadline !== headline) return
             const blob = await (await fetch(dataUrl)).blob()
             applyTypoBlob(blob)
-            persistTypoToWork(blob)
+            // v6.4(작업1): 수동/자동 생성 성공 → 옵트아웃 해제(false 로 저장).
+            setTypoOptOut(false)
+            persistTypoToWork(blob, false)
             setTypoError(null)
             return
           }
@@ -1851,8 +1894,37 @@ export function DetailMaker({
   const handleResetTypoHeadline = () => {
     applyTypoBlob(null)
     setTypoError(null)
-    persistTypoToWork(null)
+    // v6.4(작업1): "기본 글씨로" = 이 작업 자동 레터링 옵트아웃(true 저장) — 이후 자동 발동 안 함.
+    setTypoOptOut(true)
+    persistTypoToWork(null, true)
   }
+
+  /**
+   * v6.4(작업1): 레터링 자동 생성 — 전체 카피 생성 성공 직후 1회 자동 발동(비차단).
+   * 텍스트 헤드라인을 먼저 보여준 뒤, 백그라운드로 레터링을 만들어 검수 통과 시 교체한다
+   * (handleGenerateTypoHeadline 파이프라인·스왑·typoBusyRef·withTimeout·verifyFailStreak 전부 재사용).
+   *
+   * 발동 조건: autoTypoPendingRef(=handleSubmit 성공에서만 true) && stage==="result" &&
+   *   hasGeminiKey && 타이포 blob 없음 && 작업 옵트아웃 아님.
+   * 발동 제외(상호작용):
+   *   - 작업 복원: restore effect 가 autoTypoPendingRef 를 세우지 않음 → 자동 없음.
+   *   - 섹션 단위 재생성(handleSectionRegenerate): 플래그 미설정 → 자동 없음(수동 버튼만).
+   *   - 헤드라인 편집·후보 칩(handleCopyChange): 플래그 미설정 → 자동 없음(API 스팸 방지, 수동만).
+   *   - 옵트아웃 작업(typoOptOut): 발동 안 함(수동 "만들기"는 가능, 성공 시 해제).
+   * 결과 확정 시점에 1회만 판단하고 플래그를 해제해 이후 편집·재생성 재진입에서 재발동을 막는다.
+   * 자동 실패는 조용히 넘기지 않는다 — handleGenerateTypoHeadline 이 typoError 를 사이드바에 표시한다.
+   */
+  useEffect(() => {
+    if (!autoTypoPendingRef.current) return
+    if (stage !== "result") return // 아직 결과 확정 전 — 플래그 유지하고 대기.
+    autoTypoPendingRef.current = false // 1회 소비(편집·재생성 재진입 재발동 방지).
+    if (!hasGeminiKey || typoOptOut || typoHeadlineBlob) return
+    if (!result?.headline?.trim()) return
+    // handleGenerateTypoHeadline 은 매 렌더 재생성되지만 이 effect 는 결과 확정 시점의 최신 클로저를
+    // 실행하므로 deps 에 넣지 않는다(중복 발동은 typoBusyRef 동기 가드가 차단).
+    void handleGenerateTypoHeadline()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage, result, typoHeadlineBlob, typoOptOut, hasGeminiKey])
 
   /**
    * v5.0-B: 사용자가 드롭다운에서 프로필 선택. 스냅샷을 그 프로필로 갱신(불변 해제) +
@@ -1988,6 +2060,9 @@ export function DetailMaker({
     applyTypoBlob(null)
     setTypoError(null)
     setTypoBusy(false)
+    // v6.4(작업1): 처음부터 다시 = 옵트아웃·자동 발동 대기 초기화.
+    setTypoOptOut(false)
+    autoTypoPendingRef.current = false
   }
 
   if (stage === "restoring") {

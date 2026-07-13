@@ -86,6 +86,13 @@ export interface Work {
    * 구버전 저장본엔 없음(옵셔널 — 하위호환). ⚠️ 셀러 사진이 아니라 "글씨만" 생성한 결과물.
    */
   typoHeadlineBlob?: Blob | null
+  /**
+   * v6.4(작업1): 레터링 자동 생성 옵트아웃 플래그. 사이드바 "기본 글씨로" 클릭 시 true 로 저장.
+   * true 면 전체 카피 생성 성공 후 자동 레터링을 발동하지 않는다(수동 "만들기"는 여전히 가능하며,
+   * 수동 생성 성공 시 false 로 해제). ⚠️ 기존 키 이름 변경 금지 — 신규 옵셔널 필드만 추가.
+   * 구버전 저장본엔 없음(옵셔널 — 하위호환, undefined=자동 허용).
+   */
+  typoOptOut?: boolean
 }
 
 export interface WorkSummary {
@@ -206,6 +213,8 @@ export interface WorkBackupItem {
   hiddenSections?: string[]
   /** v6.3(작업3): 타이포 헤드라인 이미지 base64(dataURL). 없으면 생략(하위호환). */
   typoHeadlineBase64?: string | null
+  /** v6.4(작업1): 레터링 자동 생성 옵트아웃. 없으면 생략(하위호환 — 자동 허용). */
+  typoOptOut?: boolean
 }
 export interface WorkBackup {
   format: "fdp-backup"
@@ -321,6 +330,8 @@ export async function exportAllWorksToJson(): Promise<WorkBackup> {
       hiddenSections: w.hiddenSections && w.hiddenSections.length > 0 ? w.hiddenSections : undefined,
       // v6.3(작업3): 타이포 헤드라인 이미지 base64(없으면 생략 → 로드 시 텍스트 헤드라인).
       typoHeadlineBase64,
+      // v6.4(작업1): 옵트아웃 플래그(false/undefined면 생략 → 로드 시 자동 허용).
+      typoOptOut: w.typoOptOut ? true : undefined,
     })
   }
   return {
@@ -423,6 +434,8 @@ export async function importBackupJson(
         hiddenSections: hiddenSections.length > 0 ? hiddenSections : undefined,
         // v6.3(작업3): 복원한 타이포 헤드라인 이미지(없으면 null → 텍스트 헤드라인).
         typoHeadlineBlob,
+        // v6.4(작업1): 옵트아웃 복원(불리언만 통과 — 손상 저장본 방어, 아니면 undefined → 자동 허용).
+        typoOptOut: item.typoOptOut === true ? true : undefined,
       }
       imported++
     } catch {

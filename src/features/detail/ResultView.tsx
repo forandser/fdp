@@ -3624,6 +3624,12 @@ export function ResultView({
                   </button>
                 )}
               </div>
+              {/* v6.4(작업1): 자동/수동 생성 진행 중 스피너 문구 — 조용한 진행 금지(항상 상태 표시). */}
+              {typoHeadlineBusy && (
+                <p style={{ margin: 0, fontSize: 11, lineHeight: 1.5, color: "var(--color-neutral-500)" }}>
+                  헤드라인 레터링을 만드는 중…
+                </p>
+              )}
               {typoHeadlineError && !typoHeadlineBusy && (
                 <p style={{ margin: 0, fontSize: 11, lineHeight: 1.5, color: RED }}>
                   {typoHeadlineError}
