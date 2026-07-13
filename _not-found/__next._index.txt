@@ -1,0 +1,18 @@
+1:"$Sreact.fragment"
+3:I[7121,[],""]
+4:I[4581,[],""]
+:HL["/fdp/_next/static/css/41c16c73ca86c69a.css","style"]
+2:T81c,@font-face{font-family:'Pretendard';src:url('/fdp/fonts/Pretendard-Regular.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap;}
+@font-face{font-family:'Pretendard';src:url('/fdp/fonts/Pretendard-Medium.woff2') format('woff2');font-weight:500;font-style:normal;font-display:swap;}
+@font-face{font-family:'Pretendard';src:url('/fdp/fonts/Pretendard-SemiBold.woff2') format('woff2');font-weight:600;font-style:normal;font-display:swap;}
+@font-face{font-family:'Pretendard';src:url('/fdp/fonts/Pretendard-Bold.woff2') format('woff2');font-weight:700;font-style:normal;font-display:swap;}
+@font-face{font-family:'Pretendard';src:url('/fdp/fonts/Pretendard-ExtraBold.woff2') format('woff2');font-weight:800;font-style:normal;font-display:swap;}
+@font-face{font-family:'Pretendard';src:url('/fdp/fonts/Pretendard-Black.woff2') format('woff2');font-weight:900;font-style:normal;font-display:swap;}
+@font-face{font-family:'BlackHanSans';src:url('/fdp/fonts/BlackHanSans-Regular.ttf') format('truetype');font-weight:400;font-style:normal;font-display:swap;}
+@font-face{font-family:'DoHyeon';src:url('/fdp/fonts/DoHyeon.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap;}
+@font-face{font-family:'Jua';src:url('/fdp/fonts/Jua.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap;}
+@font-face{font-family:'NanumPenScript';src:url('/fdp/fonts/NanumPenScript.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap;}
+@font-face{font-family:'GowunDodum';src:url('/fdp/fonts/GowunDodum.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap;}
+@font-face{font-family:'GowunBatang';src:url('/fdp/fonts/GowunBatang-Bold.woff2') format('woff2');font-weight:700;font-style:normal;font-display:swap;}
+@font-face{font-family:'NotoSansKR';src:url('/fdp/fonts/NotoSansKR-Black.woff2') format('woff2');font-weight:900;font-style:normal;font-display:swap;}
+@font-face{font-family:'Gugi';src:url('/fdp/fonts/Gugi.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap;}0:{"rsc":["$","$1","c",{"children":[[["$","link","0",{"rel":"stylesheet","href":"/fdp/_next/static/css/41c16c73ca86c69a.css","precedence":"next"}]],["$","html",null,{"lang":"ko","children":["$","body",null,{"children":[["$","style",null,{"dangerouslySetInnerHTML":{"__html":"$2"}}],["$","$L3",null,{"parallelRouterKey":"children","template":["$","$L4",null,{}]}]]}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"_STXc-jc-FLvORtpzr8uP"}

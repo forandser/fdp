@@ -1,0 +1,6 @@
+1:"$Sreact.fragment"
+2:I[484,[],"ViewportBoundary"]
+3:I[484,[],"MetadataBoundary"]
+4:"$Sreact.suspense"
+5:I[6869,[],"IconMark"]
+0:{"rsc":["$","$1","h",{"children":[["$","meta",null,{"name":"robots","content":"noindex"}],["$","$L2",null,{"children":[["$","meta","0",{"charSet":"utf-8"}],["$","meta","1",{"name":"viewport","content":"width=device-width, initial-scale=1"}]]}],["$","div",null,{"hidden":true,"children":["$","$L3",null,{"children":["$","$4",null,{"name":"Next.Metadata","children":[["$","title","0",{"children":"과일 상세페이지 제작"}],["$","meta","1",{"name":"description","content":"과일/야채 상세페이지와 썸네일을 AI로 빠르게 만드는 도구"}],["$","meta","2",{"name":"robots","content":"noindex, nofollow"}],["$","link","3",{"rel":"icon","href":"/fdp/favicon.ico?472d6a5b0ad1daf0","type":"image/x-icon","sizes":"256x256"}],["$","link","4",{"rel":"icon","href":"/fdp/icon.svg?fb390cd18a7f8f97","type":"image/svg+xml","sizes":"any"}],["$","link","5",{"rel":"apple-touch-icon","href":"/fdp/apple-icon.png?3f16a0622e967c9b","type":"image/png","sizes":"180x180"}],["$","$L5","6",{}]]}]}]}],null]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"_STXc-jc-FLvORtpzr8uP"}
